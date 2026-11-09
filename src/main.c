@@ -4,6 +4,7 @@
 #include <zephyr/sys/printk.h>
 #include <nrfx.h>
 #include "chanpick.h"
+#include "indicator.h"
 #include "link.h"
 #include "protocol.h"
 #include "radio.h"
@@ -61,6 +62,17 @@ static void watchdog_start(void)
 	}
 }
 
+static void show_state(void)
+{
+	static const enum indicator_mode by_link[] = {
+		[LINK_LED_IDLE] = IND_IDLE,
+		[LINK_LED_PAIRING] = IND_PAIRING,
+		[LINK_LED_CONNECTED] = IND_CONNECTED,
+	};
+
+	indicator_set(usb_suspended() ? IND_SLEEP : by_link[link_led(&link)]);
+}
+
 static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi)
 {
 	struct rx_item item = {.len = len, .pipe = pipe, .rssi = rssi};
@@ -113,6 +125,8 @@ static void run_survey(void)
 	uint8_t picked[3];
 	struct link_out out = {0};
 
+	/* The survey blocks the main loop, which otherwise updates the LED. */
+	show_state();
 	counters.surveys++;
 	if (radio_survey(&survey) != 0) {
 		link_survey_failed(&link, k_uptime_get_32(), &out);
@@ -234,6 +248,7 @@ int main(void)
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
 	while ((err = radio_start(id, out.channel, on_radio_rx)) != 0) {
+		indicator_set(IND_ERROR);
 		printk("radio start failed: %d\n", err);
 		k_sleep(K_SECONDS(1));
 	}
@@ -258,6 +273,7 @@ int main(void)
 			print_counters();
 			last_counters = now;
 		}
+		show_state();
 		if (wdt_channel >= 0) {
 			wdt_feed(wdt, wdt_channel);
 		}
