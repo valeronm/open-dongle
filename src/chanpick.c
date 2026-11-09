@@ -3,6 +3,8 @@
 #include <string.h>
 #include "chanpick.h"
 
+#define NEIGHBORS 5
+
 /* Wi-Fi transmits in bursts, which a mean would hide. */
 static int8_t busy_level(const int8_t samples[CHAN_SAMPLES])
 {
@@ -22,12 +24,29 @@ static int8_t busy_level(const int8_t samples[CHAN_SAMPLES])
 	return sorted[CHAN_SAMPLES * 9 / 10];
 }
 
+/* A lull inside a Wi-Fi band is not a quiet channel. */
+static int8_t band_level(const int8_t busy[CHAN_COUNT], int i)
+{
+	int8_t level = INT8_MIN;
+
+	for (int j = i - NEIGHBORS; j <= i + NEIGHBORS; j++) {
+		if (j >= 0 && j < CHAN_COUNT && busy[j] > level) {
+			level = busy[j];
+		}
+	}
+	return level;
+}
+
 void chan_pick(const struct chan_survey *s, uint8_t out[3])
 {
+	int8_t busy[CHAN_COUNT];
 	int8_t level[CHAN_COUNT];
 
 	for (int i = 0; i < CHAN_COUNT; i++) {
-		level[i] = busy_level(s->dbm[i]);
+		busy[i] = busy_level(s->dbm[i]);
+	}
+	for (int i = 0; i < CHAN_COUNT; i++) {
+		level[i] = band_level(busy, i);
 	}
 	for (int pick = 0; pick < 3; pick++) {
 		int best = -1;
