@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.20)
+project(nuphy_dongle_tests C)
+
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+add_compile_options(-Wall -Wextra -Werror)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src)
+enable_testing()
+
+function(suite name)
+  add_executable(test_${name} test_${name}.c ${ARGN})
+  add_test(NAME ${name} COMMAND test_${name})
+endfunction()
+
+suite(protocol ../src/protocol.c)

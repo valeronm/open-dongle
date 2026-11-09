@@ -14,7 +14,9 @@ build)
 	west build -b promicro_nrf52840/nrf52840/uf2 -d "$app/build/app" "$app"
 	;;
 test)
-	west twister -T "$app/tests" -p native_sim/native/64 -O "$app/build/twister"
+	cmake -S "$app/tests" -B "$app/build/tests" -G Ninja
+	cmake --build "$app/build/tests"
+	ctest --test-dir "$app/build/tests" --output-on-failure
 	;;
 flash)
 	port=${2:-/dev/ttyACM0}
