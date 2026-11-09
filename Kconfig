@@ -1,0 +1,7 @@
+mainmenu "nuphy-dongle"
+
+config NUPHY_COUNTERS
+	bool "Print link and USB counters on the console every 10 s"
+	default y
+
+source "Kconfig.zephyr"

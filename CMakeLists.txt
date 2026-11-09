@@ -4,4 +4,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(nuphy_dongle)
 
 target_sources(app PRIVATE
-  src/main.c src/protocol.c src/chanpick.c src/link.c src/radio.c src/store.c)
+  src/main.c src/protocol.c src/reports.c src/chanpick.c src/link.c
+  src/radio.c src/store.c src/usb.c)

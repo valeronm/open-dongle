@@ -15,8 +15,10 @@ static void drain(void)
 {
 	struct report out;
 
-	while (reports_peek(&r, &out)) {
-		reports_pop(&r);
+	for (int iface = 0; iface < REPORT_IFACES; iface++) {
+		while (reports_peek(&r, iface, &out)) {
+			reports_pop(&r, iface);
+		}
 	}
 }
 
@@ -35,9 +37,9 @@ static void test_repeated_report_is_queued_once(void)
 	CHECK(send_key(0x09));
 	CHECK(!send_key(0x09));
 	CHECK(!send_key(0x09));
-	CHECK(reports_peek(&r, &out));
-	reports_pop(&r);
-	CHECK(!reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	reports_pop(&r, REPORT_IFACE_KEYBOARD);
+	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 }
 
 static void test_quick_tap_keeps_press_and_release_in_order(void)
@@ -47,11 +49,11 @@ static void test_quick_tap_keeps_press_and_release_in_order(void)
 	before();
 	send_key(0x09);
 	send_key(0x00);
-	CHECK(reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK_EQ(out.kind, REPORT_KEYBOARD);
 	CHECK_EQ(out.keyboard[2], 0x09);
-	reports_pop(&r);
-	CHECK(reports_peek(&r, &out));
+	reports_pop(&r, REPORT_IFACE_KEYBOARD);
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK_EQ(out.keyboard[2], 0x00);
 }
 
@@ -62,7 +64,7 @@ static void test_media_report_carries_its_usage(void)
 
 	before();
 	reports_on_message(&r, &m);
-	CHECK(reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 	CHECK_EQ(out.kind, REPORT_CONSUMER);
 	CHECK_EQ(out.usage, 0x00e9);
 }
@@ -74,9 +76,10 @@ static void test_other_messages_change_nothing(void)
 
 	before();
 	CHECK(!reports_on_message(&r, &m));
-	CHECK(!reports_peek(&r, &out));
+	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 	CHECK(send_key(0x09));
-	CHECK(reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 }
 
 static void test_while_not_live_only_the_current_state_survives(void)
@@ -88,14 +91,14 @@ static void test_while_not_live_only_the_current_state_survives(void)
 	reports_set_live(&r, false);
 	send_key(0x09);
 	send_key(0x0a);
-	CHECK(!reports_peek(&r, &out));
+	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 	reports_set_live(&r, true);
-	while (reports_peek(&r, &out)) {
-		if (out.kind == REPORT_KEYBOARD) {
-			keyboards++;
-			CHECK_EQ(out.keyboard[2], 0x0a);
-		}
-		reports_pop(&r);
+	while (reports_peek(&r, REPORT_IFACE_KEYBOARD, &out)) {
+		keyboards++;
+		CHECK_EQ(out.kind, REPORT_KEYBOARD);
+		CHECK_EQ(out.keyboard[2], 0x0a);
+		reports_pop(&r, REPORT_IFACE_KEYBOARD);
 	}
 	CHECK_EQ(keyboards, 1);
 }
@@ -108,7 +111,7 @@ static void test_release_all_lets_go_of_a_held_key(void)
 	send_key(0x09);
 	drain();
 	reports_release_all(&r);
-	CHECK(reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK_EQ(out.kind, REPORT_KEYBOARD);
 	CHECK_EQ(out.keyboard[2], 0x00);
 }
@@ -122,8 +125,52 @@ static void test_overflow_merges_the_oldest_change(void)
 		send_key((uint8_t)i);
 	}
 	CHECK_EQ(r.merges, 1);
-	CHECK(reports_peek(&r, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK_EQ(out.keyboard[2], 2);
+}
+
+static void test_consumer_report_does_not_hold_up_the_keyboard(void)
+{
+	struct proto_msg m = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
+	struct report out;
+
+	before();
+	reports_on_message(&r, &m);
+	send_key(0x09);
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK_EQ(out.kind, REPORT_KEYBOARD);
+	CHECK_EQ(out.keyboard[2], 0x09);
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.usage, 0x00e9);
+}
+
+static void test_going_live_queues_each_kind_on_its_interface(void)
+{
+	struct proto_msg consumer = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
+	struct proto_msg system = {.kind = PROTO_SYSTEM, .usage = 0x0081};
+	struct report out;
+
+	before();
+	reports_set_live(&r, false);
+	send_key(0x09);
+	reports_on_message(&r, &consumer);
+	reports_on_message(&r, &system);
+	reports_set_live(&r, true);
+	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK_EQ(out.kind, REPORT_KEYBOARD);
+	CHECK_EQ(out.keyboard[2], 0x09);
+	reports_pop(&r, REPORT_IFACE_KEYBOARD);
+	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.usage, 0x00e9);
+	reports_pop(&r, REPORT_IFACE_EXTRA);
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.kind, REPORT_SYSTEM);
+	CHECK_EQ(out.usage, 0x0081);
+	reports_pop(&r, REPORT_IFACE_EXTRA);
+	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 }
 
 int main(void)
@@ -135,5 +182,7 @@ int main(void)
 	RUN(test_while_not_live_only_the_current_state_survives);
 	RUN(test_release_all_lets_go_of_a_held_key);
 	RUN(test_overflow_merges_the_oldest_change);
+	RUN(test_consumer_report_does_not_hold_up_the_keyboard);
+	RUN(test_going_live_queues_each_kind_on_its_interface);
 	return TEST_EXIT();
 }

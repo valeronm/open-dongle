@@ -1,0 +1,17 @@
+/ {
+	hid_keyboard: hid_keyboard {
+		compatible = "zephyr,hid-device";
+		label = "HID keyboard";
+		protocol-code = "keyboard";
+		in-report-size = <8>;
+		in-polling-period-us = <1000>;
+	};
+
+	hid_extra: hid_extra {
+		compatible = "zephyr,hid-device";
+		label = "HID media";
+		protocol-code = "none";
+		in-report-size = <3>;
+		in-polling-period-us = <1000>;
+	};
+};

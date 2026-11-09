@@ -22,10 +22,20 @@ struct report {
 	};
 };
 
-struct reports {
-	struct report queue[REPORTS_QUEUE_LEN];
+enum report_iface {
+	REPORT_IFACE_KEYBOARD,
+	REPORT_IFACE_EXTRA,
+	REPORT_IFACES,
+};
+
+struct report_queue {
+	struct report items[REPORTS_QUEUE_LEN];
 	uint8_t head;
 	uint8_t count;
+};
+
+struct reports {
+	struct report_queue queues[REPORT_IFACES];
 	struct report current[REPORT_KINDS];
 	bool live;
 	uint32_t merges;
@@ -42,7 +52,7 @@ void reports_release_all(struct reports *r);
  * queues the current state of every report kind so the host resynchronizes.
  */
 void reports_set_live(struct reports *r, bool live);
-bool reports_peek(const struct reports *r, struct report *out);
-void reports_pop(struct reports *r);
+bool reports_peek(const struct reports *r, enum report_iface iface, struct report *out);
+void reports_pop(struct reports *r, enum report_iface iface);
 
 #endif

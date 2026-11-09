@@ -9,16 +9,23 @@ void reports_init(struct reports *r)
 	}
 }
 
+static enum report_iface iface_of(enum report_kind kind)
+{
+	return kind == REPORT_KEYBOARD ? REPORT_IFACE_KEYBOARD : REPORT_IFACE_EXTRA;
+}
+
 static void push(struct reports *r, enum report_kind kind)
 {
-	if (r->count == REPORTS_QUEUE_LEN) {
+	struct report_queue *q = &r->queues[iface_of(kind)];
+
+	if (q->count == REPORTS_QUEUE_LEN) {
 		/* The host skips the oldest intermediate state. */
-		r->head = (r->head + 1) % REPORTS_QUEUE_LEN;
-		r->count--;
+		q->head = (q->head + 1) % REPORTS_QUEUE_LEN;
+		q->count--;
 		r->merges++;
 	}
-	r->queue[(r->head + r->count) % REPORTS_QUEUE_LEN] = r->current[kind];
-	r->count++;
+	q->items[(q->head + q->count) % REPORTS_QUEUE_LEN] = r->current[kind];
+	q->count++;
 }
 
 static bool same_state(const struct report *a, const struct report *b)
@@ -79,8 +86,10 @@ void reports_set_live(struct reports *r, bool live)
 		return;
 	}
 	r->live = live;
-	r->head = 0;
-	r->count = 0;
+	for (int iface = 0; iface < REPORT_IFACES; iface++) {
+		r->queues[iface].head = 0;
+		r->queues[iface].count = 0;
+	}
 	if (live) {
 		for (int kind = 0; kind < REPORT_KINDS; kind++) {
 			push(r, kind);
@@ -88,19 +97,23 @@ void reports_set_live(struct reports *r, bool live)
 	}
 }
 
-bool reports_peek(const struct reports *r, struct report *out)
+bool reports_peek(const struct reports *r, enum report_iface iface, struct report *out)
 {
-	if (r->count == 0) {
+	const struct report_queue *q = &r->queues[iface];
+
+	if (q->count == 0) {
 		return false;
 	}
-	*out = r->queue[r->head];
+	*out = q->items[q->head];
 	return true;
 }
 
-void reports_pop(struct reports *r)
+void reports_pop(struct reports *r, enum report_iface iface)
 {
-	if (r->count > 0) {
-		r->head = (r->head + 1) % REPORTS_QUEUE_LEN;
-		r->count--;
+	struct report_queue *q = &r->queues[iface];
+
+	if (q->count > 0) {
+		q->head = (q->head + 1) % REPORTS_QUEUE_LEN;
+		q->count--;
 	}
 }
