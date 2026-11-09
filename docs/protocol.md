@@ -7,10 +7,9 @@ hardware ACK of the keyboard's next packet on that pipe.
 
 ## Radio settings
 
-- Dynamic payload length, 1 Mbps, 8-bit CRC, selective auto-ACK off, so every packet is ACKed.
-- Five-byte addresses. Base address 0 is `56 56 56 56`, and pipe n uses the prefix `0x51 + n`.
-- Pipe 0 carries pairing. After pairing, the keyboard sets base address 1 to the dongle's 4-byte ID
-  and sends everything else on pipe 1.
+The ESB configuration is in `src/radio.c`. What the code does not show:
+
+- Pipe 0 carries pairing. After pairing, the keyboard sends everything else on pipe 1.
 - The keyboard transmits at +4 dBm, and at -20 dBm while pairing, so pairing only works up close.
 
 ## Messages
