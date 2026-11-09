@@ -1,4 +1,5 @@
 #include <string.h>
+#include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <nrfx.h>
@@ -39,6 +40,26 @@ static struct {
 	uint32_t usb_retries;
 	uint32_t surveys;
 } counters;
+
+/* Must outlast run_survey, which blocks the main loop for about 1.5 s. */
+#define WATCHDOG_TIMEOUT_MS 3000
+
+static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
+static int wdt_channel = -1;
+
+static void watchdog_start(void)
+{
+	struct wdt_timeout_cfg cfg = {
+		.window = {.min = 0, .max = WATCHDOG_TIMEOUT_MS},
+		.flags = WDT_FLAG_RESET_SOC,
+	};
+
+	wdt_channel = wdt_install_timeout(wdt, &cfg);
+	if (wdt_channel < 0 || wdt_setup(wdt, WDT_OPT_PAUSE_HALTED_BY_DBG) != 0) {
+		printk("watchdog not running\n");
+		wdt_channel = -1;
+	}
+}
 
 static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi)
 {
@@ -218,6 +239,7 @@ int main(void)
 	}
 	printk("nuphy-dongle id %02x%02x%02x%02x %s, store %d\n", id[0], id[1], id[2], id[3],
 	       paired ? "paired" : "never paired", store_err);
+	watchdog_start();
 
 	for (;;) {
 		struct rx_item item;
@@ -235,6 +257,9 @@ int main(void)
 		if (IS_ENABLED(CONFIG_NUPHY_COUNTERS) && now - last_counters >= COUNTERS_EVERY_MS) {
 			print_counters();
 			last_counters = now;
+		}
+		if (wdt_channel >= 0) {
+			wdt_feed(wdt, wdt_channel);
 		}
 	}
 }
