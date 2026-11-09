@@ -14,3 +14,4 @@ endfunction()
 
 suite(protocol ../src/protocol.c)
 suite(reports ../src/reports.c ../src/protocol.c)
+suite(chanpick ../src/chanpick.c)
