@@ -39,6 +39,8 @@ struct link {
 	uint8_t own[3];
 	bool own_known;
 	uint8_t offered[3];
+	bool offer_valid;
+	uint32_t offered_ms;
 	uint8_t channel;
 	uint8_t slot;
 	uint8_t fixed_next;

@@ -6,6 +6,7 @@ static const uint8_t dongle_id[4] = {0x26, 0xc1, 0x21, 0x59};
 static const uint8_t keyboard_id[4] = {0x70, 0x15, 0xa3, 0x29};
 static const uint8_t previous_id[4] = {0x96, 0xbe, 0x5c, 0x89};
 static const uint8_t home[3] = {26, 30, 34};
+static const uint8_t surveyed[3] = {30, 40, 60};
 
 static struct link l;
 static struct link_out out;
@@ -67,6 +68,17 @@ static void expect_status(uint8_t seq, uint8_t leds)
 	CHECK_MEM(out.reply_buf, expected, len);
 }
 
+static void expect_pair_reply(uint8_t seq)
+{
+	uint8_t expected[PROTO_FRAME_MAX];
+	size_t len = proto_pair_reply(expected, seq, dongle_id, keyboard_id, surveyed);
+
+	CHECK(out.reply);
+	CHECK_EQ(out.reply_pipe, 0);
+	CHECK_EQ(out.reply_len, len);
+	CHECK_MEM(out.reply_buf, expected, len);
+}
+
 static void expect_suspend(uint8_t seq)
 {
 	uint8_t expected[PROTO_FRAME_MAX];
@@ -116,11 +128,8 @@ static void test_paired_idle_returns_to_home(void)
 
 static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(void)
 {
-	static const uint8_t surveyed[3] = {30, 40, 60};
 	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, previous_id);
 	struct proto_msg confirm = pairing(PROTO_PAIR_CONFIRM, dongle_id);
-	uint8_t expected[PROTO_FRAME_MAX];
-	size_t len;
 
 	init(NULL);
 	tick(400);
@@ -131,14 +140,10 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 	survey(surveyed, 2000);
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, 2);
-	len = proto_pair_reply(expected, 1, dongle_id, keyboard_id, surveyed);
-	CHECK(out.reply);
-	CHECK_EQ(out.reply_pipe, 0);
-	CHECK_MEM(out.reply_buf, expected, len);
+	expect_pair_reply(1);
 
 	deliver(&request, 0, 2040);
-	len = proto_pair_reply(expected, 2, dongle_id, keyboard_id, surveyed);
-	CHECK_MEM(out.reply_buf, expected, len);
+	expect_pair_reply(2);
 
 	deliver(&confirm, 0, 2080);
 	CHECK(out.save_channels);
@@ -153,7 +158,6 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 
 static void test_confirm_for_another_dongle_is_ignored(void)
 {
-	static const uint8_t surveyed[3] = {30, 40, 60};
 	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, previous_id);
 	struct proto_msg confirm = pairing(PROTO_PAIR_CONFIRM, previous_id);
 	struct proto_msg ours = pairing(PROTO_PAIR_CONFIRM, dongle_id);
@@ -167,6 +171,39 @@ static void test_confirm_for_another_dongle_is_ignored(void)
 
 	deliver(&ours, 0, 1680);
 	CHECK(out.save_channels);
+}
+
+static void pairing_times_out_after_a_survey(void)
+{
+	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, previous_id);
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	tick(2600);
+}
+
+static void test_a_request_soon_after_a_survey_reuses_its_channels(void)
+{
+	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, previous_id);
+	struct proto_msg confirm = pairing(PROTO_PAIR_CONFIRM, dongle_id);
+
+	pairing_times_out_after_a_survey();
+	deliver(&request, 0, 3000);
+	CHECK(!out.start_survey);
+	expect_pair_reply(2);
+	deliver(&confirm, 0, 3040);
+	CHECK(out.save_channels);
+	CHECK_MEM(l.own, surveyed, 3);
+}
+
+static void test_a_request_10_s_after_a_survey_surveys_again(void)
+{
+	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, previous_id);
+
+	pairing_times_out_after_a_survey();
+	deliver(&request, 0, 11600);
+	CHECK(out.start_survey);
 }
 
 static void test_pairing_not_allowed_ignores_requests(void)
@@ -284,6 +321,8 @@ int main(void)
 	RUN(test_paired_idle_returns_to_home);
 	RUN(test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed);
 	RUN(test_confirm_for_another_dongle_is_ignored);
+	RUN(test_a_request_soon_after_a_survey_reuses_its_channels);
+	RUN(test_a_request_10_s_after_a_survey_surveys_again);
 	RUN(test_pairing_not_allowed_ignores_requests);
 	RUN(test_failed_survey_returns_to_idle);
 	RUN(test_rebooted_dongle_connects_on_home_and_sends_status_every_100_ms);

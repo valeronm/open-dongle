@@ -5,6 +5,8 @@
 #define HOME_SLOT_MS 400
 #define PAIRING_SLOT_MS 100
 #define STATUS_EVERY_MS 100
+/* The keyboard repeats a pair request that goes unanswered while a survey has the receiver off. */
+#define OFFER_REUSE_MS 10000
 
 static const uint8_t pairing_channels[] = {2, 50, 80};
 /* The keyboard firmware fixes these channels besides the three it gets at pairing. */
@@ -83,9 +85,14 @@ static void on_pairing_message(struct link *l, const struct proto_msg *m, uint32
 	if (m->kind == PROTO_PAIR_REQUEST) {
 		if (l->state == LINK_IDLE && l->pairing_allowed) {
 			memcpy(l->keyboard_id, m->ids.keyboard, PROTO_ID_LEN);
-			l->state = LINK_SURVEY;
-			out->start_survey = true;
 			l->last_rx_ms = now_ms;
+			if (l->offer_valid && now_ms - l->offered_ms < OFFER_REUSE_MS) {
+				l->state = LINK_PAIRING;
+				reply_pairing(l, out);
+			} else {
+				l->state = LINK_SURVEY;
+				out->start_survey = true;
+			}
 		} else if (l->state == LINK_PAIRING && same_keyboard) {
 			reply_pairing(l, out);
 		}
@@ -154,6 +161,8 @@ void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,
 		return;
 	}
 	memcpy(l->offered, channels, sizeof(l->offered));
+	l->offer_valid = true;
+	l->offered_ms = now_ms;
 	l->state = LINK_PAIRING;
 	/* The survey sweeps the radio across channels with the receiver off. */
 	l->last_rx_ms = now_ms;
