@@ -114,9 +114,19 @@ pub fn paired(own: Option<[u8; 3]>) -> String {
     })
 }
 
+pub fn duration(ms: u32) -> String {
+    let s = ms / 1000;
+    match ms {
+        0..1_000 => format!("{ms} ms"),
+        1_000..60_000 => format!("{s} s"),
+        60_000..3_600_000 => format!("{} min {} s", s / 60, s % 60),
+        _ => format!("{} h {} min", s / 3600, s / 60 % 60),
+    }
+}
+
 pub fn last_packet(age_ms: Option<u32>) -> String {
     age_ms.map_or("no packet since boot".into(), |ms| {
-        format!("last packet {ms} ms ago")
+        format!("last packet {} ago", duration(ms))
     })
 }
 
@@ -190,8 +200,9 @@ pub fn describe_event(e: &Event) -> String {
         ),
         EventKind::LinkLost => {
             format!(
-                "link lost after {} ms, last signal {} dBm",
-                e.value, e.a as i8
+                "link lost after {}, last signal {} dBm",
+                duration(e.value),
+                e.a as i8
             )
         }
         EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
@@ -200,12 +211,16 @@ pub fn describe_event(e: &Event) -> String {
         EventKind::UsbResume => "usb resumed".into(),
         EventKind::Clear => "history cleared".into(),
         EventKind::LinkUp if e.c == 1 => format!(
-            "link restored after {} ms on channel {}, signal {} dBm",
-            e.value, e.a, e.b as i8
+            "link restored after {} on channel {}, signal {} dBm",
+            duration(e.value),
+            e.a,
+            e.b as i8
         ),
         EventKind::LinkUp => format!(
-            "link up {} ms after boot on channel {}, signal {} dBm",
-            e.value, e.a, e.b as i8
+            "link up {} after boot on channel {}, signal {} dBm",
+            duration(e.value),
+            e.a,
+            e.b as i8
         ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
@@ -230,7 +245,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&back),
-            "link restored after 4200 ms on channel 33, signal -63 dBm"
+            "link restored after 4 s on channel 33, signal -63 dBm"
         );
         let first = Event {
             c: 0,
@@ -256,7 +271,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&lost),
-            "link lost after 1200 ms, last signal -71 dBm"
+            "link lost after 1 s, last signal -71 dBm"
         );
         let paired = Event {
             time_ms: 0,
@@ -291,6 +306,20 @@ mod tests {
         assert_eq!(noise_level(-100), 0);
         assert_eq!(noise_level(-110), 0);
         assert_eq!(noise_level(-50), 50);
+    }
+
+    #[test]
+    fn durations_switch_units_past_each_threshold() {
+        assert_eq!(duration(840), "840 ms");
+        assert_eq!(duration(12_400), "12 s");
+        assert_eq!(duration(269_817), "4 min 29 s");
+        assert_eq!(duration(3_900_000), "1 h 5 min");
+    }
+
+    #[test]
+    fn last_packet_reads_in_the_largest_fitting_units() {
+        assert_eq!(last_packet(Some(269_817)), "last packet 4 min 29 s ago");
+        assert_eq!(last_packet(None), "no packet since boot");
     }
 
     #[test]
