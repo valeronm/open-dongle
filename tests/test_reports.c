@@ -116,6 +116,28 @@ static void test_release_all_lets_go_of_a_held_key(void)
 	CHECK_EQ(out.keyboard[2], 0x00);
 }
 
+static void test_release_all_lets_go_of_held_media_and_system_keys(void)
+{
+	struct proto_msg consumer = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
+	struct proto_msg system = {.kind = PROTO_SYSTEM, .usage = 0x0081};
+	struct report out;
+
+	before();
+	reports_on_message(&r, &consumer);
+	reports_on_message(&r, &system);
+	drain();
+	reports_release_all(&r);
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.usage, 0);
+	reports_pop(&r, REPORT_IFACE_EXTRA);
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.kind, REPORT_SYSTEM);
+	CHECK_EQ(out.usage, 0);
+	reports_pop(&r, REPORT_IFACE_EXTRA);
+	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+}
+
 static void test_overflow_merges_the_oldest_change(void)
 {
 	struct report out;
@@ -181,6 +203,7 @@ int main(void)
 	RUN(test_other_messages_change_nothing);
 	RUN(test_while_not_live_only_the_current_state_survives);
 	RUN(test_release_all_lets_go_of_a_held_key);
+	RUN(test_release_all_lets_go_of_held_media_and_system_keys);
 	RUN(test_overflow_merges_the_oldest_change);
 	RUN(test_consumer_report_does_not_hold_up_the_keyboard);
 	RUN(test_going_live_queues_each_kind_on_its_interface);
