@@ -19,3 +19,4 @@ suite(link ../src/link.c ../src/protocol.c)
 suite(diagproto ../src/diagproto.c)
 target_compile_definitions(test_diagproto PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../diag/fixtures")
+suite(history ../src/history.c)
