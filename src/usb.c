@@ -95,12 +95,32 @@ static const uint8_t extra_desc[] = {
 	HID_END_COLLECTION,
 };
 
+static const uint8_t diag_desc[] = {
+	HID_USAGE_PAGE16(0xff00),
+	HID_USAGE(0x01),
+	HID_COLLECTION(HID_COLLECTION_APPLICATION),
+	HID_LOGICAL_MIN8(0),
+	HID_LOGICAL_MAX16(0xff, 0x00),
+	HID_REPORT_SIZE(8),
+	HID_REPORT_COUNT(DIAG_REPORT_LEN),
+	HID_USAGE(0x02),
+	HID_INPUT(0x02),
+	HID_REPORT_COUNT(DIAG_REPORT_LEN),
+	HID_USAGE(0x03),
+	HID_OUTPUT(0x02),
+	HID_END_COLLECTION,
+};
+
 static const struct device *const keyboard_dev = DEVICE_DT_GET(DT_NODELABEL(hid_keyboard));
 static const struct device *const extra_dev = DEVICE_DT_GET(DT_NODELABEL(hid_extra));
+static const struct device *const diag_dev = DEVICE_DT_GET(DT_NODELABEL(hid_diag));
+UDC_STATIC_BUF_DEFINE(diag_buf, DIAG_REPORT_LEN);
 UDC_STATIC_BUF_DEFINE(keyboard_buf, PROTO_KEYBOARD_LEN);
 UDC_STATIC_BUF_DEFINE(extra_buf, EXTRA_REPORT_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_keyboard), in_report_size) == PROTO_KEYBOARD_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_extra), in_report_size) == EXTRA_REPORT_LEN);
+BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), in_report_size) == DIAG_REPORT_LEN);
+BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), out_report_size) == DIAG_REPORT_LEN);
 
 static const struct usb_callbacks *callbacks;
 static atomic_t ready_mask;
@@ -182,13 +202,35 @@ static const struct hid_device_ops extra_ops = {
 	.get_idle = get_idle,
 };
 
+static int no_set_report(const struct device *dev, const uint8_t type, const uint8_t id,
+			 const uint16_t len, const uint8_t *const buf)
+{
+	return -ENOTSUP;
+}
+
+static void diag_output(const struct device *dev, const uint16_t len, const uint8_t *const buf)
+{
+	callbacks->on_diag_request(buf, len);
+}
+
+static const struct hid_device_ops diag_ops = {
+	.get_report = no_get_report,
+	.set_report = no_set_report,
+	.output_report = diag_output,
+};
+
+void usb_reboot_to_bootloader(void)
+{
+	nrf_power_gpregret_set(NRF_POWER, 0, BOOTLOADER_DFU_MAGIC);
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
 static void enter_bootloader_on_touch(const struct device *dev)
 {
 	uint32_t baud = 0;
 
 	if (uart_line_ctrl_get(dev, UART_LINE_CTRL_BAUD_RATE, &baud) == 0 && baud == 1200) {
-		nrf_power_gpregret_set(NRF_POWER, 0, BOOTLOADER_DFU_MAGIC);
-		sys_reboot(SYS_REBOOT_COLD);
+		usb_reboot_to_bootloader();
 	}
 }
 
@@ -221,6 +263,10 @@ int usb_start(const struct usb_callbacks *cb)
 		return err;
 	}
 	err = hid_device_register(extra_dev, extra_desc, sizeof(extra_desc), &extra_ops);
+	if (err) {
+		return err;
+	}
+	err = hid_device_register(diag_dev, diag_desc, sizeof(diag_desc), &diag_ops);
 	if (err) {
 		return err;
 	}
@@ -268,4 +314,10 @@ int usb_send(const struct report *r)
 int usb_wakeup(void)
 {
 	return usbd_wakeup_request(&dongle_usbd);
+}
+
+int usb_diag_send(const uint8_t report[DIAG_REPORT_LEN])
+{
+	memcpy(diag_buf, report, DIAG_REPORT_LEN);
+	return hid_device_submit_report(diag_dev, DIAG_REPORT_LEN, diag_buf);
 }

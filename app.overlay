@@ -14,4 +14,14 @@
 		in-report-size = <3>;
 		in-polling-period-us = <1000>;
 	};
+
+	hid_diag: hid_diag {
+		compatible = "zephyr,hid-device";
+		label = "HID diag";
+		protocol-code = "none";
+		in-report-size = <64>;
+		in-polling-period-us = <1000>;
+		out-report-size = <64>;
+		out-polling-period-us = <1000>;
+	};
 };

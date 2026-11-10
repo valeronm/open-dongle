@@ -5,6 +5,8 @@
 #include <zephyr/sys/printk.h>
 #include <nrfx.h>
 #include "chanpick.h"
+#include "diag.h"
+#include "diagproto.h"
 #include "indicator.h"
 #include "link.h"
 #include "protocol.h"
@@ -33,6 +35,9 @@ static struct reports reports;
 static struct chan_survey survey;
 static atomic_t host_leds;
 static int8_t last_rssi;
+static uint32_t reset_cause;
+static bool heard;
+static uint32_t last_packet_ms;
 
 static struct {
 	uint32_t packets;
@@ -163,6 +168,8 @@ static void handle(const struct rx_item *item)
 	}
 	counters.packets++;
 	last_rssi = item->rssi;
+	heard = true;
+	last_packet_ms = k_uptime_get_32();
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	apply(&out);
 	if (out.start_survey) {
@@ -230,15 +237,57 @@ static void print_counters(void)
 	       link.channel, link.state);
 }
 
+static void fill_status(struct diag_status *s)
+{
+	*s = (struct diag_status){
+		.uptime_ms = k_uptime_get(),
+		.reset_cause = reset_cause,
+		.link_state = link.state,
+		.channel = link.channel,
+		.last_rssi = last_rssi,
+		.last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX,
+		.usb_live = usb_live(),
+		.usb_suspended = usb_suspended(),
+		.packets = counters.packets,
+		.invalid = counters.invalid,
+		.dropped = counters.rx_dropped,
+		.channel_changes = counters.channel_changes,
+		.link_losses = counters.link_losses,
+		.usb_retries = counters.usb_retries,
+		.merges = reports.merges,
+		.surveys = counters.surveys,
+	};
+	if (link.own_known) {
+		memcpy(s->own, link.own, sizeof(s->own));
+	}
+	memcpy(s->keyboard_id, link.keyboard_id, sizeof(s->keyboard_id));
+}
+
+static void serve_diag(const struct diag_request *req)
+{
+	static uint8_t payload[DIAG_PAYLOAD_MAX];
+	struct diag_status s;
+
+	switch (req->command) {
+	case DIAG_STATUS:
+		fill_status(&s);
+		diag_reply(req, payload, diag_encode_status(payload, &s), DIAG_AFTER_NONE);
+		break;
+	default:
+		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);
+		break;
+	}
+}
+
 int main(void)
 {
 	static const struct usb_callbacks usb_cb = {
 		.on_live = on_usb_live,
 		.on_leds = on_usb_leds,
+		.on_diag_request = diag_on_request,
 	};
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
-	uint32_t reset_cause = 0;
 	uint8_t id[4];
 	uint8_t own[3];
 	struct link_out out = {0};
@@ -275,6 +324,7 @@ int main(void)
 
 	for (;;) {
 		struct rx_item item;
+		struct diag_request req;
 		uint32_t now;
 
 		if (k_msgq_get(&rx_queue, &item, K_MSEC(TICK_MS)) == 0) {
@@ -286,6 +336,9 @@ int main(void)
 		out = (struct link_out){0};
 		link_tick(&link, now, &out);
 		apply(&out);
+		while (diag_take_request(&req)) {
+			serve_diag(&req);
+		}
 		if (IS_ENABLED(CONFIG_NUPHY_COUNTERS) && now - last_counters >= COUNTERS_EVERY_MS) {
 			print_counters();
 			last_counters = now;

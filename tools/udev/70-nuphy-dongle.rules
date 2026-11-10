@@ -1,3 +1,4 @@
 # 239a:00b3 is the Adafruit bootloader, 2fe3:4e44 the dongle firmware.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", ATTRS{idProduct}=="00b3", TAG+="uaccess"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="4e44", TAG+="uaccess"
+KERNEL=="hidraw*", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="4e44", TAG+="uaccess"
