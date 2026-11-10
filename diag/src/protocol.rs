@@ -267,6 +267,28 @@ pub struct Event {
     pub value: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NoiseChannel {
+    pub channel: u8,
+    pub loudest: i8,
+    pub average: i8,
+}
+
+pub fn decode_noise(payload: &[u8]) -> Result<Vec<NoiseChannel>> {
+    let mut r = Reader::new(payload);
+    let first = r.u8()?;
+    let count = r.u8()?;
+    (0..count)
+        .map(|i| {
+            Ok(NoiseChannel {
+                channel: first + i,
+                loudest: r.i8()?,
+                average: r.i8()?,
+            })
+        })
+        .collect()
+}
+
 pub fn decode_events(payload: &[u8]) -> Result<(u32, Vec<Event>)> {
     decode_page(payload, |r| {
         Ok(Event {
@@ -338,6 +360,36 @@ pub(crate) mod tests {
         );
         assert_eq!((s.minute_next, s.minute_oldest), (1500, 60));
         assert_eq!((s.events_total, s.events_oldest), (600, 88));
+    }
+
+    #[test]
+    fn noise_fixture_decodes() {
+        let n = decode_noise(&fixture("noise.hex")).unwrap();
+        assert_eq!(n.len(), 79);
+        assert_eq!(
+            n[0],
+            NoiseChannel {
+                channel: 2,
+                loudest: -100,
+                average: -100
+            }
+        );
+        assert_eq!(
+            n[1],
+            NoiseChannel {
+                channel: 3,
+                loudest: -50,
+                average: -88
+            }
+        );
+        assert_eq!(
+            n[78],
+            NoiseChannel {
+                channel: 80,
+                loudest: -30,
+                average: -30
+            }
+        );
     }
 
     #[test]

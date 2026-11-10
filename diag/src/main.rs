@@ -32,6 +32,11 @@ enum Cmd {
         #[arg(long, default_value_t = 50)]
         count: u32,
     },
+    /// Measure the radio noise on every channel
+    Noise {
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -41,5 +46,6 @@ fn main() -> Result<()> {
         Cmd::Status => cli::status(&mut dev),
         Cmd::History { minutes } => cli::history(&mut dev, minutes),
         Cmd::Events { count } => cli::events(&mut dev, count),
+        Cmd::Noise { yes } => cli::noise(&mut dev, yes),
     }
 }

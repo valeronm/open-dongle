@@ -116,3 +116,25 @@ size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_eve
 	}
 	return p - out;
 }
+
+size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s)
+{
+	uint8_t *p = out;
+
+	*p++ = CHAN_FIRST;
+	*p++ = CHAN_COUNT;
+	for (int i = 0; i < CHAN_COUNT; i++) {
+		int8_t loudest = s->dbm[i][0];
+		int32_t sum = 0;
+
+		for (int k = 0; k < CHAN_SAMPLES; k++) {
+			if (s->dbm[i][k] > loudest) {
+				loudest = s->dbm[i][k];
+			}
+			sum += s->dbm[i][k];
+		}
+		*p++ = (uint8_t)loudest;
+		*p++ = (uint8_t)(int8_t)(sum / CHAN_SAMPLES);
+	}
+	return p - out;
+}

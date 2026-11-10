@@ -51,7 +51,7 @@ static struct {
 	uint32_t surveys;
 } counters;
 
-/* Must outlast run_survey, which blocks the main loop for about 1.5 s. */
+/* Must outlast one survey_radio call, which blocks for about 1.5 s. */
 #define WATCHDOG_TIMEOUT_MS 3000
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
@@ -164,15 +164,21 @@ static void apply(const struct link_out *out)
 	}
 }
 
+/* The survey blocks the main loop, which otherwise updates the LED. */
+static int survey_radio(void)
+{
+	watchdog_feed();
+	show_state();
+	return radio_survey(&survey);
+}
+
 static void run_survey(void)
 {
 	uint8_t picked[3];
 	struct link_out out = {0};
 
-	/* The survey blocks the main loop, which otherwise updates the LED. */
-	show_state();
 	counters.surveys++;
-	if (radio_survey(&survey) != 0) {
+	if (survey_radio() != 0) {
 		link_survey_failed(&link, k_uptime_get_32(), &out);
 		apply(&out);
 		return;
@@ -296,6 +302,20 @@ static void fill_status(struct diag_status *s)
 	s->events_oldest = history.events_oldest;
 }
 
+static void run_noise(const struct diag_request *req, uint8_t *payload)
+{
+	int err;
+
+	err = survey_radio();
+	if (err) {
+		diag_reply_error(req, DIAG_ERR_RADIO);
+		return;
+	}
+	link_radio_resumed(&link, k_uptime_get_32());
+	log_event(HISTORY_NOISE, 0, 0, 0, 0);
+	diag_reply(req, payload, diag_encode_noise(payload, &survey), DIAG_AFTER_NONE);
+}
+
 static void serve_diag(const struct diag_request *req)
 {
 	static uint8_t payload[DIAG_PAYLOAD_MAX];
@@ -324,6 +344,9 @@ static void serve_diag(const struct diag_request *req)
 			   DIAG_AFTER_NONE);
 		break;
 	}
+	case DIAG_NOISE:
+		run_noise(req, payload);
+		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);
 		break;

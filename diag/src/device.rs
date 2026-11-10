@@ -3,8 +3,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    CHUNK, Command, Event, Minute, Part, REPORT_LEN, Status, decode_events, decode_minutes,
-    decode_status, parse_part, request,
+    CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, decode_events,
+    decode_minutes, decode_noise, decode_status, parse_part, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -12,6 +12,7 @@ pub const PID: u16 = 0x4e44;
 pub const USAGE_PAGE: u16 = 0xff00;
 /// Longer than the dongle's longest main-loop block, a 1.5 s radio survey.
 pub const TIMEOUT: Duration = Duration::from_millis(2500);
+pub const NOISE_TIMEOUT: Duration = Duration::from_secs(4);
 
 pub trait Transport {
     fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<()>;
@@ -84,6 +85,10 @@ impl<T: Transport> Device<T> {
 
     pub fn events(&mut self, from: u32) -> Result<(u32, Vec<Event>)> {
         decode_events(&self.call(Command::Events, from, TIMEOUT)?)
+    }
+
+    pub fn noise(&mut self) -> Result<Vec<NoiseChannel>> {
+        decode_noise(&self.call(Command::Noise, 0, NOISE_TIMEOUT)?)
     }
 
     /// Returns the held minutes with their indexes, from `from` (or the oldest held) up to `end`.

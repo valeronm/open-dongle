@@ -16,7 +16,8 @@ int radio_set_channel(uint8_t channel);
 /* Replies on a pipe go out in order, one per ACK; changing channel drops any still queued. */
 int radio_reply(uint8_t pipe, const uint8_t *frame, size_t len);
 
-/* Blocks for about 1.5 s with the receiver off. */
+/* Blocks for about 1.5 s with the receiver off, and returns with it listening on the current
+ * channel again. */
 int radio_survey(struct chan_survey *s);
 
 #endif

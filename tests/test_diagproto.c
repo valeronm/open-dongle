@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "test.h"
+#include "chanpick.h"
 #include "diagproto.h"
 #include "history.h"
 
@@ -154,6 +155,24 @@ static void test_a_full_page_fits_the_payload_buffer(void)
 	CHECK(diag_encode_events(out, 0, e, DIAG_EVENTS_PER_PAGE) <= DIAG_PAYLOAD_MAX);
 }
 
+static void test_noise_matches_fixture(void)
+{
+	static struct chan_survey s;
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture("noise.hex", want, sizeof(want));
+	size_t got_len;
+
+	for (int i = 0; i < CHAN_COUNT; i++) {
+		for (int k = 0; k < CHAN_SAMPLES; k++) {
+			s.dbm[i][k] = i == 0 ? -100 : i == CHAN_COUNT - 1 ? -30 : k == 0 ? -50 : -90;
+		}
+	}
+	got_len = diag_encode_noise(got, &s);
+	CHECK_EQ(got_len, want_len);
+	CHECK_MEM(got, want, want_len);
+}
+
 int main(void)
 {
 	RUN(test_request_carries_command_seq_and_arg);
@@ -163,6 +182,7 @@ int main(void)
 	RUN(test_error_sets_the_flag_and_code);
 	RUN(test_minutes_match_fixture);
 	RUN(test_events_match_fixture);
+	RUN(test_noise_matches_fixture);
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	return TEST_EXIT();
 }

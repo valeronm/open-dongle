@@ -64,6 +64,8 @@ void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,
 		    struct link_out *out);
 void link_survey_failed(struct link *l, uint32_t now_ms, struct link_out *out);
 void link_tick(struct link *l, uint32_t now_ms, struct link_out *out);
+/* The receiver was off until now_ms, so silence before it is not a sign of a lost link. */
+void link_radio_resumed(struct link *l, uint32_t now_ms);
 void link_set_host_leds(struct link *l, uint8_t leds);
 void link_set_host_suspended(struct link *l, bool suspended);
 enum link_led link_led(const struct link *l);

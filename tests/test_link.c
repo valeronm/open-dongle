@@ -315,6 +315,17 @@ static void test_pipe0_traffic_does_not_keep_a_connected_link(void)
 	CHECK(out.lost);
 }
 
+static void test_a_radio_pause_restarts_the_silence_timer(void)
+{
+	init(home);
+	message(PROTO_KEEPALIVE, 1, 10);
+	link_radio_resumed(&l, 1600);
+	tick(2599);
+	CHECK(!out.lost);
+	tick(2600);
+	CHECK(out.lost);
+}
+
 int main(void)
 {
 	RUN(test_never_paired_idle_cycles_fixed_and_pairing_channels);
@@ -333,5 +344,6 @@ int main(void)
 	RUN(test_silence_for_1_s_loses_the_link);
 	RUN(test_invalid_message_does_not_keep_the_link);
 	RUN(test_pipe0_traffic_does_not_keep_a_connected_link);
+	RUN(test_a_radio_pause_restarts_the_silence_timer);
 	return TEST_EXIT();
 }

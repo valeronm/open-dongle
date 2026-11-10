@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use anyhow::Result;
 use chrono::Local;
 
@@ -84,6 +86,41 @@ pub fn events<T: Transport>(dev: &mut Device<T>, count: u32) -> Result<()> {
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
             describe_event(&e)
+        );
+    }
+    Ok(())
+}
+
+/// Returns true when `yes` is set or the user answers y.
+pub fn confirm(question: &str, yes: bool) -> Result<bool> {
+    if yes {
+        return Ok(true);
+    }
+    print!("{question} [y/N] ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(matches!(line.trim(), "y" | "Y" | "yes"))
+}
+
+pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
+    if !confirm(
+        "The keyboard stops for about 1.5 s while the noise is measured. Measure?",
+        yes,
+    )? {
+        return Ok(());
+    }
+    let s = dev.status()?;
+    for c in dev.noise()? {
+        let bar = "#".repeat(usize::try_from(i16::from(c.loudest) + 100).unwrap_or(0) / 2);
+        let mark = match c.channel {
+            ch if ch == s.channel => " current",
+            ch if s.own.is_some_and(|o| o.contains(&ch)) => " paired",
+            _ => "",
+        };
+        println!(
+            "{:3}  {:4} dBm  avg {:4}  {bar}{mark}",
+            c.channel, c.loudest, c.average
         );
     }
     Ok(())

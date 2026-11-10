@@ -203,6 +203,11 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	}
 }
 
+void link_radio_resumed(struct link *l, uint32_t now_ms)
+{
+	l->last_rx_ms = now_ms;
+}
+
 void link_set_host_leds(struct link *l, uint8_t leds)
 {
 	l->host_leds = leds;

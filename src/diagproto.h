@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "chanpick.h"
 #include "history.h"
 
 #define DIAG_VERSION 1
@@ -77,5 +78,6 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 			  size_t n);
 size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
 			 size_t n);
+size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
 
 #endif
