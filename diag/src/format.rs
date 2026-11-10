@@ -1,5 +1,7 @@
 use chrono::{DateTime, Duration, Local};
 
+use crate::protocol::{Event, EventKind};
+
 pub fn usb_state(live: bool, suspended: bool) -> &'static str {
     match (live, suspended) {
         (_, true) => "suspended",
@@ -76,15 +78,72 @@ pub fn uptime(ms: u64) -> String {
 }
 
 /// Converts a dongle uptime into the local clock time it happened at.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn wall_clock(now: DateTime<Local>, uptime_now_ms: u64, at_ms: u64) -> DateTime<Local> {
     now - Duration::milliseconds(uptime_now_ms.saturating_sub(at_ms) as i64)
+}
+
+pub fn describe_event(e: &Event) -> String {
+    match e.kind {
+        EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
+        EventKind::Paired if e.value == 0 => format!("paired on channels {} {} {}", e.a, e.b, e.c),
+        EventKind::Paired => format!(
+            "paired on channels {} {} {}, saving failed: {}",
+            e.a, e.b, e.c, e.value as i32
+        ),
+        EventKind::LinkLost => {
+            format!(
+                "link lost after {} ms, last signal {} dBm",
+                e.value, e.a as i8
+            )
+        }
+        EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
+        EventKind::Noise => "noise map".into(),
+        EventKind::UsbSuspend => "usb suspended".into(),
+        EventKind::UsbResume => "usb resumed".into(),
+        EventKind::Forget => "pairing forgotten".into(),
+        EventKind::Clear => "history cleared".into(),
+        EventKind::Unknown(t) => format!("unknown event {t}"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn describes_a_link_loss_and_a_pairing() {
+        use crate::protocol::{Event, EventKind};
+        let lost = Event {
+            time_ms: 0,
+            kind: EventKind::LinkLost,
+            a: 0xb9,
+            b: 0,
+            c: 0,
+            value: 1200,
+        };
+        assert_eq!(
+            describe_event(&lost),
+            "link lost after 1200 ms, last signal -71 dBm"
+        );
+        let paired = Event {
+            time_ms: 0,
+            kind: EventKind::Paired,
+            a: 26,
+            b: 30,
+            c: 34,
+            value: 0,
+        };
+        assert_eq!(describe_event(&paired), "paired on channels 26 30 34");
+        let failed = Event {
+            value: (-5i32) as u32,
+            ..paired
+        };
+        assert_eq!(
+            describe_event(&failed),
+            "paired on channels 26 30 34, saving failed: -5"
+        );
+    }
 
     #[test]
     fn names_each_reset_cause_bit() {

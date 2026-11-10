@@ -7,6 +7,7 @@
 #include "chanpick.h"
 #include "diag.h"
 #include "diagproto.h"
+#include "history.h"
 #include "indicator.h"
 #include "link.h"
 #include "protocol.h"
@@ -32,6 +33,7 @@ static struct k_sem reports_ready[REPORT_IFACES];
 
 static struct link link;
 static struct reports reports;
+static struct history history;
 static struct chan_survey survey;
 static atomic_t host_leds;
 static int8_t last_rssi;
@@ -74,6 +76,28 @@ static void watchdog_feed(void)
 	if (wdt_channel >= 0) {
 		wdt_feed(wdt, wdt_channel);
 	}
+}
+
+static struct history_totals totals(void)
+{
+	return (struct history_totals){
+		.packets = counters.packets,
+		.invalid = counters.invalid,
+		.dropped = counters.rx_dropped,
+		.channel_changes = counters.channel_changes,
+		.link_losses = counters.link_losses,
+		.usb_retries = counters.usb_retries,
+	};
+}
+
+static void log_event(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+{
+	history_event(&history, &(struct history_event){.time_ms = k_uptime_get(),
+							.type = type,
+							.a = a,
+							.b = b,
+							.c = c,
+							.value = value});
 }
 
 static void show_state(void)
@@ -126,11 +150,14 @@ static void apply(const struct link_out *out)
 
 		printk("paired, channels %u %u %u saved: %d\n", link.own[0], link.own[1],
 		       link.own[2], err);
+		log_event(HISTORY_PAIRED, link.own[0], link.own[1], link.own[2], (uint32_t)err);
 	}
 	if (out->lost) {
+		uint32_t gap = k_uptime_get_32() - link.last_rx_ms;
+
 		counters.link_losses++;
-		printk("link lost after %u ms, last rssi %d\n", k_uptime_get_32() - link.last_rx_ms,
-		       last_rssi);
+		printk("link lost after %u ms, last rssi %d\n", gap, last_rssi);
+		log_event(HISTORY_LINK_LOST, (uint8_t)last_rssi, 0, 0, gap);
 		lock_reports();
 		reports_release_all(&reports);
 		unlock_reports(true);
@@ -152,6 +179,7 @@ static void run_survey(void)
 	}
 	chan_pick(&survey, picked);
 	printk("survey picked %u %u %u\n", picked[0], picked[1], picked[2]);
+	log_event(HISTORY_SURVEY, picked[0], picked[1], picked[2], 0);
 	link_on_survey(&link, picked, k_uptime_get_32(), &out);
 	apply(&out);
 }
@@ -170,6 +198,7 @@ static void handle(const struct rx_item *item)
 	last_rssi = item->rssi;
 	heard = true;
 	last_packet_ms = k_uptime_get_32();
+	history_rssi(&history, item->rssi);
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	apply(&out);
 	if (out.start_survey) {
@@ -261,6 +290,10 @@ static void fill_status(struct diag_status *s)
 		memcpy(s->own, link.own, sizeof(s->own));
 	}
 	memcpy(s->keyboard_id, link.keyboard_id, sizeof(s->keyboard_id));
+	s->minute_next = history.minute_next;
+	s->minute_oldest = history.minute_oldest;
+	s->events_total = history.events_total;
+	s->events_oldest = history.events_oldest;
 }
 
 static void serve_diag(const struct diag_request *req)
@@ -273,6 +306,24 @@ static void serve_diag(const struct diag_request *req)
 		fill_status(&s);
 		diag_reply(req, payload, diag_encode_status(payload, &s), DIAG_AFTER_NONE);
 		break;
+	case DIAG_HISTORY: {
+		static struct history_minute page[DIAG_MINUTES_PER_PAGE];
+		uint32_t first;
+		size_t n = history_minutes(&history, req->arg, &first, page, ARRAY_SIZE(page));
+
+		diag_reply(req, payload, diag_encode_minutes(payload, first, page, n),
+			   DIAG_AFTER_NONE);
+		break;
+	}
+	case DIAG_EVENTS: {
+		static struct history_event page[DIAG_EVENTS_PER_PAGE];
+		uint32_t first;
+		size_t n = history_events(&history, req->arg, &first, page, ARRAY_SIZE(page));
+
+		diag_reply(req, payload, diag_encode_events(payload, first, page, n),
+			   DIAG_AFTER_NONE);
+		break;
+	}
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);
 		break;
@@ -288,6 +339,8 @@ int main(void)
 	};
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
+	bool was_suspended = false;
+	bool usb_seen_live = false;
 	uint8_t id[4];
 	uint8_t own[3];
 	struct link_out out = {0};
@@ -299,6 +352,8 @@ int main(void)
 	hwinfo_get_reset_cause(&reset_cause);
 	hwinfo_clear_reset_cause();
 	reports_init(&reports);
+	history_init(&history, k_uptime_get(), &(struct history_totals){0});
+	log_event(HISTORY_BOOT, 0, 0, 0, reset_cause);
 	for (int iface = 0; iface < REPORT_IFACES; iface++) {
 		k_sem_init(&reports_ready[iface], 0, 1);
 	}
@@ -325,6 +380,8 @@ int main(void)
 	for (;;) {
 		struct rx_item item;
 		struct diag_request req;
+		struct history_totals t;
+		bool suspended;
 		uint32_t now;
 
 		if (k_msgq_get(&rx_queue, &item, K_MSEC(TICK_MS)) == 0) {
@@ -332,7 +389,18 @@ int main(void)
 		}
 		now = k_uptime_get_32();
 		link_set_host_leds(&link, (uint8_t)atomic_get(&host_leds));
-		link_set_host_suspended(&link, usb_suspended());
+		suspended = usb_suspended();
+		link_set_host_suspended(&link, suspended);
+		usb_seen_live |= usb_live();
+		if (suspended != was_suspended) {
+			if (usb_seen_live) {
+				log_event(suspended ? HISTORY_USB_SUSPEND : HISTORY_USB_RESUME,
+					  0, 0, 0, 0);
+			}
+			was_suspended = suspended;
+		}
+		t = totals();
+		history_tick(&history, k_uptime_get(), &t);
 		out = (struct link_out){0};
 		link_tick(&link, now, &out);
 		apply(&out);

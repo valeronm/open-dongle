@@ -187,7 +187,6 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Rssi {
     pub min: i8,
     pub avg: i8,
@@ -195,7 +194,6 @@ pub struct Rssi {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Minute {
     pub packets: u16,
     pub invalid: u8,
@@ -206,7 +204,6 @@ pub struct Minute {
     pub rssi: Option<Rssi>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
     decode_page(payload, |r| {
         let packets = r.u16()?;
@@ -230,7 +227,6 @@ pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum EventKind {
     Boot,
     Paired,
@@ -262,7 +258,6 @@ impl From<u8> for EventKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Event {
     pub time_ms: u64,
     pub kind: EventKind,
@@ -272,7 +267,6 @@ pub struct Event {
     pub value: u32,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn decode_events(payload: &[u8]) -> Result<(u32, Vec<Event>)> {
     decode_page(payload, |r| {
         Ok(Event {

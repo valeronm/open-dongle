@@ -1,7 +1,11 @@
 use anyhow::Result;
+use chrono::Local;
 
 use crate::device::{Device, Transport};
-use crate::format::{last_packet, link_state_name, paired, reset_causes, uptime, usb_state};
+use crate::format::{
+    describe_event, last_packet, link_state_name, paired, reset_causes, uptime, usb_state,
+    wall_clock,
+};
 
 pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     let s = dev.status()?;
@@ -44,5 +48,43 @@ pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
         s.minute_next.saturating_sub(s.minute_oldest),
         s.events_total.saturating_sub(s.events_oldest)
     );
+    Ok(())
+}
+
+pub fn history<T: Transport>(dev: &mut Device<T>, minutes: u32) -> Result<()> {
+    let s = dev.status()?;
+    let now = Local::now();
+    let from = s.minute_next.saturating_sub(minutes);
+    for (index, m) in dev.minutes_between(from, s.minute_next)? {
+        let at = wall_clock(now, s.uptime_ms, u64::from(index) * 60_000);
+        let signal = m
+            .rssi
+            .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
+        println!(
+            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  usb-retries {:3}  signal {signal}",
+            at.format("%Y-%m-%d %H:%M"),
+            m.packets,
+            m.invalid,
+            m.dropped,
+            m.channel_changes,
+            m.link_losses,
+            m.usb_retries
+        );
+    }
+    Ok(())
+}
+
+pub fn events<T: Transport>(dev: &mut Device<T>, count: u32) -> Result<()> {
+    let s = dev.status()?;
+    let now = Local::now();
+    let from = s.events_total.saturating_sub(count);
+    for (_, e) in dev.events_between(from, s.events_total)? {
+        let at = wall_clock(now, s.uptime_ms, e.time_ms);
+        println!(
+            "{}  {}",
+            at.format("%Y-%m-%d %H:%M:%S%.3f"),
+            describe_event(&e)
+        );
+    }
     Ok(())
 }

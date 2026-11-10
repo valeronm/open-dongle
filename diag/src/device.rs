@@ -3,7 +3,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    CHUNK, Command, Part, REPORT_LEN, Status, decode_status, parse_part, request,
+    CHUNK, Command, Event, Minute, Part, REPORT_LEN, Status, decode_events, decode_minutes,
+    decode_status, parse_part, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -76,6 +77,42 @@ impl<T: Transport> Device<T> {
     pub fn status(&mut self) -> Result<Status> {
         decode_status(&self.call(Command::Status, 0, TIMEOUT)?)
     }
+
+    pub fn minutes(&mut self, from: u32) -> Result<(u32, Vec<Minute>)> {
+        decode_minutes(&self.call(Command::History, from, TIMEOUT)?)
+    }
+
+    pub fn events(&mut self, from: u32) -> Result<(u32, Vec<Event>)> {
+        decode_events(&self.call(Command::Events, from, TIMEOUT)?)
+    }
+
+    /// Returns the held minutes with their indexes, from `from` (or the oldest held) up to `end`.
+    pub fn minutes_between(&mut self, from: u32, end: u32) -> Result<Vec<(u32, Minute)>> {
+        collect_pages(from, end, |f| self.minutes(f))
+    }
+
+    /// Returns the held events with their indexes, from `from` (or the oldest held) up to `end`.
+    pub fn events_between(&mut self, from: u32, end: u32) -> Result<Vec<(u32, Event)>> {
+        collect_pages(from, end, |f| self.events(f))
+    }
+}
+
+fn collect_pages<T>(
+    mut from: u32,
+    end: u32,
+    mut fetch: impl FnMut(u32) -> Result<(u32, Vec<T>)>,
+) -> Result<Vec<(u32, T)>> {
+    let mut out = Vec::new();
+    while from < end {
+        let (first, page) = fetch(from)?;
+        let next = first.saturating_add(page.len() as u32);
+        if next <= from {
+            break;
+        }
+        out.extend((first..).zip(page));
+        from = next;
+    }
+    Ok(out)
 }
 
 pub struct HidTransport(hidapi::HidDevice);
@@ -189,6 +226,40 @@ pub(crate) mod tests {
             0,
         );
         assert_eq!(dev.status().unwrap().channel, 26);
+    }
+
+    #[test]
+    fn minutes_between_pages_until_the_end() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                let from = u32::from_le_bytes(req[2..6].try_into().unwrap());
+                let n = 130u32.saturating_sub(from).min(60) as u8;
+                let mut p = from.to_le_bytes().to_vec();
+                p.push(n);
+                for _ in 0..n {
+                    p.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                }
+                parts(req[0], req[1], &p)
+            }),
+            0,
+        );
+        let m = dev.minutes_between(0, 130).unwrap();
+        assert_eq!(m.len(), 130);
+        assert_eq!((m[0].0, m[129].0), (0, 129));
+    }
+
+    #[test]
+    fn asks_for_minutes_from_the_given_index() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                assert_eq!(req[0], Command::History as u8);
+                assert_eq!(u32::from_le_bytes(req[2..6].try_into().unwrap()), 1440);
+                parts(req[0], req[1], &fixture("minutes.hex"))
+            }),
+            0,
+        );
+        let (first, m) = dev.minutes(1440).unwrap();
+        assert_eq!((first, m.len()), (1440, 2));
     }
 
     #[test]
