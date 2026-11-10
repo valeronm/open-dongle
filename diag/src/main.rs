@@ -2,6 +2,7 @@ mod cli;
 mod device;
 mod format;
 mod protocol;
+mod view;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -15,7 +16,7 @@ struct Args {
     #[arg(long, global = true)]
     serial: Option<String>,
     #[command(subcommand)]
-    command: Cmd,
+    command: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -58,8 +59,11 @@ enum Cmd {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    let Some(command) = args.command else {
+        return view::run(args.serial);
+    };
     let mut dev = device::open(args.serial.as_deref())?;
-    match args.command {
+    match command {
         Cmd::Status => cli::status(&mut dev),
         Cmd::History { minutes } => cli::history(&mut dev, minutes),
         Cmd::Events { count } => cli::events(&mut dev, count),

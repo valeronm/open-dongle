@@ -5,8 +5,8 @@ use chrono::Local;
 
 use crate::device::{Device, Transport};
 use crate::format::{
-    describe_event, last_packet, link_state_name, paired, reset_causes, uptime, usb_state,
-    wall_clock,
+    ChannelRole, NOISE_QUESTION, action_question, band_label, channel_role, describe_event,
+    last_packet, link_state_name, paired, reset_causes, uptime, usb_state, wall_clock,
 };
 use crate::protocol::Action;
 
@@ -105,42 +105,37 @@ pub fn confirm(question: &str, yes: bool) -> Result<bool> {
 }
 
 pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
-    if !confirm(
-        "The keyboard stops for about 1.5 s while the noise is measured. Measure?",
-        yes,
-    )? {
+    if !confirm(NOISE_QUESTION, yes)? {
         return Ok(());
     }
     let s = dev.status()?;
     for c in dev.noise()? {
         let bar = "#".repeat(usize::try_from(i16::from(c.loudest) + 100).unwrap_or(0) / 2);
-        let mark = match c.channel {
-            ch if ch == s.channel => " current",
-            ch if s.own.is_some_and(|o| o.contains(&ch)) => " paired",
-            _ => "",
+        let mark = match channel_role(c.channel, &s) {
+            ChannelRole::Current => " current",
+            ChannelRole::Paired => " paired",
+            ChannelRole::Other => "",
         };
-        println!(
-            "{:3}  {:4} dBm  avg {:4}  {bar}{mark}",
-            c.channel, c.loudest, c.average
+        let line = format!(
+            "{:3}  {:4} dBm  avg {:4}  {bar}{mark}  {}",
+            c.channel,
+            c.loudest,
+            c.average,
+            band_label(c.channel)
         );
+        println!("{}", line.trim_end());
     }
     Ok(())
 }
 
 pub fn action<T: Transport>(dev: &mut Device<T>, action: Action, yes: bool) -> Result<()> {
-    let (question, done) = match action {
-        Action::Reboot => (
-            "Reboot the dongle?",
-            "rebooting; the keyboard reconnects by itself",
-        ),
-        Action::Bootloader => (
-            "Reboot the dongle into its bootloader?",
-            "in the bootloader; flash it or replug it",
-        ),
-        Action::Clear => ("Clear the counters, history and events?", "cleared"),
-    };
-    if confirm(question, yes)? {
+    if confirm(action_question(action), yes)? {
         dev.action(action)?;
+        let done = match action {
+            Action::Reboot => "rebooting; the keyboard reconnects by itself",
+            Action::Bootloader => "in the bootloader; flash it or replug it",
+            Action::Clear => "cleared",
+        };
         println!("{done}");
     }
     Ok(())
