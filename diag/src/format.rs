@@ -179,6 +179,14 @@ pub fn describe_event(e: &Event) -> String {
         EventKind::UsbSuspend => "usb suspended".into(),
         EventKind::UsbResume => "usb resumed".into(),
         EventKind::Clear => "history cleared".into(),
+        EventKind::LinkUp if e.c == 1 => format!(
+            "link restored after {} ms on channel {}, signal {} dBm",
+            e.value, e.a, e.b as i8
+        ),
+        EventKind::LinkUp => format!(
+            "link up {} ms after boot on channel {}, signal {} dBm",
+            e.value, e.a, e.b as i8
+        ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -187,6 +195,32 @@ pub fn describe_event(e: &Event) -> String {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn describes_the_link_coming_back() {
+        use crate::protocol::{Event, EventKind};
+        let back = Event {
+            time_ms: 0,
+            kind: EventKind::LinkUp,
+            a: 33,
+            b: 0xc1,
+            c: 1,
+            value: 4200,
+        };
+        assert_eq!(
+            describe_event(&back),
+            "link restored after 4200 ms on channel 33, signal -63 dBm"
+        );
+        let first = Event {
+            c: 0,
+            value: 900,
+            ..back
+        };
+        assert_eq!(
+            describe_event(&first),
+            "link up 900 ms after boot on channel 33, signal -63 dBm"
+        );
+    }
 
     #[test]
     fn describes_a_link_loss_and_a_pairing() {

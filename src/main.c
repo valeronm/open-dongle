@@ -37,6 +37,8 @@ static struct history history;
 static struct chan_survey survey;
 static atomic_t host_leds;
 static int8_t last_rssi;
+static uint32_t link_down_ms;
+static bool link_was_lost;
 static uint32_t reset_cause;
 static bool heard;
 static uint32_t last_packet_ms;
@@ -165,7 +167,13 @@ static void apply(const struct link_out *out)
 		counters.link_losses++;
 		printk("link lost after %u ms, last rssi %d\n", gap, last_rssi);
 		log_event(HISTORY_LINK_LOST, (uint8_t)last_rssi, 0, 0, gap);
+		link_down_ms = k_uptime_get_32();
+		link_was_lost = true;
 		release_keys();
+	}
+	if (out->up) {
+		log_event(HISTORY_LINK_UP, link.channel, (uint8_t)last_rssi, link_was_lost,
+			  k_uptime_get_32() - link_down_ms);
 	}
 }
 

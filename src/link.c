@@ -144,6 +144,7 @@ void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, ui
 		break;
 	case LINK_IDLE:
 		l->state = LINK_CONNECTED;
+		out->up = true;
 		reply_status(l, now_ms, out);
 		break;
 	case LINK_CONNECTED:

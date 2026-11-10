@@ -251,6 +251,7 @@ pub enum EventKind {
     UsbSuspend,
     UsbResume,
     Clear,
+    LinkUp,
     Unknown(u8),
 }
 
@@ -265,6 +266,7 @@ impl From<u8> for EventKind {
             6 => Self::UsbSuspend,
             7 => Self::UsbResume,
             8 => Self::Clear,
+            9 => Self::LinkUp,
             other => Self::Unknown(other),
         }
     }

@@ -326,6 +326,33 @@ static void test_a_radio_pause_restarts_the_silence_timer(void)
 	CHECK(out.lost);
 }
 
+static void test_traffic_after_a_loss_reports_the_link_up(void)
+{
+	init(home);
+	message(PROTO_KEEPALIVE, 1, 10);
+	CHECK(out.up);
+	tick(1010);
+	CHECK(out.lost);
+	message(PROTO_KEEPALIVE, 1, 5000);
+	CHECK(out.up);
+	message(PROTO_KEEPALIVE, 1, 5010);
+	CHECK(!out.up);
+}
+
+static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
+{
+	struct proto_msg request = pairing(PROTO_PAIR_REQUEST, dongle_id);
+	struct proto_msg confirm = pairing(PROTO_PAIR_CONFIRM, dongle_id);
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 20);
+	deliver(&confirm, 0, 30);
+	message(PROTO_KEEPALIVE, 1, 40);
+	CHECK(!out.up);
+	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+}
+
 int main(void)
 {
 	RUN(test_never_paired_idle_cycles_fixed_and_pairing_channels);
@@ -345,5 +372,7 @@ int main(void)
 	RUN(test_invalid_message_does_not_keep_the_link);
 	RUN(test_pipe0_traffic_does_not_keep_a_connected_link);
 	RUN(test_a_radio_pause_restarts_the_silence_timer);
+	RUN(test_traffic_after_a_loss_reports_the_link_up);
+	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
 	return TEST_EXIT();
 }

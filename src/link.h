@@ -30,6 +30,7 @@ struct link_out {
 	uint8_t reply_buf[PROTO_FRAME_MAX];
 	bool save_channels;
 	bool lost;
+	bool up;
 };
 
 struct link {
