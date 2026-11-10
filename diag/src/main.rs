@@ -6,6 +6,8 @@ mod protocol;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
+use protocol::Action;
+
 #[derive(Parser)]
 #[command(version, about = "Diagnostics for the nuphy-dongle firmware")]
 struct Args {
@@ -37,6 +39,21 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Restart the dongle firmware
+    Reboot {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Reboot into the UF2 bootloader for flashing
+    Bootloader {
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Zero the counters, history and events
+    Clear {
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -47,5 +64,8 @@ fn main() -> Result<()> {
         Cmd::History { minutes } => cli::history(&mut dev, minutes),
         Cmd::Events { count } => cli::events(&mut dev, count),
         Cmd::Noise { yes } => cli::noise(&mut dev, yes),
+        Cmd::Reboot { yes } => cli::action(&mut dev, Action::Reboot, yes),
+        Cmd::Bootloader { yes } => cli::action(&mut dev, Action::Bootloader, yes),
+        Cmd::Clear { yes } => cli::action(&mut dev, Action::Clear, yes),
     }
 }

@@ -136,6 +136,13 @@ static void unlock_reports(bool wake_senders)
 	}
 }
 
+static void release_keys(void)
+{
+	lock_reports();
+	reports_release_all(&reports);
+	unlock_reports(true);
+}
+
 static void apply(const struct link_out *out)
 {
 	/* radio_set_channel flushes queued replies. */
@@ -158,9 +165,7 @@ static void apply(const struct link_out *out)
 		counters.link_losses++;
 		printk("link lost after %u ms, last rssi %d\n", gap, last_rssi);
 		log_event(HISTORY_LINK_LOST, (uint8_t)last_rssi, 0, 0, gap);
-		lock_reports();
-		reports_release_all(&reports);
-		unlock_reports(true);
+		release_keys();
 	}
 }
 
@@ -316,6 +321,19 @@ static void run_noise(const struct diag_request *req, uint8_t *payload)
 	diag_reply(req, payload, diag_encode_noise(payload, &survey), DIAG_AFTER_NONE);
 }
 
+static void clear_history(const struct diag_request *req)
+{
+	struct history_totals none = {0};
+
+	memset(&counters, 0, sizeof(counters));
+	lock_reports();
+	reports.merges = 0;
+	unlock_reports(false);
+	history_clear(&history, k_uptime_get(), &none);
+	log_event(HISTORY_CLEAR, 0, 0, 0, 0);
+	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
 static void serve_diag(const struct diag_request *req)
 {
 	static uint8_t payload[DIAG_PAYLOAD_MAX];
@@ -346,6 +364,15 @@ static void serve_diag(const struct diag_request *req)
 	}
 	case DIAG_NOISE:
 		run_noise(req, payload);
+		break;
+	case DIAG_REBOOT:
+		diag_reply(req, NULL, 0, DIAG_AFTER_REBOOT);
+		break;
+	case DIAG_BOOTLOADER:
+		diag_reply(req, NULL, 0, DIAG_AFTER_BOOTLOADER);
+		break;
+	case DIAG_CLEAR:
+		clear_history(req);
 		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);

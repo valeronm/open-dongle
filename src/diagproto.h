@@ -25,14 +25,12 @@ enum diag_command {
 	DIAG_NOISE,
 	DIAG_REBOOT,
 	DIAG_BOOTLOADER,
-	DIAG_FORGET,
 	DIAG_CLEAR,
 };
 
 enum diag_error {
 	DIAG_ERR_UNKNOWN_COMMAND = 1,
 	DIAG_ERR_RADIO,
-	DIAG_ERR_STORE,
 };
 
 struct diag_request {

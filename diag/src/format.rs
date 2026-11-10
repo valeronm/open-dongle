@@ -100,7 +100,6 @@ pub fn describe_event(e: &Event) -> String {
         EventKind::Noise => "noise map".into(),
         EventKind::UsbSuspend => "usb suspended".into(),
         EventKind::UsbResume => "usb resumed".into(),
-        EventKind::Forget => "pairing forgotten".into(),
         EventKind::Clear => "history cleared".into(),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }

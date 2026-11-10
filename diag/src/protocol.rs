@@ -8,7 +8,6 @@ pub const VERSION: u8 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-#[expect(dead_code)]
 pub enum Command {
     Status = 1,
     History,
@@ -16,8 +15,24 @@ pub enum Command {
     Noise,
     Reboot,
     Bootloader,
-    Forget,
     Clear,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Reboot,
+    Bootloader,
+    Clear,
+}
+
+impl Action {
+    pub fn command(self) -> Command {
+        match self {
+            Action::Reboot => Command::Reboot,
+            Action::Bootloader => Command::Bootloader,
+            Action::Clear => Command::Clear,
+        }
+    }
 }
 
 pub fn request(command: Command, seq: u8, arg: u32) -> [u8; REPORT_LEN] {
@@ -235,7 +250,6 @@ pub enum EventKind {
     Noise,
     UsbSuspend,
     UsbResume,
-    Forget,
     Clear,
     Unknown(u8),
 }
@@ -250,8 +264,7 @@ impl From<u8> for EventKind {
             5 => Self::Noise,
             6 => Self::UsbSuspend,
             7 => Self::UsbResume,
-            8 => Self::Forget,
-            9 => Self::Clear,
+            8 => Self::Clear,
             other => Self::Unknown(other),
         }
     }

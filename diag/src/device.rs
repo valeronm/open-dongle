@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, decode_events,
+    Action, CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, decode_events,
     decode_minutes, decode_noise, decode_status, parse_part, request,
 };
 
@@ -73,6 +73,10 @@ impl<T: Transport> Device<T> {
                 return Ok(payload);
             }
         }
+    }
+
+    pub fn action(&mut self, action: Action) -> Result<()> {
+        self.call(action.command(), 0, TIMEOUT).map(drop)
     }
 
     pub fn status(&mut self) -> Result<Status> {
@@ -222,6 +226,12 @@ pub(crate) mod tests {
                 r
             })
             .collect()
+    }
+
+    #[test]
+    fn an_action_succeeds_on_an_empty_reply() {
+        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0);
+        dev.action(Action::Clear).unwrap();
     }
 
     #[test]

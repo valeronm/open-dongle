@@ -8,6 +8,7 @@ use crate::format::{
     describe_event, last_packet, link_state_name, paired, reset_causes, uptime, usb_state,
     wall_clock,
 };
+use crate::protocol::Action;
 
 pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     let s = dev.status()?;
@@ -122,6 +123,25 @@ pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
             "{:3}  {:4} dBm  avg {:4}  {bar}{mark}",
             c.channel, c.loudest, c.average
         );
+    }
+    Ok(())
+}
+
+pub fn action<T: Transport>(dev: &mut Device<T>, action: Action, yes: bool) -> Result<()> {
+    let (question, done) = match action {
+        Action::Reboot => (
+            "Reboot the dongle?",
+            "rebooting; the keyboard reconnects by itself",
+        ),
+        Action::Bootloader => (
+            "Reboot the dongle into its bootloader?",
+            "in the bootloader; flash it or replug it",
+        ),
+        Action::Clear => ("Clear the counters, history and events?", "cleared"),
+    };
+    if confirm(question, yes)? {
+        dev.action(action)?;
+        println!("{done}");
     }
     Ok(())
 }
