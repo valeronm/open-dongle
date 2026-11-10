@@ -475,6 +475,42 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn command_numbers_match_fixture() {
+        let all = [
+            Command::Status,
+            Command::History,
+            Command::Events,
+            Command::Noise,
+            Command::Reboot,
+            Command::Bootloader,
+            Command::Clear,
+        ];
+        assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
+    }
+
+    #[test]
+    fn event_type_numbers_match_fixture() {
+        let kinds: Vec<EventKind> = fixture("event-types.hex")
+            .into_iter()
+            .map(EventKind::from)
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                EventKind::Boot,
+                EventKind::Paired,
+                EventKind::LinkLost,
+                EventKind::Survey,
+                EventKind::Noise,
+                EventKind::UsbSuspend,
+                EventKind::UsbResume,
+                EventKind::Clear,
+                EventKind::LinkUp,
+            ]
+        );
+    }
+
+    #[test]
     fn padding_after_the_count_is_ignored() {
         let mut payload = fixture("minutes.hex");
         payload.resize(CHUNK, 0);

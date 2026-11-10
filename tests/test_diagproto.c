@@ -173,6 +173,29 @@ static void test_noise_matches_fixture(void)
 	CHECK_MEM(got, want, want_len);
 }
 
+static void test_command_numbers_match_fixture(void)
+{
+	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
+			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR};
+	uint8_t want[sizeof(got) + 1];
+	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
+
+	CHECK_EQ(want_len, sizeof(got));
+	CHECK_MEM(got, want, sizeof(got));
+}
+
+static void test_event_type_numbers_match_fixture(void)
+{
+	const uint8_t got[] = {HISTORY_BOOT, HISTORY_PAIRED, HISTORY_LINK_LOST,
+			       HISTORY_SURVEY, HISTORY_NOISE, HISTORY_USB_SUSPEND,
+			       HISTORY_USB_RESUME, HISTORY_CLEAR, HISTORY_LINK_UP};
+	uint8_t want[sizeof(got) + 1];
+	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
+
+	CHECK_EQ(want_len, sizeof(got));
+	CHECK_MEM(got, want, sizeof(got));
+}
+
 int main(void)
 {
 	RUN(test_request_carries_command_seq_and_arg);
@@ -183,6 +206,8 @@ int main(void)
 	RUN(test_minutes_match_fixture);
 	RUN(test_events_match_fixture);
 	RUN(test_noise_matches_fixture);
+	RUN(test_command_numbers_match_fixture);
+	RUN(test_event_type_numbers_match_fixture);
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	return TEST_EXIT();
 }
