@@ -6,7 +6,7 @@ use chrono::Local;
 use crate::device::{Device, Transport};
 use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, band_label, channel_role, describe_event,
-    last_packet, link_state_name, paired, reset_causes, uptime, usb_state, wall_clock,
+    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
 };
 use crate::protocol::Action;
 
@@ -110,7 +110,7 @@ pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
     }
     let s = dev.status()?;
     for c in dev.noise()? {
-        let bar = "#".repeat(usize::try_from(i16::from(c.loudest) + 100).unwrap_or(0) / 2);
+        let bar = "#".repeat(usize::from(noise_level(c.loudest)) / 2);
         let mark = match channel_role(c.channel, &s) {
             ChannelRole::Current => " current",
             ChannelRole::Paired => " paired",

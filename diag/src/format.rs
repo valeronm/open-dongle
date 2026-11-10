@@ -35,14 +35,14 @@ const WIFI_SPANS: [(u8, u8, u8); 3] = [(1, 2, 22), (6, 27, 47), (11, 52, 72)];
 // BLE advertises on 2402, 2426 and 2480 MHz.
 const BLE_ADVERTISING: [u8; 3] = [2, 26, 80];
 
-pub fn wifi_channel(channel: u8) -> Option<u8> {
+fn wifi_channel(channel: u8) -> Option<u8> {
     WIFI_SPANS
         .iter()
         .find(|(_, from, to)| (*from..=*to).contains(&channel))
         .map(|(number, _, _)| *number)
 }
 
-pub fn is_ble_advertising(channel: u8) -> bool {
+fn is_ble_advertising(channel: u8) -> bool {
     BLE_ADVERTISING.contains(&channel)
 }
 
@@ -78,6 +78,11 @@ pub fn noise_ruler(first: u8, count: u8) -> String {
         put(channel, '▲');
     }
     cells.into_iter().collect()
+}
+
+/// dBm above the -100 dBm floor, clamped at 0.
+pub fn noise_level(loudest: i8) -> u8 {
+    u8::try_from(i16::from(loudest) + 100).unwrap_or(0)
 }
 
 pub fn usb_state(live: bool, suspended: bool) -> &'static str {
@@ -262,6 +267,13 @@ mod tests {
         assert_eq!(band_label(26), "ble adv");
         assert_eq!(band_label(37), "wifi 6");
         assert_eq!(band_label(24), "");
+    }
+
+    #[test]
+    fn noise_level_counts_up_from_the_floor() {
+        assert_eq!(noise_level(-100), 0);
+        assert_eq!(noise_level(-110), 0);
+        assert_eq!(noise_level(-50), 50);
     }
 
     #[test]

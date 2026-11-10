@@ -18,7 +18,7 @@ use ratatui::{
 use crate::device::{self, Device, Transport};
 use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
-    link_state_name, noise_ruler, paired, uptime, usb_state, wall_clock,
+    link_state_name, noise_level, noise_ruler, paired, uptime, usb_state, wall_clock,
 };
 use crate::protocol::{Action, Event, Minute, NoiseChannel, Rssi, Status};
 
@@ -193,7 +193,6 @@ impl App {
             match device::open(self.serial.as_deref()) {
                 Ok(d) => {
                     self.device = Some(d);
-                    self.history = History::default();
                     self.message.clear();
                 }
                 Err(e) => {
@@ -339,7 +338,7 @@ impl App {
                     ChannelRole::Other => Color::Gray,
                 };
                 Bar::default()
-                    .value((i16::from(c.loudest) + 100).max(0) as u64)
+                    .value(u64::from(noise_level(c.loudest)))
                     .style(Style::default().fg(color))
                     .text_value(String::new())
             })
