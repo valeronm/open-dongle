@@ -98,7 +98,6 @@ impl<'a> Reader<'a> {
         Ok(self.u8()? as i8)
     }
 
-    #[expect(dead_code)]
     pub(crate) fn u16(&mut self) -> Result<u16> {
         Ok(u16::from_le_bytes(self.bytes()?))
     }
@@ -187,6 +186,117 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct Rssi {
+    pub min: i8,
+    pub avg: i8,
+    pub max: i8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct Minute {
+    pub packets: u16,
+    pub invalid: u8,
+    pub dropped: u8,
+    pub channel_changes: u8,
+    pub link_losses: u8,
+    pub usb_retries: u8,
+    pub rssi: Option<Rssi>,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
+    decode_page(payload, |r| {
+        let packets = r.u16()?;
+        let (invalid, dropped, channel_changes, link_losses, usb_retries) =
+            (r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?);
+        let rssi = Rssi {
+            min: r.i8()?,
+            avg: r.i8()?,
+            max: r.i8()?,
+        };
+        Ok(Minute {
+            packets,
+            invalid,
+            dropped,
+            channel_changes,
+            link_losses,
+            usb_retries,
+            rssi: (packets > 0).then_some(rssi),
+        })
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub enum EventKind {
+    Boot,
+    Paired,
+    LinkLost,
+    Survey,
+    Noise,
+    UsbSuspend,
+    UsbResume,
+    Forget,
+    Clear,
+    Unknown(u8),
+}
+
+impl From<u8> for EventKind {
+    fn from(v: u8) -> Self {
+        match v {
+            1 => Self::Boot,
+            2 => Self::Paired,
+            3 => Self::LinkLost,
+            4 => Self::Survey,
+            5 => Self::Noise,
+            6 => Self::UsbSuspend,
+            7 => Self::UsbResume,
+            8 => Self::Forget,
+            9 => Self::Clear,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct Event {
+    pub time_ms: u64,
+    pub kind: EventKind,
+    pub a: u8,
+    pub b: u8,
+    pub c: u8,
+    pub value: u32,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn decode_events(payload: &[u8]) -> Result<(u32, Vec<Event>)> {
+    decode_page(payload, |r| {
+        Ok(Event {
+            time_ms: r.u64()?,
+            kind: r.u8()?.into(),
+            a: r.u8()?,
+            b: r.u8()?,
+            c: r.u8()?,
+            value: r.u32()?,
+        })
+    })
+}
+
+fn decode_page<T>(
+    payload: &[u8],
+    mut item: impl FnMut(&mut Reader) -> Result<T>,
+) -> Result<(u32, Vec<T>)> {
+    let mut r = Reader::new(payload);
+    let first = r.u32()?;
+    let count = r.u8()?;
+    let items = (0..count).map(|_| item(&mut r)).collect::<Result<_>>()?;
+    Ok((first, items))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -263,5 +373,50 @@ pub(crate) mod tests {
                 code: 1
             })
         );
+    }
+
+    #[test]
+    fn minutes_fixture_decodes() {
+        let (first, m) = decode_minutes(&fixture("minutes.hex")).unwrap();
+        assert_eq!(first, 1440);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].packets, 300);
+        assert_eq!(m[0].usb_retries, 1);
+        assert_eq!(
+            m[0].rssi,
+            Some(Rssi {
+                min: -80,
+                avg: -70,
+                max: -60
+            })
+        );
+        assert_eq!((m[1].channel_changes, m[1].link_losses), (12, 1));
+        assert_eq!(m[1].rssi, None);
+    }
+
+    #[test]
+    fn events_fixture_decodes() {
+        let (first, e) = decode_events(&fixture("events.hex")).unwrap();
+        assert_eq!(first, 88);
+        assert_eq!(
+            e[0],
+            Event {
+                time_ms: 5000,
+                kind: EventKind::LinkLost,
+                a: 0xb9,
+                b: 0,
+                c: 0,
+                value: 1200
+            }
+        );
+        assert_eq!(e[1].kind, EventKind::Paired);
+        assert_eq!((e[1].a, e[1].b, e[1].c), (26, 30, 34));
+    }
+
+    #[test]
+    fn padding_after_the_count_is_ignored() {
+        let mut payload = fixture("minutes.hex");
+        payload.resize(CHUNK, 0);
+        assert_eq!(decode_minutes(&payload).unwrap().1.len(), 2);
     }
 }

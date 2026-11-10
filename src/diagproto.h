@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "history.h"
+
 #define DIAG_VERSION 1
 #define DIAG_REPORT_LEN 64
 #define DIAG_HEADER_LEN 4
@@ -12,6 +14,8 @@
 #define DIAG_REQUEST_LEN 6
 #define DIAG_ERROR_FLAG 0x80
 #define DIAG_PAYLOAD_MAX 640
+#define DIAG_MINUTES_PER_PAGE 60
+#define DIAG_EVENTS_PER_PAGE 32
 
 enum diag_command {
 	DIAG_STATUS = 1,
@@ -69,5 +73,9 @@ void diag_part(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 void diag_error_report(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 		       enum diag_error code);
 size_t diag_encode_status(uint8_t *out, const struct diag_status *s);
+size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m,
+			  size_t n);
+size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
+			 size_t n);
 
 #endif

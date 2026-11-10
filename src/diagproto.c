@@ -81,3 +81,38 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->events_oldest, 4);
 	return p - out;
 }
+
+size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m, size_t n)
+{
+	uint8_t *p = put_le(out, first, 4);
+
+	*p++ = n;
+	for (size_t i = 0; i < n; i++) {
+		p = put_le(p, m[i].packets, 2);
+		*p++ = m[i].invalid;
+		*p++ = m[i].dropped;
+		*p++ = m[i].channel_changes;
+		*p++ = m[i].link_losses;
+		*p++ = m[i].usb_retries;
+		*p++ = (uint8_t)m[i].rssi_min;
+		*p++ = (uint8_t)m[i].rssi_avg;
+		*p++ = (uint8_t)m[i].rssi_max;
+	}
+	return p - out;
+}
+
+size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e, size_t n)
+{
+	uint8_t *p = put_le(out, first, 4);
+
+	*p++ = n;
+	for (size_t i = 0; i < n; i++) {
+		p = put_le(p, e[i].time_ms, 8);
+		*p++ = e[i].type;
+		*p++ = e[i].a;
+		*p++ = e[i].b;
+		*p++ = e[i].c;
+		p = put_le(p, e[i].value, 4);
+	}
+	return p - out;
+}

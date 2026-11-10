@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "test.h"
 #include "diagproto.h"
+#include "history.h"
 
 static size_t load_fixture(const char *name, uint8_t *out, size_t max)
 {
@@ -113,6 +114,46 @@ static void test_error_sets_the_flag_and_code(void)
 	CHECK_EQ(part[DIAG_HEADER_LEN], DIAG_ERR_UNKNOWN_COMMAND);
 }
 
+static void test_minutes_match_fixture(void)
+{
+	const struct history_minute m[] = {
+		{.packets = 300, .usb_retries = 1, .rssi_min = -80, .rssi_avg = -70, .rssi_max = -60},
+		{.channel_changes = 12, .link_losses = 1},
+	};
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture("minutes.hex", want, sizeof(want));
+	size_t got_len = diag_encode_minutes(got, 1440, m, 2);
+
+	CHECK_EQ(got_len, want_len);
+	CHECK_MEM(got, want, want_len);
+}
+
+static void test_events_match_fixture(void)
+{
+	const struct history_event e[] = {
+		{.time_ms = 5000, .type = HISTORY_LINK_LOST, .a = (uint8_t)-71, .value = 1200},
+		{.time_ms = 7000, .type = HISTORY_PAIRED, .a = 26, .b = 30, .c = 34},
+	};
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture("events.hex", want, sizeof(want));
+	size_t got_len = diag_encode_events(got, 88, e, 2);
+
+	CHECK_EQ(got_len, want_len);
+	CHECK_MEM(got, want, want_len);
+}
+
+static void test_a_full_page_fits_the_payload_buffer(void)
+{
+	static const struct history_minute m[DIAG_MINUTES_PER_PAGE];
+	static const struct history_event e[DIAG_EVENTS_PER_PAGE];
+	uint8_t out[2 * DIAG_PAYLOAD_MAX];
+
+	CHECK(diag_encode_minutes(out, 0, m, DIAG_MINUTES_PER_PAGE) <= DIAG_PAYLOAD_MAX);
+	CHECK(diag_encode_events(out, 0, e, DIAG_EVENTS_PER_PAGE) <= DIAG_PAYLOAD_MAX);
+}
+
 int main(void)
 {
 	RUN(test_request_carries_command_seq_and_arg);
@@ -120,5 +161,8 @@ int main(void)
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);
 	RUN(test_an_empty_payload_is_one_part);
 	RUN(test_error_sets_the_flag_and_code);
+	RUN(test_minutes_match_fixture);
+	RUN(test_events_match_fixture);
+	RUN(test_a_full_page_fits_the_payload_buffer);
 	return TEST_EXIT();
 }
