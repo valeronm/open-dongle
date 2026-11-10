@@ -521,6 +521,7 @@ dependencies = [
  "chrono",
  "clap",
  "hidapi",
+ "libc",
  "ratatui",
 ]
 

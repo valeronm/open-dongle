@@ -8,4 +8,5 @@ anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 hidapi = { version = "2.6", default-features = false, features = ["linux-native-basic-udev"] }
+libc = "0.2"
 ratatui = "0.29"

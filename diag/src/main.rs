@@ -58,6 +58,10 @@ enum Cmd {
 }
 
 fn main() -> Result<()> {
+    // Rust starts with SIGPIPE ignored, which turns a closed output pipe into a println! panic.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let args = Args::parse();
     let Some(command) = args.command else {
         return view::run(args.serial);
