@@ -17,13 +17,13 @@ test)
 	cmake -S "$app/tests" -B "$app/build/tests" -G Ninja
 	cmake --build "$app/build/tests"
 	ctest --test-dir "$app/build/tests" --output-on-failure
-	cargo test --manifest-path "$app/diag/Cargo.toml"
-	cargo build --manifest-path "$app/diag/Cargo.toml"
+	cargo test --manifest-path "$app/tool/Cargo.toml"
+	cargo build --manifest-path "$app/tool/Cargo.toml"
 	;;
 flash)
 	port=${2:-/dev/ttyACM0}
 	"$nrfutil" dfu genpkg --dev-type 0x0052 \
-		--application "$app/build/app/nuphy-dongle/zephyr/zephyr.hex" "$app/build/app.zip"
+		--application "$app/build/app/$(basename "$app")/zephyr/zephyr.hex" "$app/build/app.zip"
 	"$nrfutil" dfu serial --package "$app/build/app.zip" -p "$port" -b 115200 \
 		--singlebank --touch 1200
 	;;

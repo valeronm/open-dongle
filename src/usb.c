@@ -20,8 +20,8 @@
 
 USBD_DEVICE_DEFINE(dongle_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), USB_VID, USB_PID);
 USBD_DESC_LANG_DEFINE(dongle_lang);
-USBD_DESC_MANUFACTURER_DEFINE(dongle_mfr, "nuphy-dongle");
-USBD_DESC_PRODUCT_DEFINE(dongle_product, "nuphy-dongle");
+USBD_DESC_MANUFACTURER_DEFINE(dongle_mfr, "OpenHardware");
+USBD_DESC_PRODUCT_DEFINE(dongle_product, "OpenDongle");
 USBD_DESC_SERIAL_NUMBER_DEFINE(dongle_sn);
 USBD_DESC_CONFIG_DEFINE(dongle_cfg_desc, "FS Configuration");
 USBD_CONFIGURATION_DEFINE(dongle_config, USB_SCD_REMOTE_WAKEUP, 50, &dongle_cfg_desc);

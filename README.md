@@ -1,6 +1,7 @@
-# nuphy-dongle
+# OpenDongle
 
-Replacement 2.4 GHz dongle for the NuPhy Air75 V2 keyboard, running on a Pro Micro nRF52840 (a nice!nano clone).
+An open replacement 2.4 GHz receiver for wireless keyboards, running on a Pro Micro nRF52840 (a
+nice!nano clone). The supported keyboard is the NuPhy Air75 V2.
 
 NuPhy's own dongle loses keys even with the keyboard 20 cm away. This one reads every packet the
 radio delivers, queues reports while USB is busy, and picks quiet channels when it pairs. The
@@ -25,7 +26,7 @@ it close to the dongle. If Wi-Fi around you changes and the link gets worse, pai
 
 ## Diagnostics
 
-`diag/` holds `nuphy-diag`, a tool that reads the dongle over a vendor HID interface: link state
+`tool/` holds `open-dongle`, a tool that reads the dongle over a vendor HID interface: link state
 and signal, per-minute counters for the last day, recent events and a radio noise map, plus reboot,
 bootloader and clear actions. With no arguments it shows a live view; `--help` lists the
 subcommands. The history lives in the dongle's RAM, so it covers only the time since the dongle was

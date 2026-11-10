@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand};
 use protocol::Action;
 
 #[derive(Parser)]
-#[command(version, about = "Diagnostics for the nuphy-dongle firmware")]
+#[command(version, about = "Diagnostics for the OpenDongle firmware")]
 struct Args {
     /// Serial number of the dongle, when more than one is plugged in
     #[arg(long, global = true)]

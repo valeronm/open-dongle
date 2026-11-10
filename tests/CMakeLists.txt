@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(nuphy_dongle_tests C)
+project(open_dongle_tests C)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -18,5 +18,5 @@ suite(chanpick ../src/chanpick.c)
 suite(link ../src/link.c ../src/protocol.c)
 suite(diagproto ../src/diagproto.c)
 target_compile_definitions(test_diagproto PRIVATE
-  FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../diag/fixtures")
+  FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tool/fixtures")
 suite(history ../src/history.c)

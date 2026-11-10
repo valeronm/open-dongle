@@ -300,7 +300,7 @@ impl App {
         ])
         .areas(f.area());
         f.render_widget(
-            Paragraph::new(self.status_lines()).block(Block::bordered().title("nuphy-dongle")),
+            Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle")),
             top,
         );
         match &self.noise {

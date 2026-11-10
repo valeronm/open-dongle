@@ -433,7 +433,7 @@ int main(void)
 		k_sleep(K_SECONDS(1));
 		watchdog_feed();
 	}
-	printk("nuphy-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
+	printk("open-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
 	       id[2], id[3], paired ? "paired" : "never paired", store_err, reset_cause);
 
 	for (;;) {
@@ -466,7 +466,7 @@ int main(void)
 		while (diag_take_request(&req)) {
 			serve_diag(&req);
 		}
-		if (IS_ENABLED(CONFIG_NUPHY_COUNTERS) && now - last_counters >= COUNTERS_EVERY_MS) {
+		if (IS_ENABLED(CONFIG_COUNTERS) && now - last_counters >= COUNTERS_EVERY_MS) {
 			print_counters();
 			last_counters = now;
 		}

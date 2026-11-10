@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(nuphy_dongle)
+project(open_dongle)
 
 target_sources(app PRIVATE
   src/main.c src/protocol.c src/reports.c src/chanpick.c src/link.c

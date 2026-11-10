@@ -1,6 +1,6 @@
-mainmenu "nuphy-dongle"
+mainmenu "open-dongle"
 
-config NUPHY_COUNTERS
+config COUNTERS
 	bool "Print link and USB counters on the console every 10 s"
 	default y
 
