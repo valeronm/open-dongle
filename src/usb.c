@@ -63,7 +63,7 @@ static const uint8_t keyboard_desc[] = {
 	HID_END_COLLECTION,
 };
 
-/* Same usage ranges as QMK's extra-keys reports, which the keyboard sends unchanged. */
+/* The keyboard sends QMK's extra-keys usage codes unchanged. */
 static const uint8_t extra_desc[] = {
 	HID_USAGE_PAGE(0x0c), /* Consumer */
 	HID_USAGE(0x01),
@@ -81,10 +81,14 @@ static const uint8_t extra_desc[] = {
 	HID_USAGE(0x80), /* System Control */
 	HID_COLLECTION(HID_COLLECTION_APPLICATION),
 	HID_REPORT_ID(EXTRA_ID_SYSTEM),
-	HID_LOGICAL_MIN8(0x01),
-	HID_LOGICAL_MAX16(0xb7, 0x00),
-	HID_USAGE_MIN8(0x01),
-	HID_USAGE_MAX16(0xb7, 0x00),
+	/*
+	 * Generic Desktop usages outside power, sleep and wake include joystick and D-pad ones, which
+	 * make a host treat the interface as a joystick.
+	 */
+	HID_LOGICAL_MIN16(0x81, 0x00), /* One-byte 0x81 and 0x83 would be negative. */
+	HID_LOGICAL_MAX16(0x83, 0x00),
+	HID_USAGE_MIN8(0x81),
+	HID_USAGE_MAX8(0x83),
 	HID_REPORT_SIZE(16),
 	HID_REPORT_COUNT(1),
 	HID_INPUT(0x00),
