@@ -17,6 +17,7 @@ test)
 	cmake -S "$app/tests" -B "$app/build/tests" -G Ninja
 	cmake --build "$app/build/tests"
 	ctest --test-dir "$app/build/tests" --output-on-failure
+	cargo test --manifest-path "$app/diag/Cargo.toml"
 	;;
 flash)
 	port=${2:-/dev/ttyACM0}
