@@ -20,6 +20,16 @@ pub enum ChannelRole {
     Other,
 }
 
+impl ChannelRole {
+    fn label(self) -> Option<&'static str> {
+        match self {
+            ChannelRole::Current => Some("current"),
+            ChannelRole::Paired => Some("paired"),
+            ChannelRole::Other => None,
+        }
+    }
+}
+
 pub fn channel_role(channel: u8, s: &Status) -> ChannelRole {
     if channel == s.channel {
         ChannelRole::Current
@@ -46,10 +56,15 @@ fn is_ble_advertising(channel: u8) -> bool {
     BLE_ADVERTISING.contains(&channel)
 }
 
-pub fn band_label(channel: u8) -> String {
+pub fn channel_description(channel: u8, s: &Status) -> String {
     let wifi = wifi_channel(channel).map(|k| format!("wifi {k}"));
     let ble = is_ble_advertising(channel).then(|| "ble adv".to_string());
-    wifi.into_iter().chain(ble).collect::<Vec<_>>().join(", ")
+    let role = channel_role(channel, s).label().map(str::to_string);
+    wifi.into_iter()
+        .chain(ble)
+        .chain(role)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub fn noise_ruler(first: u8, count: u8) -> String {
@@ -199,6 +214,7 @@ pub fn describe_event(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{decode_status, tests::fixture};
     use chrono::TimeZone;
 
     #[test]
@@ -262,11 +278,12 @@ mod tests {
     }
 
     #[test]
-    fn band_label_names_wifi_and_ble_channels() {
-        assert_eq!(band_label(2), "wifi 1, ble adv");
-        assert_eq!(band_label(26), "ble adv");
-        assert_eq!(band_label(37), "wifi 6");
-        assert_eq!(band_label(24), "");
+    fn channel_description_names_band_and_role() {
+        let s = decode_status(&fixture("status.hex")).unwrap();
+        assert_eq!(channel_description(2, &s), "wifi 1, ble adv");
+        assert_eq!(channel_description(26, &s), "ble adv, current");
+        assert_eq!(channel_description(30, &s), "wifi 6, paired");
+        assert_eq!(channel_description(24, &s), "");
     }
 
     #[test]

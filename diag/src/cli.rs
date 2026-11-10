@@ -5,8 +5,8 @@ use chrono::Local;
 
 use crate::device::{Device, Transport};
 use crate::format::{
-    ChannelRole, NOISE_QUESTION, action_question, band_label, channel_role, describe_event,
-    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
+    NOISE_QUESTION, action_question, channel_description, describe_event, last_packet,
+    link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
 };
 use crate::protocol::Action;
 
@@ -109,21 +109,22 @@ pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
         return Ok(());
     }
     let s = dev.status()?;
-    for c in dev.noise()? {
+    let rows: Vec<_> = dev
+        .noise()?
+        .into_iter()
+        .map(|c| (channel_description(c.channel, &s), c))
+        .collect();
+    let width = rows
+        .iter()
+        .map(|(d, _)| d.chars().count())
+        .max()
+        .unwrap_or(0);
+    for (description, c) in rows {
         let bar = "#".repeat(usize::from(noise_level(c.loudest)) / 2);
-        let mark = match channel_role(c.channel, &s) {
-            ChannelRole::Current => " current",
-            ChannelRole::Paired => " paired",
-            ChannelRole::Other => "",
-        };
-        let line = format!(
-            "{:3}  {:4} dBm  avg {:4}  {bar}{mark}  {}",
-            c.channel,
-            c.loudest,
-            c.average,
-            band_label(c.channel)
+        println!(
+            "{:3}  {description:<width$}  {:4} dBm  avg {:4}  {bar}",
+            c.channel, c.loudest, c.average
         );
-        println!("{}", line.trim_end());
     }
     Ok(())
 }
