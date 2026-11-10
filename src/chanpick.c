@@ -5,6 +5,19 @@
 
 #define NEIGHBORS 5
 
+/* The RF channels of BLE advertising channels 37, 38 and 39; 2 and 80 are also pairing_channels. */
+static const uint8_t excluded_channels[] = {2, 26, 80};
+
+static bool excluded(int ch)
+{
+	for (size_t i = 0; i < sizeof(excluded_channels); i++) {
+		if (ch == excluded_channels[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /* Wi-Fi transmits in bursts, which a mean would hide. */
 static int8_t busy_level(const int8_t samples[CHAN_SAMPLES])
 {
@@ -58,7 +71,7 @@ void chan_pick(const struct chan_survey *s, uint8_t out[3])
 			for (int p = 0; p < pick; p++) {
 				near |= abs(ch - out[p]) < CHAN_MIN_SPACING;
 			}
-			if (!near && (best < 0 || level[i] < level[best])) {
+			if (!near && !excluded(ch) && (best < 0 || level[i] < level[best])) {
 				best = i;
 			}
 		}

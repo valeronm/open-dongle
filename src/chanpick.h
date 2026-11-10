@@ -13,7 +13,10 @@ struct chan_survey {
 	int8_t dbm[CHAN_COUNT][CHAN_SAMPLES];
 };
 
-/* Writes the three quietest channels at least CHAN_MIN_SPACING apart, quietest first. */
+/*
+ * Writes the three quietest channels at least CHAN_MIN_SPACING apart, never a BLE advertising
+ * channel, quietest first.
+ */
 void chan_pick(const struct chan_survey *s, uint8_t out[3]);
 
 #endif
