@@ -2,17 +2,15 @@
 #include "link.h"
 
 #define IDLE_AFTER_MS 1000
-#define HOME_SLOT_MS 400
-#define PAIRING_SLOT_MS 100
+#define SLOT_MS 400
 #define STATUS_EVERY_MS 100
 /* The keyboard repeats a pair request that goes unanswered while a survey has the receiver off. */
 #define OFFER_REUSE_MS 10000
 
-static const uint8_t pairing_channels[] = {2, 50, 80};
+/* The keyboard pairs on channel 2 and only rarely visits its other pairing channels, 50 and 80. */
+#define PAIRING_CHANNEL 2
 /* The keyboard firmware fixes these channels besides the three it gets at pairing. */
 static const uint8_t fixed_channels[] = {16, 22, 44, 48, 58, 72, 78};
-
-#define IDLE_SLOTS (1 + sizeof(pairing_channels))
 
 static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 {
@@ -23,8 +21,8 @@ static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 
 static uint8_t slot_channel(const struct link *l)
 {
-	if (l->slot > 0) {
-		return pairing_channels[l->slot - 1];
+	if (l->on_pairing_channel) {
+		return PAIRING_CHANNEL;
 	}
 	return l->own_known ? l->own[0] : fixed_channels[l->fixed_next];
 }
@@ -33,7 +31,7 @@ static void go_idle(struct link *l, uint32_t now_ms, struct link_out *out)
 {
 	l->state = LINK_IDLE;
 	l->suspend_sent = false;
-	l->slot = 0;
+	l->on_pairing_channel = false;
 	l->slot_start_ms = now_ms;
 	set_channel(l, slot_channel(l), out);
 }
@@ -158,8 +156,9 @@ void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, ui
 		move_home(l, now_ms, out);
 		break;
 	case LINK_IDLE:
-		/* A keyboard heard on a pairing channel stays there until a send fails. */
-		l->state = (l->slot > 0 && l->own_known) ? LINK_MOVING_HOME : LINK_CONNECTED;
+		/* A keyboard heard on the pairing channel stays there until a send fails. */
+		l->state = (l->on_pairing_channel && l->own_known) ? LINK_MOVING_HOME
+								   : LINK_CONNECTED;
 		out->up = true;
 		reply_status(l, now_ms, out);
 		break;
@@ -207,9 +206,9 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 		}
 		break;
 	case LINK_IDLE:
-		if (now_ms - l->slot_start_ms >= (l->slot == 0 ? HOME_SLOT_MS : PAIRING_SLOT_MS)) {
-			l->slot = (l->slot + 1) % IDLE_SLOTS;
-			if (l->slot == 0 && !l->own_known) {
+		if (now_ms - l->slot_start_ms >= SLOT_MS) {
+			l->on_pairing_channel = !l->on_pairing_channel;
+			if (!l->on_pairing_channel && !l->own_known) {
 				l->fixed_next = (l->fixed_next + 1) % sizeof(fixed_channels);
 			}
 			l->slot_start_ms = now_ms;

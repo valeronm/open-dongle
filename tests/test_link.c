@@ -98,7 +98,7 @@ static void connect_and_suspend(void)
 	expect_suspend(2);
 }
 
-static void test_never_paired_idle_cycles_fixed_and_pairing_channels(void)
+static void test_never_paired_idle_alternates_fixed_channels_with_channel_2(void)
 {
 	init(NULL);
 	CHECK_EQ(out.channel, 16);
@@ -106,23 +106,22 @@ static void test_never_paired_idle_cycles_fixed_and_pairing_channels(void)
 	CHECK(!out.set_channel);
 	tick(400);
 	CHECK_EQ(out.channel, 2);
-	tick(500);
-	CHECK_EQ(out.channel, 50);
-	tick(600);
-	CHECK_EQ(out.channel, 80);
-	tick(700);
+	tick(799);
+	CHECK(!out.set_channel);
+	tick(800);
 	CHECK_EQ(out.channel, 22);
 	CHECK_EQ(link_led(&l), LINK_LED_IDLE);
 }
 
-static void test_paired_idle_returns_to_home(void)
+static void test_paired_idle_alternates_home_with_channel_2(void)
 {
 	init(home);
 	CHECK_EQ(out.channel, 26);
 	tick(400);
-	tick(500);
-	tick(600);
-	tick(700);
+	CHECK_EQ(out.channel, 2);
+	tick(799);
+	CHECK(!out.set_channel);
+	tick(800);
 	CHECK_EQ(out.channel, 26);
 }
 
@@ -354,7 +353,7 @@ static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
 }
 
-static void hear_keyboard_on_a_pairing_slot(const uint8_t *own)
+static void hear_keyboard_on_the_pairing_channel(const uint8_t *own)
 {
 	init(own);
 	tick(400);
@@ -362,9 +361,9 @@ static void hear_keyboard_on_a_pairing_slot(const uint8_t *own)
 	message(PROTO_KEEPALIVE, 1, 410);
 }
 
-static void test_a_keyboard_heard_on_a_pairing_slot_is_moved_home(void)
+static void test_a_keyboard_heard_on_the_pairing_channel_is_moved_home(void)
 {
-	hear_keyboard_on_a_pairing_slot(home);
+	hear_keyboard_on_the_pairing_channel(home);
 	CHECK(out.up);
 	CHECK(!out.set_channel);
 	expect_status(1, 0);
@@ -387,14 +386,14 @@ static void test_a_keyboard_heard_on_a_pairing_slot_is_moved_home(void)
 
 static void test_silence_after_the_move_home_starts_loses_the_link(void)
 {
-	hear_keyboard_on_a_pairing_slot(home);
+	hear_keyboard_on_the_pairing_channel(home);
 	tick(1410);
 	CHECK(out.lost);
 }
 
-static void test_a_keyboard_heard_on_a_pairing_slot_of_a_never_paired_dongle_stays(void)
+static void test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongle_stays(void)
 {
-	hear_keyboard_on_a_pairing_slot(NULL);
+	hear_keyboard_on_the_pairing_channel(NULL);
 	CHECK(out.up);
 	CHECK(!out.set_channel);
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
@@ -402,8 +401,8 @@ static void test_a_keyboard_heard_on_a_pairing_slot_of_a_never_paired_dongle_sta
 
 int main(void)
 {
-	RUN(test_never_paired_idle_cycles_fixed_and_pairing_channels);
-	RUN(test_paired_idle_returns_to_home);
+	RUN(test_never_paired_idle_alternates_fixed_channels_with_channel_2);
+	RUN(test_paired_idle_alternates_home_with_channel_2);
 	RUN(test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed);
 	RUN(test_confirm_for_another_dongle_is_ignored);
 	RUN(test_a_request_soon_after_a_survey_reuses_its_channels);
@@ -421,8 +420,8 @@ int main(void)
 	RUN(test_a_radio_pause_restarts_the_silence_timer);
 	RUN(test_traffic_after_a_loss_reports_the_link_up);
 	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
-	RUN(test_a_keyboard_heard_on_a_pairing_slot_is_moved_home);
+	RUN(test_a_keyboard_heard_on_the_pairing_channel_is_moved_home);
 	RUN(test_silence_after_the_move_home_starts_loses_the_link);
-	RUN(test_a_keyboard_heard_on_a_pairing_slot_of_a_never_paired_dongle_stays);
+	RUN(test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongle_stays);
 	return TEST_EXIT();
 }

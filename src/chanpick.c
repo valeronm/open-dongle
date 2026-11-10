@@ -5,7 +5,8 @@
 
 #define NEIGHBORS 5
 
-/* The RF channels of BLE advertising channels 37, 38 and 39; 2 and 80 are also pairing_channels. */
+/* The RF channels of BLE advertising channels 37, 38 and 39; 2 and 80 are also the keyboard's
+ * pairing channels. */
 static const uint8_t excluded_channels[] = {2, 26, 80};
 
 static bool excluded(int ch)

@@ -46,7 +46,7 @@ struct link {
 	bool offer_valid;
 	uint32_t offered_ms;
 	uint8_t channel;
-	uint8_t slot;
+	bool on_pairing_channel;
 	uint8_t fixed_next;
 	uint32_t slot_start_ms;
 	uint32_t last_rx_ms;
