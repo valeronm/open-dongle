@@ -62,6 +62,13 @@ static void watchdog_start(void)
 	}
 }
 
+static void watchdog_feed(void)
+{
+	if (wdt_channel >= 0) {
+		wdt_feed(wdt, wdt_channel);
+	}
+}
+
 static void show_state(void)
 {
 	static const enum indicator_mode by_link[] = {
@@ -100,6 +107,7 @@ static void unlock_reports(bool wake_senders)
 
 static void apply(const struct link_out *out)
 {
+	/* radio_set_channel flushes queued replies. */
 	if (out->set_channel && radio_set_channel(out->channel) == 0) {
 		counters.channel_changes++;
 	}
@@ -247,14 +255,15 @@ int main(void)
 	store_err = store_init();
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
+	watchdog_start();
 	while ((err = radio_start(id, out.channel, on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);
 		printk("radio start failed: %d\n", err);
 		k_sleep(K_SECONDS(1));
+		watchdog_feed();
 	}
 	printk("nuphy-dongle id %02x%02x%02x%02x %s, store %d\n", id[0], id[1], id[2], id[3],
 	       paired ? "paired" : "never paired", store_err);
-	watchdog_start();
 
 	for (;;) {
 		struct rx_item item;
@@ -274,8 +283,6 @@ int main(void)
 			last_counters = now;
 		}
 		show_state();
-		if (wdt_channel >= 0) {
-			wdt_feed(wdt, wdt_channel);
-		}
+		watchdog_feed();
 	}
 }
