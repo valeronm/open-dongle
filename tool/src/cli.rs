@@ -1,14 +1,19 @@
 use std::io::Write;
 
-use anyhow::Result;
+use std::path::Path;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
 use chrono::Local;
 
-use crate::device::{Device, Transport};
+use crate::board::{self, State};
+use crate::device::{self, Device, Transport};
 use crate::format::{
-    NOISE_QUESTION, action_question, channel_description, describe_event, last_packet,
-    link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
+    NOISE_QUESTION, action_question, channel_description, describe_event, flash_question,
+    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
 };
 use crate::protocol::Action;
+use crate::{dfu, uf2};
 
 pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     let s = dev.status()?;
@@ -140,4 +145,75 @@ pub fn action<T: Transport>(dev: &mut Device<T>, action: Action, yes: bool) -> R
         println!("{done}");
     }
     Ok(())
+}
+
+const RETURN_WAIT: Duration = Duration::from_secs(10);
+
+/// Checks `file` before any board is touched, then restarts the board into its bootloader if
+/// needed, uploads, and waits for the firmware to report back.
+pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
+    let bytes = std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+    let image =
+        uf2::image(&bytes).with_context(|| format!("{} is not usable firmware", file.display()))?;
+    let board = board::pick(board::find()?, serial)?;
+    let name = file.file_name().map_or_else(
+        || file.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    if !confirm(
+        &flash_question(board.kind.state(), &board.serial, &name),
+        yes,
+    )? {
+        return Ok(());
+    }
+    let port = board::into_bootloader(&board)?;
+    let mut bootloader = board::open_port(&port, 115_200)?;
+    bootloader
+        .write_data_terminal_ready(true)
+        .context("raising DTR")?;
+    let mut shown = None;
+    dfu::upload(
+        &mut bootloader,
+        &image,
+        &mut std::thread::sleep,
+        &mut |done, total| {
+            let percent = done * 100 / total;
+            if shown != Some(percent) {
+                shown = Some(percent);
+                print!("\ruploading {percent:3}%");
+                let _ = std::io::stdout().flush();
+            }
+        },
+    )
+    .context(
+        "the upload broke off; the board stays in its bootloader until it is unplugged and \
+         plugged back in, then run flash again",
+    )?;
+    println!();
+    drop(bootloader);
+    board::wait_for(&board.serial, State::Dongle, RETURN_WAIT).context(
+        "the board did not come back after flashing; if a replug doesn't bring it back, this \
+         firmware can't run on it",
+    )?;
+    let status = device::open(Some(&board.serial))?.status()?;
+    println!(
+        "flashed; OpenDongle running, up {}",
+        uptime(status.uptime_ms)
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bad_file_stops_before_any_board_is_looked_for() {
+        let path =
+            std::env::temp_dir().join(format!("open-dongle-not-uf2-{}.bin", std::process::id()));
+        std::fs::write(&path, [0u8; 100]).unwrap();
+        let err = flash(&path, Some("no-such-board"), true).unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+        assert!(format!("{err:#}").contains("UF2"), "{err:#}");
+    }
 }

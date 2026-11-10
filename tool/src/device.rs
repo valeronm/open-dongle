@@ -144,11 +144,14 @@ impl Transport for HidTransport {
     }
 }
 
+pub fn dongles(api: &hidapi::HidApi) -> impl Iterator<Item = &hidapi::DeviceInfo> {
+    api.device_list()
+        .filter(|d| d.vendor_id() == VID && d.product_id() == PID && d.usage_page() == USAGE_PAGE)
+}
+
 pub fn open(serial: Option<&str>) -> Result<Device<HidTransport>> {
     let api = hidapi::HidApi::new().context("starting hidapi")?;
-    let found: Vec<_> = api
-        .device_list()
-        .filter(|d| d.vendor_id() == VID && d.product_id() == PID && d.usage_page() == USAGE_PAGE)
+    let found: Vec<_> = dongles(&api)
         .filter(|d| serial.is_none_or(|s| d.serial_number() == Some(s)))
         .collect();
     let info = match found.as_slice() {

@@ -334,13 +334,23 @@ fn decode_page<T>(
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) fn fixture(name: &str) -> Vec<u8> {
+    fn fixture_text(name: &str) -> String {
         let path = format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-        std::fs::read_to_string(path)
-            .unwrap()
-            .split_whitespace()
+        std::fs::read_to_string(path).unwrap()
+    }
+
+    fn parse_hex(text: &str) -> Vec<u8> {
+        text.split_whitespace()
             .map(|b| u8::from_str_radix(b, 16).unwrap())
             .collect()
+    }
+
+    pub(crate) fn fixture(name: &str) -> Vec<u8> {
+        parse_hex(&fixture_text(name))
+    }
+
+    pub(crate) fn fixture_lines(name: &str) -> Vec<Vec<u8>> {
+        fixture_text(name).lines().map(parse_hex).collect()
     }
 
     #[test]

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Duration, Local};
 
+use crate::board::State;
 use crate::protocol::{Action, Event, EventKind, Status};
 
 pub const NOISE_QUESTION: &str =
@@ -11,6 +12,15 @@ pub fn action_question(action: Action) -> &'static str {
         Action::Bootloader => "Reboot the dongle into its bootloader?",
         Action::Clear => "Clear the counters, history and events?",
     }
+}
+
+pub fn flash_question(state: State, serial: &str, file: &str) -> String {
+    let state = match state {
+        State::Dongle => "running OpenDongle",
+        State::Bootloader => "in its bootloader",
+        State::Factory => "running its factory program",
+    };
+    format!("Flash {file} onto board {serial}, {state}?")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +243,15 @@ mod tests {
     use super::*;
     use crate::protocol::{decode_status, tests::fixture};
     use chrono::TimeZone;
+
+    #[test]
+    fn the_flash_question_names_the_file_the_board_and_its_state() {
+        let q = flash_question(State::Factory, "55D8CCC8B3E3E5D1", "zephyr.uf2");
+        assert_eq!(
+            q,
+            "Flash zephyr.uf2 onto board 55D8CCC8B3E3E5D1, running its factory program?"
+        );
+    }
 
     #[test]
     fn describes_the_link_coming_back() {

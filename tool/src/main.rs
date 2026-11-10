@@ -1,7 +1,10 @@
+mod board;
 mod cli;
 mod device;
+mod dfu;
 mod format;
 mod protocol;
+mod uf2;
 mod view;
 
 use anyhow::Result;
@@ -12,7 +15,7 @@ use protocol::Action;
 #[derive(Parser)]
 #[command(version, about = "Diagnostics for the OpenDongle firmware")]
 struct Args {
-    /// Serial number of the dongle, when more than one is plugged in
+    /// Serial number of the board, when more than one is plugged in
     #[arg(long, global = true)]
     serial: Option<String>,
     #[command(subcommand)]
@@ -50,6 +53,13 @@ enum Cmd {
         #[arg(long)]
         yes: bool,
     },
+    /// Write a firmware image (.uf2) to the board, restarting it into its bootloader first
+    Flash {
+        /// The firmware file, for example build/app/open-dongle/zephyr/zephyr.uf2
+        file: std::path::PathBuf,
+        #[arg(long)]
+        yes: bool,
+    },
     /// Zero the counters, history and events
     Clear {
         #[arg(long)]
@@ -66,14 +76,15 @@ fn main() -> Result<()> {
     let Some(command) = args.command else {
         return view::run(args.serial);
     };
-    let mut dev = device::open(args.serial.as_deref())?;
+    let dev = || device::open(args.serial.as_deref());
     match command {
-        Cmd::Status => cli::status(&mut dev),
-        Cmd::History { minutes } => cli::history(&mut dev, minutes),
-        Cmd::Events { count } => cli::events(&mut dev, count),
-        Cmd::Noise { yes } => cli::noise(&mut dev, yes),
-        Cmd::Reboot { yes } => cli::action(&mut dev, Action::Reboot, yes),
-        Cmd::Bootloader { yes } => cli::action(&mut dev, Action::Bootloader, yes),
-        Cmd::Clear { yes } => cli::action(&mut dev, Action::Clear, yes),
+        Cmd::Flash { file, yes } => cli::flash(&file, args.serial.as_deref(), yes),
+        Cmd::Status => cli::status(&mut dev()?),
+        Cmd::History { minutes } => cli::history(&mut dev()?, minutes),
+        Cmd::Events { count } => cli::events(&mut dev()?, count),
+        Cmd::Noise { yes } => cli::noise(&mut dev()?, yes),
+        Cmd::Reboot { yes } => cli::action(&mut dev()?, Action::Reboot, yes),
+        Cmd::Bootloader { yes } => cli::action(&mut dev()?, Action::Bootloader, yes),
+        Cmd::Clear { yes } => cli::action(&mut dev()?, Action::Clear, yes),
     }
 }
