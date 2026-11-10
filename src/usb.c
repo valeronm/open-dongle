@@ -26,7 +26,42 @@ USBD_DESC_SERIAL_NUMBER_DEFINE(dongle_sn);
 USBD_DESC_CONFIG_DEFINE(dongle_cfg_desc, "FS Configuration");
 USBD_CONFIGURATION_DEFINE(dongle_config, USB_SCD_REMOTE_WAKEUP, 50, &dongle_cfg_desc);
 
-static const uint8_t keyboard_desc[] = HID_KEYBOARD_REPORT_DESC();
+/* The Zephyr macro's key array stops at logical and usage maximum 101, which hosts enforce. */
+static const uint8_t keyboard_desc[] = {
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_KEYBOARD),
+	HID_COLLECTION(HID_COLLECTION_APPLICATION),
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP_KEYPAD),
+	HID_USAGE_MIN8(0xe0),
+	HID_USAGE_MAX8(0xe7),
+	HID_LOGICAL_MIN8(0),
+	HID_LOGICAL_MAX8(1),
+	HID_REPORT_SIZE(1),
+	HID_REPORT_COUNT(8),
+	HID_INPUT(0x02),
+	HID_REPORT_SIZE(8),
+	HID_REPORT_COUNT(1),
+	HID_INPUT(0x03),
+	HID_REPORT_SIZE(1),
+	HID_REPORT_COUNT(5),
+	HID_USAGE_PAGE(HID_USAGE_GEN_LEDS),
+	HID_USAGE_MIN8(1),
+	HID_USAGE_MAX8(5),
+	HID_OUTPUT(0x02),
+	HID_REPORT_SIZE(3),
+	HID_REPORT_COUNT(1),
+	HID_OUTPUT(0x03),
+	HID_REPORT_SIZE(8),
+	HID_REPORT_COUNT(6),
+	HID_LOGICAL_MIN8(0),
+	/* A one-byte 0xff is -1 as a logical maximum. */
+	HID_LOGICAL_MAX16(0xff, 0x00),
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP_KEYPAD),
+	HID_USAGE_MIN8(0),
+	HID_USAGE_MAX8(0xff),
+	HID_INPUT(0x00),
+	HID_END_COLLECTION,
+};
 
 /* Same usage ranges as QMK's extra-keys reports, which the keyboard sends unchanged. */
 static const uint8_t extra_desc[] = {
