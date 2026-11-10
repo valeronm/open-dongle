@@ -121,6 +121,13 @@ static void on_connected_message(struct link *l, uint32_t now_ms, struct link_ou
 	}
 }
 
+static void move_home(struct link *l, uint32_t now_ms, struct link_out *out)
+{
+	l->state = LINK_CONNECTED;
+	set_channel(l, l->own[0], out);
+	reply_status(l, now_ms, out);
+}
+
 void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out)
 {
@@ -137,15 +144,18 @@ void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, ui
 	l->last_rx_ms = now_ms;
 	switch (l->state) {
 	case LINK_CONFIRMED:
-	case LINK_MOVING_HOME:
 		/* This packet's ACK carried the status queued on entering this state. */
-		if (l->state == LINK_MOVING_HOME) {
-			out->moved = true;
-			out->moved_from = l->channel;
+		move_home(l, now_ms, out);
+		break;
+	case LINK_MOVING_HOME:
+		/* A keyboard follows a move only after taking a status, which its hello shows. */
+		if (m->kind != PROTO_HELLO) {
+			on_connected_message(l, now_ms, out);
+			break;
 		}
-		l->state = LINK_CONNECTED;
-		set_channel(l, l->own[0], out);
-		reply_status(l, now_ms, out);
+		out->moved = true;
+		out->moved_from = l->channel;
+		move_home(l, now_ms, out);
 		break;
 	case LINK_IDLE:
 		/* A keyboard heard on a pairing channel stays there until a send fails. */

@@ -370,11 +370,18 @@ static void test_a_keyboard_heard_on_a_pairing_slot_is_moved_home(void)
 	expect_status(1, 0);
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
 	message(PROTO_KEEPALIVE, 1, 450);
+	CHECK(!out.moved);
+	CHECK(!out.set_channel);
+	CHECK(!out.reply);
+	message(PROTO_KEEPALIVE, 1, 510);
+	CHECK(!out.set_channel);
+	expect_status(2, 0);
+	message(PROTO_HELLO, 1, 520);
 	CHECK(out.moved);
 	CHECK_EQ(out.moved_from, 2);
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, home[0]);
-	expect_status(2, 0);
+	expect_status(3, 0);
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
 }
 
