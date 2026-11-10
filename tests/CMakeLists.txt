@@ -16,3 +16,6 @@ suite(protocol ../src/protocol.c)
 suite(reports ../src/reports.c ../src/protocol.c)
 suite(chanpick ../src/chanpick.c)
 suite(link ../src/link.c ../src/protocol.c)
+suite(diagproto ../src/diagproto.c)
+target_compile_definitions(test_diagproto PRIVATE
+  FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../diag/fixtures")
