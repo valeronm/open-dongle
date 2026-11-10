@@ -23,6 +23,19 @@ it close to the dongle. If Wi-Fi around you changes and the link gets worse, pai
 | off | the PC has suspended USB |
 | three flashes every two seconds | the radio failed to start |
 
+## Diagnostics
+
+`diag/` holds `nuphy-diag`, a tool that reads the dongle over a vendor HID interface: link state
+and signal, per-minute counters for the last day, recent events and a radio noise map, plus reboot,
+bootloader and clear actions. With no arguments it shows a live view; `--help` lists the
+subcommands. The history lives in the dongle's RAM, so it covers only the time since the dongle was
+last plugged in or reset. A noise map stops the keyboard for about 1.5 s, because the radio cannot
+listen while it measures.
+
+Build the tool on the machine that runs it: a macOS binary cannot be built on Linux without Apple's
+SDK, and on macOS the HID library needs the Xcode command line tools. On Linux, the rule in
+`tools/udev` makes the interface readable without root.
+
 ## Limits
 
 Mouse keys, more than six simultaneous keys, and NuPhy's configuration channel are not supported.
@@ -32,6 +45,7 @@ Mouse keys, more than six simultaneous keys, and NuPhy's configuration channel a
 Requires nRF Connect SDK v3.4.2 in `/opt/ncs/v3.4.2` with Zephyr SDK 1.0.1 in
 `/opt/ncs/zephyr-sdk-1.0.1`, and `adafruit-nrfutil` in `/opt/ncs/nrfutil-venv`. The ESB library
 and the USB device stack change their APIs between SDK releases, so other versions are untested.
+`./build.sh test` also runs the tool's tests, so it needs a Rust toolchain.
 
 ```
 ./build.sh build
