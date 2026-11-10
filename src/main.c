@@ -312,7 +312,11 @@ static void fill_status(struct diag_status *s)
 
 static void run_noise(const struct diag_request *req, uint8_t *payload)
 {
-	int err = survey_radio();
+	int err;
+
+	/* The receiver goes deaf during the survey, so a key held now stays down on the host. */
+	release_keys();
+	err = survey_radio();
 
 	if (err) {
 		diag_reply_error(req, DIAG_ERR_RADIO);
