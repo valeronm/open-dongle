@@ -1,4 +1,5 @@
 #include <string.h>
+#include <zephyr/drivers/hwinfo.h>
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
@@ -31,6 +32,7 @@ static struct link link;
 static struct reports reports;
 static struct chan_survey survey;
 static atomic_t host_leds;
+static int8_t last_rssi;
 
 static struct {
 	uint32_t packets;
@@ -122,6 +124,8 @@ static void apply(const struct link_out *out)
 	}
 	if (out->lost) {
 		counters.link_losses++;
+		printk("link lost after %u ms, last rssi %d\n", k_uptime_get_32() - link.last_rx_ms,
+		       last_rssi);
 		lock_reports();
 		reports_release_all(&reports);
 		unlock_reports(true);
@@ -158,6 +162,7 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	counters.packets++;
+	last_rssi = item->rssi;
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	apply(&out);
 	if (out.start_survey) {
@@ -233,6 +238,7 @@ int main(void)
 	};
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
+	uint32_t reset_cause = 0;
 	uint8_t id[4];
 	uint8_t own[3];
 	struct link_out out = {0};
@@ -241,6 +247,8 @@ int main(void)
 	int err;
 
 	memcpy(id, &raw, sizeof(id));
+	hwinfo_get_reset_cause(&reset_cause);
+	hwinfo_clear_reset_cause();
 	reports_init(&reports);
 	for (int iface = 0; iface < REPORT_IFACES; iface++) {
 		k_sem_init(&reports_ready[iface], 0, 1);
@@ -262,8 +270,8 @@ int main(void)
 		k_sleep(K_SECONDS(1));
 		watchdog_feed();
 	}
-	printk("nuphy-dongle id %02x%02x%02x%02x %s, store %d\n", id[0], id[1], id[2], id[3],
-	       paired ? "paired" : "never paired", store_err);
+	printk("nuphy-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
+	       id[2], id[3], paired ? "paired" : "never paired", store_err, reset_cause);
 
 	for (;;) {
 		struct rx_item item;
