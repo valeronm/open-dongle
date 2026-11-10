@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -24,6 +25,7 @@ use crate::protocol::{Action, Event, Minute, NoiseChannel, Rssi, Status};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
+const EVENT_ROWS: usize = 8;
 
 type MinuteValue = fn(&Minute) -> u64;
 
@@ -65,6 +67,8 @@ pub(crate) struct History {
     pub(crate) boot: Option<DateTime<Local>>,
     pub(crate) minutes: Vec<(u32, Minute)>,
     pub(crate) events: Vec<(u32, Event)>,
+    /// The number of the event shown at the top of the events list, or `None` to follow the newest.
+    pub(crate) events_top: Option<u32>,
 }
 
 impl History {
@@ -77,6 +81,7 @@ impl History {
         {
             self.minutes.clear();
             self.events.clear();
+            self.events_top = None;
             self.boot = None;
         }
         self.boot
@@ -99,6 +104,45 @@ impl History {
         self.status = Some(s);
         Ok(())
     }
+}
+
+#[derive(Clone, Copy)]
+enum EventsMove {
+    Older(usize),
+    Newer(usize),
+    Newest,
+    Oldest,
+}
+
+/// The held events to show, oldest first, ending at the one numbered `top` or, without one, at the
+/// newest.
+fn events_window(events: &[(u32, Event)], top: Option<u32>, rows: usize) -> Range<usize> {
+    let end = top.map_or(events.len(), |top| {
+        events.partition_point(|(i, _)| *i <= top)
+    });
+    let end = at_least_a_page(end, events.len(), rows);
+    end.saturating_sub(rows)..end
+}
+
+fn at_least_a_page(end: usize, len: usize, rows: usize) -> usize {
+    end.max(rows.min(len))
+}
+
+fn scrolled_top(
+    events: &[(u32, Event)],
+    top: Option<u32>,
+    rows: usize,
+    step: EventsMove,
+) -> Option<u32> {
+    let end = events_window(events, top, rows).end;
+    let end = match step {
+        EventsMove::Older(n) => end.saturating_sub(n),
+        EventsMove::Newer(n) => end + n,
+        EventsMove::Newest => events.len(),
+        EventsMove::Oldest => 0,
+    };
+    let end = at_least_a_page(end, events.len(), rows);
+    (end < events.len()).then(|| events[end - 1].0)
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +169,7 @@ struct App {
     prompt: Option<Prompt>,
     message: String,
     scroll: usize,
+    event_rows: usize,
 }
 
 pub fn run(serial: Option<String>) -> Result<()> {
@@ -137,6 +182,7 @@ pub fn run(serial: Option<String>) -> Result<()> {
         prompt: None,
         message: String::new(),
         scroll: 0,
+        event_rows: EVENT_ROWS,
     };
     let result = app.run(&mut terminal);
     ratatui::restore();
@@ -183,9 +229,24 @@ impl App {
                 KeyCode::Esc => self.noise = None,
                 KeyCode::Left => self.scroll += 10,
                 KeyCode::Right => self.scroll = self.scroll.saturating_sub(10),
+                KeyCode::Up => self.scroll_events(EventsMove::Newer(1)),
+                KeyCode::Down => self.scroll_events(EventsMove::Older(1)),
+                KeyCode::PageUp => self.scroll_events(EventsMove::Newer(self.event_rows)),
+                KeyCode::PageDown => self.scroll_events(EventsMove::Older(self.event_rows)),
+                KeyCode::Home => self.scroll_events(EventsMove::Newest),
+                KeyCode::End => self.scroll_events(EventsMove::Oldest),
                 _ => {}
             }
         }
+    }
+
+    fn scroll_events(&mut self, step: EventsMove) {
+        self.history.events_top = scrolled_top(
+            &self.history.events,
+            self.history.events_top,
+            self.event_rows,
+            step,
+        );
     }
 
     fn poll(&mut self) {
@@ -234,7 +295,7 @@ impl App {
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(9),
-            Constraint::Length(10),
+            Constraint::Length(EVENT_ROWS as u16 + 2),
             Constraint::Length(1),
         ])
         .areas(f.area());
@@ -250,7 +311,7 @@ impl App {
         let help = match self.prompt {
             Some(p) => p.question(),
             None if !self.message.is_empty() => self.message.clone(),
-            None => "n noise  r reboot  b bootloader  c clear  ←/→ scroll  esc back  q quit".into(),
+            None => "n noise  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit".into(),
         };
         f.render_widget(Paragraph::new(help), footer);
     }
@@ -363,14 +424,24 @@ impl App {
         f.render_widget(Paragraph::new(noise_ruler(first, count)), under_bars);
     }
 
-    fn draw_events(&self, f: &mut Frame, area: Rect) {
+    fn draw_events(&mut self, f: &mut Frame, area: Rect) {
+        self.event_rows = usize::from(area.height.saturating_sub(2));
+        let events = &self.history.events;
+        let shown = events_window(events, self.history.events_top, self.event_rows);
+        let title = if shown.end == events.len() {
+            "events".to_string()
+        } else {
+            format!(
+                "events, {}–{} of {} (Home for newest)",
+                events.len() - shown.end + 1,
+                events.len() - shown.start,
+                events.len()
+            )
+        };
         let items: Vec<ListItem> = match self.history.boot {
-            Some(boot) => self
-                .history
-                .events
+            Some(boot) => events[shown]
                 .iter()
                 .rev()
-                .take(usize::from(area.height.saturating_sub(2)))
                 .map(|(_, e)| {
                     let at = boot + TimeDelta::milliseconds(e.time_ms as i64);
                     ListItem::new(format!("{}  {}", at.format("%H:%M:%S"), describe_event(e)))
@@ -378,10 +449,7 @@ impl App {
                 .collect(),
             None => Vec::new(),
         };
-        f.render_widget(
-            List::new(items).block(Block::bordered().title("events")),
-            area,
-        );
+        f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
     }
 }
 
@@ -389,7 +457,67 @@ impl App {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, parts};
+    use crate::protocol::EventKind;
     use crate::protocol::tests::fixture;
+
+    fn events(indexes: Range<u32>) -> Vec<(u32, Event)> {
+        let event = Event {
+            time_ms: 0,
+            kind: EventKind::LinkLost,
+            a: 0,
+            b: 0,
+            c: 0,
+            value: 0,
+        };
+        indexes.map(|i| (i, event)).collect()
+    }
+
+    #[test]
+    fn the_events_list_follows_the_newest() {
+        let held = events(10..30);
+        assert_eq!(events_window(&held, None, 8), 12..20);
+        assert_eq!(events_window(&held[..5], None, 8), 0..5);
+        assert_eq!(events_window(&[], None, 8), 0..0);
+        assert_eq!(
+            scrolled_top(&held[..5], None, 8, EventsMove::Older(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn scrolling_holds_the_shown_events_as_new_ones_arrive() {
+        let held = events(10..30);
+        let top = scrolled_top(&held, None, 8, EventsMove::Older(3));
+        assert_eq!(top, Some(26));
+        assert_eq!(events_window(&held, top, 8), 9..17);
+        let more = events(10..35);
+        assert_eq!(events_window(&more, top, 8), 9..17);
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_oldest_page() {
+        let held = events(10..30);
+        let top = scrolled_top(&held, None, 8, EventsMove::Older(100));
+        assert_eq!(top, Some(17));
+        assert_eq!(scrolled_top(&held, top, 8, EventsMove::Older(1)), Some(17));
+        assert_eq!(scrolled_top(&held, None, 8, EventsMove::Oldest), Some(17));
+    }
+
+    #[test]
+    fn scrolling_back_to_the_newest_follows_it_again() {
+        let held = events(10..30);
+        let top = scrolled_top(&held, None, 8, EventsMove::Older(3));
+        assert_eq!(scrolled_top(&held, top, 8, EventsMove::Newer(2)), Some(28));
+        assert_eq!(scrolled_top(&held, top, 8, EventsMove::Newer(3)), None);
+        assert_eq!(scrolled_top(&held, top, 8, EventsMove::Newer(50)), None);
+        assert_eq!(scrolled_top(&held, top, 8, EventsMove::Newest), None);
+    }
+
+    #[test]
+    fn a_dropped_top_event_shows_the_oldest_page() {
+        let held = events(10..30);
+        assert_eq!(events_window(&held, Some(4), 8), 0..8);
+    }
 
     #[test]
     fn minutes_without_packets_split_the_signal_into_runs() {
@@ -502,7 +630,9 @@ mod tests {
     fn a_reboot_starts_the_history_over() {
         let mut h = History::default();
         h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        h.events_top = Some(0);
         h.refresh(&mut dongle(2, 3 * 60_000, 2, 0)).unwrap();
+        assert_eq!(h.events_top, None);
         assert_eq!(
             h.minutes
                 .iter()
