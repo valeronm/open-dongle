@@ -350,6 +350,46 @@ static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
 	deliver(&confirm, 0, 30);
 	message(PROTO_KEEPALIVE, 1, 40);
 	CHECK(!out.up);
+	CHECK(!out.moved);
+	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+}
+
+static void hear_keyboard_on_a_pairing_slot(const uint8_t *own)
+{
+	init(own);
+	tick(400);
+	CHECK_EQ(out.channel, 2);
+	message(PROTO_KEEPALIVE, 1, 410);
+}
+
+static void test_a_keyboard_heard_on_a_pairing_slot_is_moved_home(void)
+{
+	hear_keyboard_on_a_pairing_slot(home);
+	CHECK(out.up);
+	CHECK(!out.set_channel);
+	expect_status(1, 0);
+	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	message(PROTO_KEEPALIVE, 1, 450);
+	CHECK(out.moved);
+	CHECK_EQ(out.moved_from, 2);
+	CHECK(out.set_channel);
+	CHECK_EQ(out.channel, home[0]);
+	expect_status(2, 0);
+	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+}
+
+static void test_silence_after_the_move_home_starts_loses_the_link(void)
+{
+	hear_keyboard_on_a_pairing_slot(home);
+	tick(1410);
+	CHECK(out.lost);
+}
+
+static void test_a_keyboard_heard_on_a_pairing_slot_of_a_never_paired_dongle_stays(void)
+{
+	hear_keyboard_on_a_pairing_slot(NULL);
+	CHECK(out.up);
+	CHECK(!out.set_channel);
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
 }
 
@@ -374,5 +414,8 @@ int main(void)
 	RUN(test_a_radio_pause_restarts_the_silence_timer);
 	RUN(test_traffic_after_a_loss_reports_the_link_up);
 	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
+	RUN(test_a_keyboard_heard_on_a_pairing_slot_is_moved_home);
+	RUN(test_silence_after_the_move_home_starts_loses_the_link);
+	RUN(test_a_keyboard_heard_on_a_pairing_slot_of_a_never_paired_dongle_stays);
 	return TEST_EXIT();
 }

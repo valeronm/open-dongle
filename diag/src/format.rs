@@ -137,6 +137,7 @@ pub fn link_state_name(state: u8) -> &'static str {
         2 => "pairing",
         3 => "pairing confirmed",
         4 => "connected",
+        5 => "moving home",
         _ => "unknown",
     }
 }
@@ -222,6 +223,7 @@ pub fn describe_event(e: &Event) -> String {
             e.a,
             e.b as i8
         ),
+        EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -256,6 +258,20 @@ mod tests {
             describe_event(&first),
             "link up 900 ms after boot on channel 33, signal -63 dBm"
         );
+    }
+
+    #[test]
+    fn describes_the_move_back_to_the_own_channel() {
+        use crate::protocol::{Event, EventKind};
+        let moved = Event {
+            time_ms: 0,
+            kind: EventKind::LinkMoved,
+            a: 2,
+            b: 70,
+            c: 0,
+            value: 0,
+        };
+        assert_eq!(describe_event(&moved), "moved from channel 2 to channel 70");
     }
 
     #[test]

@@ -11,6 +11,7 @@ enum link_state {
 	LINK_PAIRING,
 	LINK_CONFIRMED,
 	LINK_CONNECTED,
+	LINK_MOVING_HOME,
 };
 
 enum link_led {
@@ -31,6 +32,8 @@ struct link_out {
 	bool save_channels;
 	bool lost;
 	bool up;
+	bool moved;
+	uint8_t moved_from;
 };
 
 struct link {

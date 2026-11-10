@@ -175,6 +175,9 @@ static void apply(const struct link_out *out)
 		log_event(HISTORY_LINK_UP, link.channel, (uint8_t)last_rssi, link_was_lost,
 			  k_uptime_get_32() - link_down_ms);
 	}
+	if (out->moved) {
+		log_event(HISTORY_LINK_MOVED, out->moved_from, out->channel, 0, 0);
+	}
 }
 
 /* The survey blocks the main loop, which otherwise updates the LED. */

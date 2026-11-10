@@ -137,13 +137,19 @@ void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, ui
 	l->last_rx_ms = now_ms;
 	switch (l->state) {
 	case LINK_CONFIRMED:
-		/* This packet's ACK carried the status queued at the confirm. */
+	case LINK_MOVING_HOME:
+		/* This packet's ACK carried the status queued on entering this state. */
+		if (l->state == LINK_MOVING_HOME) {
+			out->moved = true;
+			out->moved_from = l->channel;
+		}
 		l->state = LINK_CONNECTED;
 		set_channel(l, l->own[0], out);
 		reply_status(l, now_ms, out);
 		break;
 	case LINK_IDLE:
-		l->state = LINK_CONNECTED;
+		/* A keyboard heard on a pairing channel stays there until a send fails. */
+		l->state = (l->slot > 0 && l->own_known) ? LINK_MOVING_HOME : LINK_CONNECTED;
 		out->up = true;
 		reply_status(l, now_ms, out);
 		break;
@@ -183,9 +189,10 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	switch (l->state) {
 	case LINK_CONNECTED:
 	case LINK_CONFIRMED:
+	case LINK_MOVING_HOME:
 	case LINK_PAIRING:
 		if (now_ms - l->last_rx_ms >= IDLE_AFTER_MS) {
-			out->lost = l->state == LINK_CONNECTED;
+			out->lost = l->state == LINK_CONNECTED || l->state == LINK_MOVING_HOME;
 			go_idle(l, now_ms, out);
 		}
 		break;
@@ -228,6 +235,7 @@ enum link_led link_led(const struct link *l)
 	case LINK_IDLE:
 		return LINK_LED_IDLE;
 	case LINK_CONNECTED:
+	case LINK_MOVING_HOME:
 		return LINK_LED_CONNECTED;
 	default:
 		return LINK_LED_PAIRING;

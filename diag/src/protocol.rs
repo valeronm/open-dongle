@@ -252,6 +252,7 @@ pub enum EventKind {
     UsbResume,
     Clear,
     LinkUp,
+    LinkMoved,
     Unknown(u8),
 }
 
@@ -267,6 +268,7 @@ impl From<u8> for EventKind {
             7 => Self::UsbResume,
             8 => Self::Clear,
             9 => Self::LinkUp,
+            10 => Self::LinkMoved,
             other => Self::Unknown(other),
         }
     }
@@ -506,6 +508,7 @@ pub(crate) mod tests {
                 EventKind::UsbResume,
                 EventKind::Clear,
                 EventKind::LinkUp,
+                EventKind::LinkMoved,
             ]
         );
     }
