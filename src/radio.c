@@ -5,6 +5,8 @@
 #include "radio.h"
 
 #define SURVEY_ROUND_GAP_MS 35
+#define ACK_WAIT_MAX_US 1000
+#define ACK_POLL_US 10
 
 static radio_rx_cb rx_cb;
 static uint8_t current_channel;
@@ -19,6 +21,28 @@ static void on_esb_event(const struct esb_evt *evt)
 	while (esb_read_rx_payload(&rx) == 0) {
 		rx_cb(rx.data, rx.length, rx.pipe, -(int8_t)rx.rssi);
 	}
+}
+
+static bool transmitting(void)
+{
+	switch (nrf_radio_state_get(NRF_RADIO)) {
+	case NRF_RADIO_STATE_TXRU:
+	case NRF_RADIO_STATE_TXIDLE:
+	case NRF_RADIO_STATE_TX:
+	case NRF_RADIO_STATE_TXDISABLE:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/* ESB reports a packet before sending its acknowledgment, which may carry a queued reply. */
+static int stop_rx(void)
+{
+	for (int i = 0; i < ACK_WAIT_MAX_US / ACK_POLL_US && transmitting(); i++) {
+		k_busy_wait(ACK_POLL_US);
+	}
+	return esb_stop_rx();
 }
 
 int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
@@ -59,7 +83,7 @@ int radio_set_channel(uint8_t channel)
 {
 	int err;
 
-	esb_stop_rx();
+	stop_rx();
 	esb_flush_tx();
 	esb_flush_rx();
 	err = esb_set_rf_channel(channel);
@@ -104,7 +128,7 @@ static int8_t sample_dbm(uint8_t channel)
 
 int radio_survey(struct chan_survey *s)
 {
-	int err = esb_stop_rx();
+	int err = stop_rx();
 
 	if (err) {
 		return err;
