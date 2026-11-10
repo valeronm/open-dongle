@@ -50,12 +50,7 @@ struct diag_status {
 	uint32_t last_rx_age_ms;
 	bool usb_live;
 	bool usb_suspended;
-	uint32_t packets;
-	uint32_t invalid;
-	uint32_t dropped;
-	uint32_t channel_changes;
-	uint32_t link_losses;
-	uint32_t usb_retries;
+	struct history_totals totals;
 	uint32_t merges;
 	uint32_t surveys;
 	uint32_t minute_next;

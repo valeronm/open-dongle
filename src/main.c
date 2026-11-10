@@ -296,12 +296,7 @@ static void fill_status(struct diag_status *s)
 		.last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX,
 		.usb_live = usb_live(),
 		.usb_suspended = usb_suspended(),
-		.packets = counters.packets,
-		.invalid = counters.invalid,
-		.dropped = counters.rx_dropped,
-		.channel_changes = counters.channel_changes,
-		.link_losses = counters.link_losses,
-		.usb_retries = counters.usb_retries,
+		.totals = totals(),
 		.merges = reports.merges,
 		.surveys = counters.surveys,
 	};
@@ -317,9 +312,8 @@ static void fill_status(struct diag_status *s)
 
 static void run_noise(const struct diag_request *req, uint8_t *payload)
 {
-	int err;
+	int err = survey_radio();
 
-	err = survey_radio();
 	if (err) {
 		diag_reply_error(req, DIAG_ERR_RADIO);
 		return;
