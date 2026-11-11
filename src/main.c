@@ -291,6 +291,8 @@ static void print_counters(void)
 static void fill_status(struct diag_status *s)
 {
 	*s = (struct diag_status){
+		.firmware_version = {FIRMWARE_VERSION_MAJOR, FIRMWARE_VERSION_MINOR,
+				     FIRMWARE_VERSION_PATCH},
 		.uptime_ms = k_uptime_get(),
 		.reset_cause = reset_cause,
 		.link_state = link.state,

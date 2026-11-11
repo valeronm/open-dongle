@@ -186,6 +186,10 @@ pub fn reset_causes(bits: u32) -> String {
     }
 }
 
+pub fn version(v: [u8; 3]) -> String {
+    format!("{}.{}.{}", v[0], v[1], v[2])
+}
+
 pub fn uptime(ms: u64) -> String {
     let s = ms / 1000;
     let (days, h, m, s) = (s / 86400, s / 3600 % 24, s / 60 % 60, s % 60);
@@ -361,6 +365,11 @@ mod tests {
     fn names_each_reset_cause_bit() {
         assert_eq!(reset_causes(0x11), "pin, watchdog");
         assert_eq!(reset_causes(0), "none");
+    }
+
+    #[test]
+    fn a_version_prints_dotted() {
+        assert_eq!(version([0, 12, 3]), "0.12.3");
     }
 
     #[test]

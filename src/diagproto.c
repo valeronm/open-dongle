@@ -56,6 +56,8 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	uint8_t *p = out;
 
 	*p++ = DIAG_VERSION;
+	memcpy(p, s->firmware_version, sizeof(s->firmware_version));
+	p += sizeof(s->firmware_version);
 	p = put_le(p, s->uptime_ms, 8);
 	p = put_le(p, s->reset_cause, 4);
 	*p++ = s->link_state;

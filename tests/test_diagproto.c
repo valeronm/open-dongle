@@ -40,6 +40,7 @@ static void test_request_carries_command_seq_and_arg(void)
 static void test_status_matches_fixture(void)
 {
 	const struct diag_status s = {
+		.firmware_version = {1, 2, 3},
 		.uptime_ms = 0x0102030405ull,
 		.reset_cause = 1,
 		.link_state = 4,

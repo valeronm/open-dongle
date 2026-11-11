@@ -140,6 +140,7 @@ pub struct Counters {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
+    pub firmware_version: [u8; 3],
     pub uptime_ms: u64,
     pub reset_cause: u32,
     pub link_state: u8,
@@ -163,6 +164,7 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
     if version != VERSION {
         bail!("the dongle speaks diagnostic protocol {version}, this tool {VERSION}");
     }
+    let firmware_version = r.bytes::<3>()?;
     let uptime_ms = r.u64()?;
     let reset_cause = r.u32()?;
     let link_state = r.u8()?;
@@ -183,6 +185,7 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
         surveys: r.u32()?,
     };
     Ok(Status {
+        firmware_version,
         uptime_ms,
         reset_cause,
         link_state,
@@ -363,6 +366,7 @@ pub(crate) mod tests {
     #[test]
     fn status_fixture_decodes() {
         let s = decode_status(&fixture("status.hex")).unwrap();
+        assert_eq!(s.firmware_version, [1, 2, 3]);
         assert_eq!(s.uptime_ms, 0x01_0203_0405);
         assert_eq!(s.reset_cause, 1);
         assert_eq!(s.link_state, 4);

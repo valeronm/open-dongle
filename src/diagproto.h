@@ -40,6 +40,7 @@ struct diag_request {
 };
 
 struct diag_status {
+	uint8_t firmware_version[3];
 	uint64_t uptime_ms;
 	uint32_t reset_cause;
 	uint8_t link_state;

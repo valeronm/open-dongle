@@ -10,7 +10,8 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question,
-    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, wall_clock,
+    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, version,
+    wall_clock,
 };
 use crate::protocol::Action;
 use crate::{dfu, uf2};
@@ -23,6 +24,7 @@ pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
         .map(|b| format!("{b:02x}"))
         .collect::<String>();
     let c = s.counters;
+    println!("firmware  {}", version(s.firmware_version));
     println!(
         "link      {} on channel {} ({}), keyboard {id}",
         link_state_name(s.link_state),
@@ -197,7 +199,8 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
     )?;
     let status = device::open(Some(&board.serial))?.status()?;
     println!(
-        "flashed; OpenDongle running, up {}",
+        "flashed; OpenDongle {} running, up {}",
+        version(status.firmware_version),
         uptime(status.uptime_ms)
     );
     Ok(())
