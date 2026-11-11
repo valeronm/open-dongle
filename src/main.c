@@ -302,6 +302,8 @@ static void print_counters(void)
 
 static void fill_status(struct diag_status *s)
 {
+	const uint8_t *forced;
+
 	*s = (struct diag_status){
 		.firmware_version = {FIRMWARE_VERSION_MAJOR, FIRMWARE_VERSION_MINOR,
 				     FIRMWARE_VERSION_PATCH},
@@ -319,6 +321,10 @@ static void fill_status(struct diag_status *s)
 	};
 	if (link.own_known) {
 		memcpy(s->own, link.own, sizeof(s->own));
+	}
+	forced = link_forced_channels(&link);
+	if (forced != NULL) {
+		memcpy(s->forced, forced, sizeof(s->forced));
 	}
 	memcpy(s->keyboard_id, link.keyboard_id, sizeof(s->keyboard_id));
 	s->minute_next = history.minute_next;
@@ -354,6 +360,31 @@ static void clear_history(const struct diag_request *req)
 	unlock_reports(false);
 	history_clear(&history, k_uptime_get(), &none);
 	log_event(HISTORY_CLEAR, 0, 0, 0, 0);
+	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
+static void force_channels(const struct diag_request *req)
+{
+	uint8_t channels[3];
+	const uint8_t *forced = diag_channels_arg(req->arg, channels) ? channels : NULL;
+	int err;
+
+	if (forced != NULL && !link_channels_allowed(forced)) {
+		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS);
+		return;
+	}
+	err = store_save_forced(forced);
+	if (err) {
+		printk("saving forced channels failed: %d\n", err);
+		diag_reply_error(req, DIAG_ERR_STORE);
+		return;
+	}
+	link_force_channels(&link, forced);
+	if (forced != NULL) {
+		printk("pairing will offer %u %u %u\n", forced[0], forced[1], forced[2]);
+	} else {
+		printk("pairing will survey\n");
+	}
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 
@@ -397,6 +428,9 @@ static void serve_diag(const struct diag_request *req)
 	case DIAG_CLEAR:
 		clear_history(req);
 		break;
+	case DIAG_FORCE_CHANNELS:
+		force_channels(req);
+		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);
 		break;
@@ -416,6 +450,7 @@ int main(void)
 	bool usb_seen_live = false;
 	uint8_t id[4];
 	uint8_t own[3];
+	uint8_t forced[3];
 	struct link_out out = {0};
 	bool paired;
 	int store_err;
@@ -440,6 +475,9 @@ int main(void)
 	store_err = store_init();
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
+	if (store_err == 0 && store_load_forced(forced) && !link_force_channels(&link, forced)) {
+		printk("stored forced channels refused\n");
+	}
 	watchdog_start();
 	while ((err = radio_start(id, out.channel, on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);

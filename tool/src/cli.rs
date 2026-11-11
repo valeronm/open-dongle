@@ -3,17 +3,17 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use chrono::Local;
 
 use crate::board::{self, State};
-use crate::device::{self, Device, Transport};
+use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, version,
-    wall_clock,
+    last_packet, link_state_name, noise_level, paired, pairing_offer, reset_causes, uptime,
+    usb_state, version, wall_clock,
 };
-use crate::protocol::{Action, Status};
+use crate::protocol::{Action, ErrorCode, Status};
 use crate::{dfu, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
@@ -35,6 +35,7 @@ pub fn status(s: &Status) -> Result<()> {
         s.last_rssi,
         last_packet(s.last_rx_age_ms)
     );
+    println!("pairing   {}", pairing_offer(s.forced));
     println!("usb       {}", usb_state(s.usb_live, s.usb_suspended));
     println!(
         "uptime    {}, reset by {}",
@@ -94,6 +95,46 @@ pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Resu
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
             describe_event(&e)
         );
+    }
+    Ok(())
+}
+
+/// Reads `auto` as `None` and three channel numbers as `Some`.
+pub fn parse_channels(values: &[String]) -> Result<Option<[u8; 3]>> {
+    if let [only] = values
+        && only == "auto"
+    {
+        return Ok(None);
+    }
+    let channels: Vec<u8> = values
+        .iter()
+        .map(|v| v.parse::<u8>())
+        .collect::<Result<_, _>>()
+        .context("channels are numbers from 2 to 80")?;
+    let channels: [u8; 3] = channels
+        .try_into()
+        .map_err(|_| anyhow!("give three channels, or auto"))?;
+    Ok(Some(channels))
+}
+
+pub fn channels<T: Transport>(dev: &mut Device<T>, channels: Option<[u8; 3]>) -> Result<()> {
+    dev.force_channels(channels).map_err(|err| {
+        match err.downcast_ref::<Refused>().map(|r| r.code) {
+            Some(Ok(ErrorCode::BadChannels)) => anyhow!(
+                "the dongle refused the channels: give three different channels from 2 to 80, \
+                 none of them a pairing channel (2, 50, 80)"
+            ),
+            Some(Ok(ErrorCode::Store)) => {
+                anyhow!("the dongle could not save the channels; nothing changed")
+            }
+            _ => err,
+        }
+    })?;
+    match channels {
+        Some([a, b, c]) => println!(
+            "every pairing now offers channels {a} {b} {c}; hold Fn+4 on the keyboard to pair onto them"
+        ),
+        None => println!("pairing picks its channels by survey again"),
     }
     Ok(())
 }
@@ -205,6 +246,69 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::device::tests::{Fake, error_part, parts};
+    use crate::protocol::Command;
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn reads_auto_or_three_channels() {
+        assert_eq!(parse_channels(&strings(&["auto"])).unwrap(), None);
+        assert_eq!(
+            parse_channels(&strings(&["62", "52", "44"])).unwrap(),
+            Some([62, 52, 44])
+        );
+        assert!(parse_channels(&strings(&["62", "52"])).is_err());
+        assert!(parse_channels(&strings(&["62", "52", "x"])).is_err());
+        assert!(parse_channels(&strings(&["62", "52", "300"])).is_err());
+        assert!(parse_channels(&strings(&["auto", "52", "44"])).is_err());
+    }
+
+    fn dongle_refusing_with(code: u8) -> Device<Fake> {
+        Device::new(
+            Fake::new(move |req| {
+                assert_eq!(req[0], Command::ForceChannels as u8);
+                vec![error_part(req[0], req[1], code)]
+            }),
+            0,
+        )
+    }
+
+    #[test]
+    fn forcing_sends_the_channels_to_the_dongle() {
+        let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = sent.clone();
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                log.borrow_mut().push(req[..6].to_vec());
+                parts(req[0], req[1], &[])
+            }),
+            0,
+        );
+        channels(&mut dev, Some([62, 52, 44])).unwrap();
+        assert_eq!(
+            *sent.borrow(),
+            [vec![Command::ForceChannels as u8, 1, 62, 52, 44, 0]]
+        );
+    }
+
+    #[test]
+    fn refused_channels_name_the_rule() {
+        let err = channels(&mut dongle_refusing_with(3), Some([62, 50, 44]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("pairing channel"), "{err}");
+    }
+
+    #[test]
+    fn a_failed_save_says_nothing_changed() {
+        let err = channels(&mut dongle_refusing_with(4), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("nothing changed"), "{err}");
+    }
 
     #[test]
     fn a_bad_file_stops_before_any_board_is_looked_for() {

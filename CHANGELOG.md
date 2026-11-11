@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 - An install script that installs the latest release.
+- The channels pairing offers can be set by hand, for interference too brief for the noise survey
+  to see.
+- The tool names the errors the dongle reports.
 
 ## [0.1.0] - 2026-11-11
 

@@ -68,15 +68,20 @@ static void expect_status(uint8_t seq, uint8_t leds)
 	CHECK_MEM(out.reply_buf, expected, len);
 }
 
-static void expect_pair_reply(uint8_t seq)
+static void expect_pair_reply_offering(uint8_t seq, const uint8_t channels[3])
 {
 	uint8_t expected[NUPHY_FRAME_MAX];
-	size_t len = nuphy_pair_reply(expected, seq, dongle_id, keyboard_id, surveyed);
+	size_t len = nuphy_pair_reply(expected, seq, dongle_id, keyboard_id, channels);
 
 	CHECK(out.reply);
 	CHECK_EQ(out.reply_pipe, 0);
 	CHECK_EQ(out.reply_len, len);
 	CHECK_MEM(out.reply_buf, expected, len);
+}
+
+static void expect_pair_reply(uint8_t seq)
+{
+	expect_pair_reply_offering(seq, surveyed);
 }
 
 static void expect_suspend(uint8_t seq)
@@ -448,6 +453,110 @@ static void test_the_wait_for_the_keyboard_after_a_move_home_is_a_gap(void)
 	CHECK_EQ(out.gap_channel, home[0]);
 }
 
+static const uint8_t forced[3] = {62, 52, 44};
+
+static void test_forced_channels_are_offered_without_a_survey_and_become_home(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(home);
+	CHECK(link_force_channels(&l, forced));
+	deliver(&request, 0, 450);
+	CHECK(!out.start_survey);
+	expect_pair_reply_offering(1, forced);
+
+	deliver(&confirm, 0, 490);
+	CHECK(out.save_channels);
+	CHECK_MEM(l.own, forced, 3);
+
+	message(NUPHY_KEEPALIVE, 1, 530);
+	CHECK_EQ(out.channel, 62);
+}
+
+static void test_forced_channels_win_over_a_recent_survey(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	pairing_times_out_after_a_survey();
+	CHECK(link_force_channels(&l, forced));
+	deliver(&request, 0, 3000);
+	CHECK(!out.start_survey);
+	expect_pair_reply_offering(2, forced);
+}
+
+static void test_a_pairing_on_forced_channels_is_not_reused_once_they_are_cleared(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	CHECK(link_force_channels(&l, forced));
+	deliver(&request, 0, 10);
+	tick(1010);
+	CHECK(link_force_channels(&l, NULL));
+	deliver(&request, 0, 1100);
+	CHECK(out.start_survey);
+}
+
+static void test_channels_forced_during_a_pairing_do_not_change_what_it_saves(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	CHECK(link_force_channels(&l, forced));
+	deliver(&confirm, 0, 1640);
+	CHECK(out.save_channels);
+	CHECK_MEM(l.own, surveyed, 3);
+}
+
+static void test_forcing_during_a_forced_pairing_does_not_change_what_it_saves(void)
+{
+	static const uint8_t other[3] = {64, 54, 46};
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(NULL);
+	CHECK(link_force_channels(&l, forced));
+	deliver(&request, 0, 10);
+	CHECK(link_force_channels(&l, other));
+	deliver(&confirm, 0, 50);
+	CHECK_MEM(l.own, forced, 3);
+}
+
+static void expect_refused(uint8_t a, uint8_t b, uint8_t c)
+{
+	const uint8_t channels[3] = {a, b, c};
+
+	const uint8_t *kept;
+
+	CHECK(!link_force_channels(&l, channels));
+	kept = link_forced_channels(&l);
+	CHECK(kept != NULL && memcmp(kept, forced, 3) == 0);
+}
+
+static void test_pairing_channels_repeats_and_out_of_range_channels_are_refused(void)
+{
+	init(home);
+	CHECK(link_force_channels(&l, forced));
+	expect_refused(2, 52, 44);
+	expect_refused(62, 50, 44);
+	expect_refused(62, 52, 80);
+	expect_refused(62, 62, 44);
+	expect_refused(62, 52, 62);
+	expect_refused(1, 52, 44);
+	expect_refused(62, 52, 81);
+	CHECK(link_force_channels(&l, (const uint8_t[3]){26, 3, 79}));
+}
+
+static void test_a_dongle_with_nothing_forced_reports_no_forced_channels(void)
+{
+	init(home);
+	CHECK(link_forced_channels(&l) == NULL);
+}
+
 int main(void)
 {
 	RUN(test_never_paired_idle_alternates_fixed_channels_with_channel_2);
@@ -477,5 +586,12 @@ int main(void)
 	RUN(test_the_first_packet_after_a_pairing_confirm_is_not_a_gap);
 	RUN(test_a_gap_ended_by_the_move_home_is_on_the_pairing_channel);
 	RUN(test_the_wait_for_the_keyboard_after_a_move_home_is_a_gap);
+	RUN(test_forced_channels_are_offered_without_a_survey_and_become_home);
+	RUN(test_forced_channels_win_over_a_recent_survey);
+	RUN(test_a_pairing_on_forced_channels_is_not_reused_once_they_are_cleared);
+	RUN(test_channels_forced_during_a_pairing_do_not_change_what_it_saves);
+	RUN(test_forcing_during_a_forced_pairing_does_not_change_what_it_saves);
+	RUN(test_pairing_channels_repeats_and_out_of_range_channels_are_refused);
+	RUN(test_a_dongle_with_nothing_forced_reports_no_forced_channels);
 	return TEST_EXIT();
 }

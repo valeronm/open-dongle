@@ -46,6 +46,7 @@ static void test_status_matches_fixture(void)
 		.link_state = 4,
 		.channel = 26,
 		.own = {26, 30, 34},
+		.forced = {62, 52, 44},
 		.keyboard_id = {0x70, 0x15, 0xa3, 0x29},
 		.last_rssi = -71,
 		.last_rx_age_ms = 12,
@@ -183,7 +184,7 @@ static void test_noise_matches_fixture(void)
 static void test_command_numbers_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
-			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR};
+			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -204,6 +205,28 @@ static void test_event_type_numbers_match_fixture(void)
 	CHECK_MEM(got, want, sizeof(got));
 }
 
+static void test_error_codes_match_fixture(void)
+{
+	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
+			       DIAG_ERR_STORE};
+	uint8_t want[sizeof(got) + 1];
+	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
+
+	CHECK_EQ(want_len, sizeof(got));
+	CHECK_MEM(got, want, sizeof(got));
+}
+
+static void test_force_channels_arg_carries_three_channels_or_none(void)
+{
+	uint8_t channels[3] = {0};
+
+	CHECK(diag_channels_arg(0x002c343e, channels));
+	CHECK_EQ(channels[0], 62);
+	CHECK_EQ(channels[1], 52);
+	CHECK_EQ(channels[2], 44);
+	CHECK(!diag_channels_arg(0, channels));
+}
+
 int main(void)
 {
 	RUN(test_request_carries_command_seq_and_arg);
@@ -217,5 +240,7 @@ int main(void)
 	RUN(test_command_numbers_match_fixture);
 	RUN(test_event_type_numbers_match_fixture);
 	RUN(test_a_full_page_fits_the_payload_buffer);
+	RUN(test_error_codes_match_fixture);
+	RUN(test_force_channels_arg_carries_three_channels_or_none);
 	return TEST_EXIT();
 }

@@ -119,6 +119,12 @@ pub fn usb_state(live: bool, suspended: bool) -> &'static str {
     }
 }
 
+pub fn pairing_offer(forced: Option<[u8; 3]>) -> String {
+    forced.map_or("picks channels by survey".into(), |f| {
+        format!("offers channels {} {} {}, set by hand", f[0], f[1], f[2])
+    })
+}
+
 pub fn paired(own: Option<[u8; 3]>) -> String {
     own.map_or("never paired".into(), |o| {
         format!("paired {} {} {}", o[0], o[1], o[2])
@@ -289,10 +295,19 @@ mod tests {
     #[test]
     fn a_flash_of_firmware_in_a_newer_protocol_says_to_update_the_tool() {
         assert_eq!(
-            flashed(read_status(&status_in_protocol(2)).unwrap()),
-            "flashed; the dongle speaks diagnostic protocol 2, this tool 1; install the \
+            flashed(read_status(&status_in_protocol(3)).unwrap()),
+            "flashed; the dongle speaks diagnostic protocol 3, this tool 2; install the \
              open-dongle tool from the firmware's release"
         );
+    }
+
+    #[test]
+    fn names_the_forced_channels_or_the_survey() {
+        assert_eq!(
+            pairing_offer(Some([62, 52, 44])),
+            "offers channels 62 52 44, set by hand"
+        );
+        assert_eq!(pairing_offer(None), "picks channels by survey");
     }
 
     #[test]

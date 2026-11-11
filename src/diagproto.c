@@ -20,6 +20,14 @@ bool diag_parse_request(const uint8_t *buf, size_t len, struct diag_request *out
 	return true;
 }
 
+bool diag_channels_arg(uint32_t arg, uint8_t out[3])
+{
+	for (int i = 0; i < 3; i++) {
+		out[i] = arg >> (8 * i);
+	}
+	return arg != 0;
+}
+
 size_t diag_part_count(size_t payload_len)
 {
 	return payload_len == 0 ? 1 : (payload_len + DIAG_CHUNK - 1) / DIAG_CHUNK;
@@ -64,6 +72,8 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	*p++ = s->channel;
 	memcpy(p, s->own, sizeof(s->own));
 	p += sizeof(s->own);
+	memcpy(p, s->forced, sizeof(s->forced));
+	p += sizeof(s->forced);
 	memcpy(p, s->keyboard_id, sizeof(s->keyboard_id));
 	p += sizeof(s->keyboard_id);
 	*p++ = (uint8_t)s->last_rssi;

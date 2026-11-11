@@ -9,7 +9,7 @@
 #include "history.h"
 
 /* Bumped only when a layout that a release has shipped changes. */
-#define DIAG_VERSION 1
+#define DIAG_VERSION 2
 #define DIAG_REPORT_LEN 64
 #define DIAG_HEADER_LEN 4
 #define DIAG_CHUNK (DIAG_REPORT_LEN - DIAG_HEADER_LEN)
@@ -27,11 +27,14 @@ enum diag_command {
 	DIAG_REBOOT,
 	DIAG_BOOTLOADER,
 	DIAG_CLEAR,
+	DIAG_FORCE_CHANNELS,
 };
 
 enum diag_error {
 	DIAG_ERR_UNKNOWN_COMMAND = 1,
 	DIAG_ERR_RADIO,
+	DIAG_ERR_BAD_CHANNELS,
+	DIAG_ERR_STORE,
 };
 
 struct diag_request {
@@ -47,6 +50,8 @@ struct diag_status {
 	uint8_t link_state;
 	uint8_t channel;
 	uint8_t own[3];
+	/* All zero while pairing surveys. */
+	uint8_t forced[3];
 	uint8_t keyboard_id[4];
 	int8_t last_rssi;
 	uint32_t last_rx_age_ms;
@@ -63,6 +68,8 @@ struct diag_status {
 
 /* Returns false for a report shorter than DIAG_REQUEST_LEN. */
 bool diag_parse_request(const uint8_t *buf, size_t len, struct diag_request *out);
+/* Returns false for an arg of zero, which clears the forced channels. */
+bool diag_channels_arg(uint32_t arg, uint8_t out[3]);
 size_t diag_part_count(size_t payload_len);
 void diag_part(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 	       const uint8_t *payload, size_t len, size_t part);

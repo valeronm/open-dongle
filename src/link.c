@@ -1,4 +1,5 @@
 #include <string.h>
+#include "chanpick.h"
 #include "link.h"
 
 #define IDLE_AFTER_MS 1000
@@ -11,6 +12,7 @@
 
 /* The keyboard pairs on channel 2 and only rarely visits its other pairing channels, 50 and 80. */
 #define PAIRING_CHANNEL 2
+static const uint8_t pairing_channels[] = {PAIRING_CHANNEL, 50, 80};
 /* The keyboard firmware fixes these channels besides the three it gets at pairing. */
 static const uint8_t fixed_channels[] = {16, 22, 44, 48, 58, 72, 78};
 
@@ -76,6 +78,19 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint
 	go_idle(l, now_ms, out);
 }
 
+static bool next_offer_ready(const struct link *l, uint32_t now_ms)
+{
+	return l->next_offer_kind == OFFER_FORCED ||
+	       (l->next_offer_kind == OFFER_SURVEYED && now_ms - l->surveyed_ms < OFFER_REUSE_MS);
+}
+
+static void offer(struct link *l, struct link_out *out)
+{
+	memcpy(l->offered, l->next_offer, sizeof(l->offered));
+	l->state = LINK_PAIRING;
+	reply_pairing(l, out);
+}
+
 static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32_t now_ms,
 			       struct link_out *out)
 {
@@ -90,9 +105,8 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 		if (l->state == LINK_IDLE) {
 			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
-			if (l->offer_valid && now_ms - l->offered_ms < OFFER_REUSE_MS) {
-				l->state = LINK_PAIRING;
-				reply_pairing(l, out);
+			if (next_offer_ready(l, now_ms)) {
+				offer(l, out);
 			} else {
 				l->state = LINK_SURVEY;
 				out->start_survey = true;
@@ -186,14 +200,13 @@ void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,
 	if (l->state != LINK_SURVEY) {
 		return;
 	}
-	memcpy(l->offered, channels, sizeof(l->offered));
-	l->offer_valid = true;
-	l->offered_ms = now_ms;
-	l->state = LINK_PAIRING;
+	memcpy(l->next_offer, channels, sizeof(l->next_offer));
+	l->next_offer_kind = OFFER_SURVEYED;
+	l->surveyed_ms = now_ms;
 	/* The survey sweeps the radio across channels with the receiver off. */
 	l->last_rx_ms = now_ms;
 	set_channel(l, l->channel, out);
-	reply_pairing(l, out);
+	offer(l, out);
 }
 
 void link_survey_failed(struct link *l, uint32_t now_ms, struct link_out *out)
@@ -254,4 +267,50 @@ enum link_led link_led(const struct link *l)
 		return LINK_LED_IDLE;
 	}
 	return connected(l) ? LINK_LED_CONNECTED : LINK_LED_PAIRING;
+}
+
+static bool is_pairing_channel(uint8_t ch)
+{
+	for (size_t i = 0; i < sizeof(pairing_channels); i++) {
+		if (ch == pairing_channels[i]) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool link_channels_allowed(const uint8_t channels[3])
+{
+	for (int i = 0; i < 3; i++) {
+		if (!chan_in_range(channels[i]) || is_pairing_channel(channels[i])) {
+			return false;
+		}
+		for (int j = 0; j < i; j++) {
+			if (channels[i] == channels[j]) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+bool link_force_channels(struct link *l, const uint8_t *channels)
+{
+	if (channels == NULL) {
+		if (l->next_offer_kind == OFFER_FORCED) {
+			l->next_offer_kind = OFFER_NONE;
+		}
+		return true;
+	}
+	if (!link_channels_allowed(channels)) {
+		return false;
+	}
+	memcpy(l->next_offer, channels, sizeof(l->next_offer));
+	l->next_offer_kind = OFFER_FORCED;
+	return true;
+}
+
+const uint8_t *link_forced_channels(const struct link *l)
+{
+	return l->next_offer_kind == OFFER_FORCED ? l->next_offer : NULL;
 }

@@ -39,15 +39,23 @@ struct link_out {
 	uint8_t gap_channel;
 };
 
+enum offer_kind {
+	OFFER_NONE,
+	OFFER_SURVEYED,
+	OFFER_FORCED,
+};
+
 struct link {
 	enum link_state state;
 	uint8_t dongle_id[NUPHY_ID_LEN];
 	uint8_t keyboard_id[NUPHY_ID_LEN];
 	uint8_t own[3];
 	bool own_known;
+	enum offer_kind next_offer_kind;
+	uint8_t next_offer[3];
+	uint32_t surveyed_ms;
+	/* The forced channels can change between the pair reply and the keyboard's confirm. */
 	uint8_t offered[3];
-	bool offer_valid;
-	uint32_t offered_ms;
 	uint8_t channel;
 	bool on_pairing_channel;
 	uint8_t fixed_next;
@@ -69,6 +77,15 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,
 		    struct link_out *out);
 void link_survey_failed(struct link *l, uint32_t now_ms, struct link_out *out);
+/* Refuses a repeated channel, one outside CHAN_FIRST..CHAN_LAST or a keyboard pairing channel. */
+bool link_channels_allowed(const uint8_t channels[3]);
+/*
+ * Every later pairing offers channels instead of surveying, until called with NULL. Returns false,
+ * keeping what was forced before, for channels link_channels_allowed refuses.
+ */
+bool link_force_channels(struct link *l, const uint8_t *channels);
+/* NULL while pairing surveys. */
+const uint8_t *link_forced_channels(const struct link *l);
 void link_tick(struct link *l, uint32_t now_ms, struct link_out *out);
 /* The receiver was off until now_ms, so silence before it is not a sign of a lost link. */
 void link_radio_resumed(struct link *l, uint32_t now_ms);

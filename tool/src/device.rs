@@ -3,8 +3,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    Action, CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, VersionMismatch,
-    decode_events, decode_minutes, decode_noise, parse_part, read_status, request,
+    Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status,
+    VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise, parse_part,
+    read_status, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -13,6 +14,26 @@ pub const USAGE_PAGE: u16 = 0xff00;
 /// Longer than the dongle's longest main-loop block, a 1.5 s radio survey.
 pub const TIMEOUT: Duration = Duration::from_millis(2500);
 pub const NOISE_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// A reply that carried an error code in place of a payload.
+#[derive(Debug)]
+pub struct Refused {
+    pub command: Command,
+    /// The raw byte when this tool does not know the code.
+    pub code: Result<ErrorCode, u8>,
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "the dongle refused {:?}: ", self.command)?;
+        match self.code {
+            Ok(code) => f.write_str(code.name()),
+            Err(code) => write!(f, "error {code}"),
+        }
+    }
+}
+
+impl std::error::Error for Refused {}
 
 pub trait Transport {
     fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<()>;
@@ -51,7 +72,10 @@ impl<T: Transport> Device<T> {
                 continue;
             };
             let (index, count, chunk) = match part {
-                Part::Error { code, .. } => bail!("the dongle refused {command:?}: error {code}"),
+                Part::Error { code, .. } => {
+                    let code = ErrorCode::from_code(code).ok_or(code);
+                    return Err(Refused { command, code }.into());
+                }
                 Part::Data {
                     index,
                     count,
@@ -99,6 +123,12 @@ impl<T: Transport> Device<T> {
 
     pub fn events(&mut self, from: u32) -> Result<(u32, Vec<Event>)> {
         decode_events(&self.call(Command::Events, from, TIMEOUT)?)
+    }
+
+    /// `None` returns pairing to the survey.
+    pub fn force_channels(&mut self, channels: Option<[u8; 3]>) -> Result<()> {
+        self.call(Command::ForceChannels, channels_arg(channels), TIMEOUT)
+            .map(drop)
     }
 
     pub fn noise(&mut self) -> Result<Vec<NoiseChannel>> {
@@ -246,6 +276,12 @@ pub(crate) mod tests {
             .collect()
     }
 
+    pub(crate) fn error_part(command: u8, seq: u8, code: u8) -> [u8; REPORT_LEN] {
+        let mut r = [0u8; REPORT_LEN];
+        r[..5].copy_from_slice(&[command | crate::protocol::ERROR_FLAG, seq, 0, 1, code]);
+        r
+    }
+
     #[test]
     fn an_action_succeeds_on_an_empty_reply() {
         let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0);
@@ -261,14 +297,14 @@ pub(crate) mod tests {
 
     #[test]
     fn a_dongle_in_this_protocol_connects_with_its_status() {
-        let (_, status) = dongle_in_protocol(1).checked().unwrap();
+        let (_, status) = dongle_in_protocol(2).checked().unwrap();
         assert_eq!(status.channel, 26);
     }
 
     #[test]
     fn a_dongle_in_another_protocol_is_refused_on_connect() {
-        let err = dongle_in_protocol(2).checked().err().unwrap().to_string();
-        assert!(err.starts_with("the dongle speaks diagnostic protocol 2, this tool 1;"));
+        let err = dongle_in_protocol(3).checked().err().unwrap().to_string();
+        assert!(err.starts_with("the dongle speaks diagnostic protocol 3, this tool 2;"));
     }
 
     #[test]
@@ -342,16 +378,16 @@ pub(crate) mod tests {
 
     #[test]
     fn reports_a_dongle_error() {
-        let mut dev = Device::new(
-            Fake::new(|req| {
-                let mut r = [0u8; REPORT_LEN];
-                r[..5].copy_from_slice(&[req[0] | crate::protocol::ERROR_FLAG, req[1], 0, 1, 1]);
-                vec![r]
-            }),
-            0,
-        );
+        let mut dev = Device::new(Fake::new(|req| vec![error_part(req[0], req[1], 1)]), 0);
         let err = dev.status().unwrap_err().to_string();
-        assert!(err.contains("error 1"), "{err}");
+        assert_eq!(err, "the dongle refused Status: unknown command");
+    }
+
+    #[test]
+    fn an_unknown_error_code_is_reported_as_a_number() {
+        let mut dev = Device::new(Fake::new(|req| vec![error_part(req[0], req[1], 99)]), 0);
+        let err = dev.status().unwrap_err().to_string();
+        assert_eq!(err, "the dongle refused Status: error 99");
     }
 
     #[test]

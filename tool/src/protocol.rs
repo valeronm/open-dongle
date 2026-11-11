@@ -4,7 +4,7 @@ pub const REPORT_LEN: usize = 64;
 pub const HEADER_LEN: usize = 4;
 pub const CHUNK: usize = REPORT_LEN - HEADER_LEN;
 pub const ERROR_FLAG: u8 = 0x80;
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 
 /// A status reply in a diagnostic protocol other than [`VERSION`].
 #[derive(Debug)]
@@ -43,6 +43,41 @@ pub enum Command {
     Reboot,
     Bootloader,
     Clear,
+    ForceChannels,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ErrorCode {
+    UnknownCommand = 1,
+    Radio,
+    BadChannels,
+    Store,
+}
+
+impl ErrorCode {
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::UnknownCommand),
+            2 => Some(Self::Radio),
+            3 => Some(Self::BadChannels),
+            4 => Some(Self::Store),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UnknownCommand => "unknown command",
+            Self::Radio => "the radio failed",
+            Self::BadChannels => "channels not allowed",
+            Self::Store => "saving to flash failed",
+        }
+    }
+}
+
+pub fn channels_arg(channels: Option<[u8; 3]>) -> u32 {
+    channels.map_or(0, |[a, b, c]| u32::from_le_bytes([a, b, c, 0]))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,6 +209,8 @@ pub struct Status {
     pub link_state: u8,
     pub channel: u8,
     pub own: Option<[u8; 3]>,
+    /// The channels every pairing offers; `None` while pairing surveys.
+    pub forced: Option<[u8; 3]>,
     pub keyboard_id: [u8; 4],
     pub last_rssi: i8,
     pub last_rx_age_ms: Option<u32>,
@@ -199,6 +236,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let link_state = r.u8()?;
     let channel = r.u8()?;
     let own = r.bytes::<3>()?;
+    let forced = r.bytes::<3>()?;
     let keyboard_id = r.bytes::<4>()?;
     let last_rssi = r.i8()?;
     let age = r.u32()?;
@@ -221,6 +259,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         link_state,
         channel,
         own: (own != [0; 3]).then_some(own),
+        forced: (forced != [0; 3]).then_some(forced),
         keyboard_id,
         last_rssi,
         last_rx_age_ms: (age != u32::MAX).then_some(age),
@@ -418,6 +457,7 @@ pub(crate) mod tests {
         assert_eq!(s.link_state, 4);
         assert_eq!(s.channel, 26);
         assert_eq!(s.own, Some([26, 30, 34]));
+        assert_eq!(s.forced, Some([62, 52, 44]));
         assert_eq!(s.keyboard_id, [0x70, 0x15, 0xa3, 0x29]);
         assert_eq!(s.last_rssi, -71);
         assert_eq!(s.last_rx_age_ms, Some(12));
@@ -480,9 +520,9 @@ pub(crate) mod tests {
     #[test]
     fn an_older_dongle_is_told_to_take_this_tools_firmware() {
         assert_eq!(
-            refusal(0),
+            refusal(1),
             format!(
-                "the dongle speaks diagnostic protocol 0, this tool 1; flash the firmware of \
+                "the dongle speaks diagnostic protocol 1, this tool 2; flash the firmware of \
                  release {} with `open-dongle flash`",
                 env!("CARGO_PKG_VERSION")
             )
@@ -492,8 +532,8 @@ pub(crate) mod tests {
     #[test]
     fn a_newer_dongle_is_told_to_take_its_releases_tool() {
         assert_eq!(
-            refusal(2),
-            "the dongle speaks diagnostic protocol 2, this tool 1; install the open-dongle tool \
+            refusal(3),
+            "the dongle speaks diagnostic protocol 3, this tool 2; install the open-dongle tool \
              from the firmware's release"
         );
     }
@@ -569,8 +609,28 @@ pub(crate) mod tests {
             Command::Reboot,
             Command::Bootloader,
             Command::Clear,
+            Command::ForceChannels,
         ];
         assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
+    }
+
+    #[test]
+    fn error_codes_match_fixture() {
+        let all = [
+            ErrorCode::UnknownCommand,
+            ErrorCode::Radio,
+            ErrorCode::BadChannels,
+            ErrorCode::Store,
+        ];
+        assert_eq!(fixture("error-codes.hex"), all.map(|c| c as u8));
+        assert_eq!(all.map(|c| ErrorCode::from_code(c as u8)), all.map(Some));
+        assert_eq!(ErrorCode::from_code(0), None);
+    }
+
+    #[test]
+    fn forced_channels_go_in_the_low_bytes_of_the_arg() {
+        assert_eq!(channels_arg(Some([62, 52, 44])), 0x002c_343e);
+        assert_eq!(channels_arg(None), 0);
     }
 
     #[test]

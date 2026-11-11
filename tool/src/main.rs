@@ -47,6 +47,12 @@ enum Cmd {
     },
     /// Measure the radio noise on every channel
     Noise(Confirm),
+    /// Set the three channels every pairing offers, or `auto` to pick them by survey
+    Channels {
+        /// Three channels from 2 to 80, for example 62 52 44, or auto
+        #[arg(required = true, num_args = 1..=3)]
+        channels: Vec<String>,
+    },
     /// Restart the dongle firmware
     Reboot(Confirm),
     /// Reboot into the UF2 bootloader for flashing
@@ -86,6 +92,10 @@ fn main() -> Result<()> {
         Cmd::Noise(c) => {
             let (mut dev, s) = device::open(serial)?;
             cli::noise(&mut dev, &s, c.yes)
+        }
+        Cmd::Channels { channels } => {
+            let forced = cli::parse_channels(&channels)?;
+            cli::channels(&mut device::open(serial)?.0, forced)
         }
         Cmd::Reboot(c) => cli::action(&mut device::open(serial)?.0, Action::Reboot, c.yes),
         Cmd::Bootloader(c) => cli::action(
