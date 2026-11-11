@@ -1,7 +1,7 @@
 """Writes dfu-frames.hex: the serial DFU frames adafruit-nrfutil sends for a 1100-byte image.
 
-Run from tool/fixtures with the Python that has adafruit-nrfutil installed:
-/opt/ncs/nrfutil-venv/bin/python make_dfu_frames.py
+Run from tool/fixtures with a Python that has adafruit-nrfutil installed:
+python make_dfu_frames.py
 """
 
 from nordicsemi.dfu import crc16

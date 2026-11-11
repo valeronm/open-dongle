@@ -1,11 +1,78 @@
 # OpenDongle
 
-An open replacement 2.4 GHz receiver for wireless keyboards, running on a Pro Micro nRF52840 (a
-nice!nano clone). The supported keyboard is the NuPhy Air75 V2.
+An open replacement 2.4 GHz receiver for wireless keyboards, running on a [Pro Micro
+nRF52840](#hardware). The supported keyboard is the NuPhy Air75 V2.
 
 NuPhy's own dongle loses keys even with the keyboard 20 cm away. This one reads every packet the
 radio delivers, queues reports while USB is busy, and picks quiet channels when it pairs. The
 keyboard keeps its own firmware.
+
+## Hardware
+
+- A Pro Micro nRF52840, often sold as a nice!nano clone.
+- A USB-C cable to the PC.
+- Optionally, the [printed case](enclosure/README.md).
+
+No soldering is needed. The board needs the Adafruit UF2 bootloader on SoftDevice S140 6.x. New
+boards ship with it under a factory program, which [`open-dongle flash`](#flashing-the-firmware)
+replaces.
+
+Only the Pro Micro has been tested. A nice!nano or another clone with the same bootloader should
+work. Other nRF52840 boards need their own Zephyr board target, and `open-dongle flash`
+and the udev rule recognize only this bootloader.
+
+## What the PC needs
+
+Linux or macOS; Windows is untested.
+
+- [mise](https://mise.jdx.dev), which installs Rust, CMake, Ninja, Python and uv at the versions in
+  `mise.toml`.
+- A C compiler, for the tests.
+- On macOS, the Xcode command line tools and `dtc` (for example `brew install dtc`).
+
+In the clone:
+
+```
+mise trust
+mise install
+mise run setup
+```
+
+`mise run setup` downloads the nRF Connect SDK release named in `mise.toml` and the Zephyr SDK it
+requires, about 8 GB, into `~/ncs`, or into `NCS_ROOT` when it is set. It skips what is already in
+place, so it is safe to rerun. The ESB library and the USB device stack change their APIs between
+SDK releases, so other versions are untested.
+
+## Installing the tool
+
+`tool/` holds `open-dongle`, which flashes the dongle and reads its [diagnostics](#diagnostics):
+
+```
+cargo install --path tool
+```
+
+On Linux, the rule in `tools/udev` lets the tool reach the board without root in every state
+[`open-dongle flash`](#flashing-the-firmware) handles:
+
+```
+sudo cp tools/udev/70-open-dongle.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+```
+
+Then replug the board.
+
+## Flashing the firmware
+
+```
+mise run build
+mise run flash [serial]
+```
+
+`mise run flash` builds the tool and runs its `flash` command on the new image without asking for
+confirmation. `open-dongle flash <file.uf2>` writes firmware to a running dongle, to a board in its
+bootloader, or to a new board still running its factory program, restarting it into the bootloader
+as needed. A board `open-dongle flash` does not find enters its bootloader when RST is shorted to
+GND twice quickly.
 
 ## Pairing
 
@@ -26,37 +93,17 @@ it close to the dongle. If Wi-Fi around you changes and the link gets worse, pai
 
 ## Diagnostics
 
-`tool/` holds `open-dongle`, a tool that reads the dongle over a vendor HID interface: link state
-and signal, per-minute counters for the last day, recent events and a radio noise map, plus reboot,
-bootloader and clear actions. With no arguments it shows a live view; `--help` lists the
-subcommands. The history lives in the dongle's RAM, so it covers only the time since the dongle was
-last plugged in or reset. A noise map stops the keyboard for about 1.5 s, because the radio cannot
-listen while it measures.
+`open-dongle` reads the dongle over a vendor HID interface: link state and signal, per-minute
+counters for the last day, recent events and a radio noise map. With no arguments it shows a live
+view; `--help` lists the subcommands. The history lives in the dongle's RAM, so it covers only the
+time since the dongle was last plugged in or reset. A noise map takes the same measurement as
+[pairing](#pairing) and stops the keyboard meanwhile, because the radio cannot listen while it
+measures.
 
-`open-dongle flash <file.uf2>` writes firmware to a running dongle, to a board in its bootloader, or
-to a new board still running its factory program, restarting it into the bootloader as needed. The
-firmware needs a bootloader on SoftDevice S140 6.x.
+## Development
 
-Build the tool on the machine that runs it: a macOS binary cannot be built on Linux without Apple's
-SDK, and on macOS the HID library needs the Xcode command line tools. On Linux, the rule in
-`tools/udev` lets the tool reach the dongle, its bootloader and a new board's factory program
-without root.
+`mise run test` runs the firmware modules' tests on the host and the tool's tests. It does not need
+the SDKs.
 
-## Limits
-
-Mouse keys, more than six simultaneous keys, and NuPhy's configuration channel are not supported.
-
-## Building, testing and flashing
-
-Requires nRF Connect SDK v3.4.2 in `/opt/ncs/v3.4.2` with Zephyr SDK 1.0.1 in
-`/opt/ncs/zephyr-sdk-1.0.1`. The ESB library and the USB device stack change their APIs between
-SDK releases, so other versions are untested.
-`./build.sh test` and `./build.sh flash` run the tool, so they need a Rust toolchain.
-
-```
-./build.sh build
-./build.sh test
-./build.sh flash [serial]
-```
-
-Without this firmware, the board enters its bootloader when RST is shorted to GND twice quickly.
+The keyboard's radio protocol, beyond what the code shows, is in
+[docs/nuphy-v2-2.4ghz.md](docs/nuphy-v2-2.4ghz.md).

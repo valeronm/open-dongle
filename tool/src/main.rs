@@ -13,13 +13,20 @@ use clap::{Parser, Subcommand};
 use protocol::Action;
 
 #[derive(Parser)]
-#[command(version, about = "Diagnostics for the OpenDongle firmware")]
+#[command(version, about = "Flash and inspect the OpenDongle firmware")]
 struct Args {
     /// Serial number of the board, when more than one is plugged in
     #[arg(long, global = true)]
     serial: Option<String>,
     #[command(subcommand)]
     command: Option<Cmd>,
+}
+
+#[derive(clap::Args)]
+struct Confirm {
+    /// Skip the confirmation
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Subcommand)]
@@ -39,32 +46,20 @@ enum Cmd {
         count: u32,
     },
     /// Measure the radio noise on every channel
-    Noise {
-        #[arg(long)]
-        yes: bool,
-    },
+    Noise(Confirm),
     /// Restart the dongle firmware
-    Reboot {
-        #[arg(long)]
-        yes: bool,
-    },
+    Reboot(Confirm),
     /// Reboot into the UF2 bootloader for flashing
-    Bootloader {
-        #[arg(long)]
-        yes: bool,
-    },
+    Bootloader(Confirm),
     /// Write a firmware image (.uf2) to the board, restarting it into its bootloader first
     Flash {
-        /// The firmware file, for example build/app/open-dongle/zephyr/zephyr.uf2
+        /// The firmware file, for example build/app/zephyr/zephyr.uf2
         file: std::path::PathBuf,
-        #[arg(long)]
-        yes: bool,
+        #[command(flatten)]
+        confirm: Confirm,
     },
     /// Zero the counters, history and events
-    Clear {
-        #[arg(long)]
-        yes: bool,
-    },
+    Clear(Confirm),
 }
 
 fn main() -> Result<()> {
@@ -78,13 +73,13 @@ fn main() -> Result<()> {
     };
     let dev = || device::open(args.serial.as_deref());
     match command {
-        Cmd::Flash { file, yes } => cli::flash(&file, args.serial.as_deref(), yes),
+        Cmd::Flash { file, confirm } => cli::flash(&file, args.serial.as_deref(), confirm.yes),
         Cmd::Status => cli::status(&mut dev()?),
         Cmd::History { minutes } => cli::history(&mut dev()?, minutes),
         Cmd::Events { count } => cli::events(&mut dev()?, count),
-        Cmd::Noise { yes } => cli::noise(&mut dev()?, yes),
-        Cmd::Reboot { yes } => cli::action(&mut dev()?, Action::Reboot, yes),
-        Cmd::Bootloader { yes } => cli::action(&mut dev()?, Action::Bootloader, yes),
-        Cmd::Clear { yes } => cli::action(&mut dev()?, Action::Clear, yes),
+        Cmd::Noise(c) => cli::noise(&mut dev()?, c.yes),
+        Cmd::Reboot(c) => cli::action(&mut dev()?, Action::Reboot, c.yes),
+        Cmd::Bootloader(c) => cli::action(&mut dev()?, Action::Bootloader, c.yes),
+        Cmd::Clear(c) => cli::action(&mut dev()?, Action::Clear, c.yes),
     }
 }

@@ -1,0 +1,58 @@
+[tools]
+rust = "1.99"
+cmake = "4.4"
+ninja = "1.13"
+python = "3.14"
+uv = "0.13"
+
+[env]
+NCS_ROOT = "{{ get_env(name='NCS_ROOT', default=env.HOME ~ '/ncs') }}"
+NCS_VERSION = "v3.4.2"
+NCS_DIR = "{{ env.NCS_ROOT }}/{{ env.NCS_VERSION }}"
+FIRMWARE_BUILD = "{{ config_root }}/build/app"
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.setup]
+description = "Fetch nRF Connect SDK and the Zephyr SDK it requires into NCS_ROOT"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+uv pip install west
+[ -d "$NCS_DIR/.west" ] ||
+	west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS_VERSION" "$NCS_DIR"
+cd "$NCS_DIR"
+west update
+uv pip install -r zephyr/scripts/requirements.txt -r nrf/scripts/requirements.txt \
+	-r bootloader/mcuboot/scripts/requirements.txt
+west sdk install -t arm-zephyr-eabi -b "$NCS_ROOT"
+'''
+
+[tasks.build]
+description = "Build the firmware"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+# west finds Zephyr and the NCS modules from the workspace it runs in.
+cd "$NCS_DIR"
+west build --no-sysbuild -b promicro_nrf52840/nrf52840/uf2 -d "$FIRMWARE_BUILD" "{{ config_root }}"
+'''
+
+[tasks.test]
+description = "Run the firmware modules' tests on the host and the tool's tests"
+run = [
+	"cmake -S tests -B build/tests -G Ninja",
+	"cmake --build build/tests",
+	"ctest --test-dir build/tests --output-on-failure",
+	"cargo test --manifest-path tool/Cargo.toml",
+	"cargo build --manifest-path tool/Cargo.toml",
+]
+
+[tasks.flash]
+description = "Flash the built firmware without asking for confirmation"
+usage = 'arg "[serial]" help="USB serial of the board, when several are connected"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cargo run --manifest-path tool/Cargo.toml -- ${usage_serial:+--serial "$usage_serial"} flash --yes \
+	"$FIRMWARE_BUILD/zephyr/zephyr.uf2"
+'''

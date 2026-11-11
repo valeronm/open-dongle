@@ -1,4 +1,4 @@
-# 239a:00b3 is the Adafruit bootloader, 239a:8029 the Arduino program new boards ship with,
+# 239a:00b3 is the Adafruit bootloader, 239a:8029 the factory program new boards ship with,
 # 2fe3:4e44 the dongle firmware.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", ATTRS{idProduct}=="00b3", TAG+="uaccess"
 SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", ATTRS{idProduct}=="8029", TAG+="uaccess"
