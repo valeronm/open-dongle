@@ -95,6 +95,13 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	return p - out;
 }
 
+static uint8_t *put_noise(uint8_t *p, const struct noise_record *n)
+{
+	*p++ = (uint8_t)n->peak;
+	p = put_le(p, n->busy, 2);
+	return put_le(p, n->strong, 2);
+}
+
 size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m, size_t n)
 {
 	uint8_t *p = put_le(out, first, 4);
@@ -111,6 +118,7 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 		*p++ = (uint8_t)m[i].rssi_min;
 		*p++ = (uint8_t)m[i].rssi_avg;
 		*p++ = (uint8_t)m[i].rssi_max;
+		p = put_noise(p, &m[i].noise);
 	}
 	return p - out;
 }
@@ -127,6 +135,7 @@ size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_eve
 		*p++ = e[i].b;
 		*p++ = e[i].c;
 		p = put_le(p, e[i].value, 4);
+		p = put_noise(p, &e[i].noise);
 	}
 	return p - out;
 }

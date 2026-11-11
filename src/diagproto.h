@@ -16,7 +16,7 @@
 #define DIAG_REQUEST_LEN 6
 #define DIAG_ERROR_FLAG 0x80
 #define DIAG_PAYLOAD_MAX 704
-#define DIAG_MINUTES_PER_PAGE 60
+#define DIAG_MINUTES_PER_PAGE 40
 #define DIAG_EVENTS_PER_PAGE 32
 
 enum diag_command {

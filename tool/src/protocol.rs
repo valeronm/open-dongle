@@ -273,11 +273,19 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     }))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rssi {
     pub min: i8,
     pub avg: i8,
     pub max: i8,
+}
+
+/// `busy` and `strong` are shares of the readings in hundredths of a percent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Noise {
+    pub peak: i8,
+    pub busy: u16,
+    pub strong: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -290,6 +298,20 @@ pub struct Minute {
     pub usb_retries: u8,
     pub gaps: u8,
     pub rssi: Option<Rssi>,
+    pub noise: Option<Noise>,
+}
+
+/// A reading the dongle had nothing for arrives as all zero bytes.
+fn present<T: Default + PartialEq>(v: T) -> Option<T> {
+    (v != T::default()).then_some(v)
+}
+
+fn read_noise(r: &mut Reader) -> Result<Option<Noise>> {
+    Ok(present(Noise {
+        peak: r.i8()?,
+        busy: r.u16()?,
+        strong: r.u16()?,
+    }))
 }
 
 pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
@@ -310,13 +332,8 @@ pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
             link_losses,
             usb_retries,
             gaps,
-            rssi: (rssi
-                != Rssi {
-                    min: 0,
-                    avg: 0,
-                    max: 0,
-                })
-            .then_some(rssi),
+            rssi: present(rssi),
+            noise: read_noise(r)?,
         })
     })
 }
@@ -364,6 +381,7 @@ pub struct Event {
     pub b: u8,
     pub c: u8,
     pub value: u32,
+    pub noise: Option<Noise>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -397,6 +415,7 @@ pub fn decode_events(payload: &[u8]) -> Result<(u32, Vec<Event>)> {
             b: r.u8()?,
             c: r.u8()?,
             value: r.u32()?,
+            noise: read_noise(r)?,
         })
     })
 }
@@ -576,8 +595,17 @@ pub(crate) mod tests {
                 max: -60
             })
         );
+        assert_eq!(
+            m[0].noise,
+            Some(Noise {
+                peak: -41,
+                busy: 102,
+                strong: 5
+            })
+        );
         assert_eq!((m[1].channel_changes, m[1].link_losses), (12, 1));
         assert_eq!(m[1].rssi, None);
+        assert_eq!(m[1].noise, None);
     }
 
     #[test]
@@ -592,11 +620,17 @@ pub(crate) mod tests {
                 a: 0xb9,
                 b: 0,
                 c: 0,
-                value: 1200
+                value: 1200,
+                noise: Some(Noise {
+                    peak: -50,
+                    busy: 2500,
+                    strong: 300
+                })
             }
         );
         assert_eq!(e[1].kind, EventKind::Paired);
         assert_eq!((e[1].a, e[1].b, e[1].c), (26, 30, 34));
+        assert_eq!(e[1].noise, None);
     }
 
     #[test]
@@ -668,9 +702,10 @@ pub(crate) mod tests {
     fn a_minute_of_other_devices_packets_has_no_signal() {
         let mut payload = 0u32.to_le_bytes().to_vec();
         payload.push(1);
-        payload.extend([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        payload.extend([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         let (_, m) = decode_minutes(&payload).unwrap();
         assert_eq!(m[0].packets, 5);
         assert_eq!(m[0].rssi, None);
+        assert_eq!(m[0].noise, None);
     }
 }

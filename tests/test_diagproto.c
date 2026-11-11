@@ -126,7 +126,8 @@ static void test_minutes_match_fixture(void)
 		 .gaps = 3,
 		 .rssi_min = -80,
 		 .rssi_avg = -70,
-		 .rssi_max = -60},
+		 .rssi_max = -60,
+		 .noise = {.peak = -41, .busy = 102, .strong = 5}},
 		{.channel_changes = 12, .link_losses = 1},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
@@ -141,7 +142,8 @@ static void test_minutes_match_fixture(void)
 static void test_events_match_fixture(void)
 {
 	const struct history_event e[] = {
-		{.time_ms = 5000, .type = HISTORY_LINK_LOST, .a = (uint8_t)-71, .value = 1200},
+		{.time_ms = 5000, .type = HISTORY_LINK_LOST, .a = (uint8_t)-71, .value = 1200,
+		 .noise = {.peak = -50, .busy = 2500, .strong = 300}},
 		{.time_ms = 7000, .type = HISTORY_PAIRED, .a = 26, .b = 30, .c = 34},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];

@@ -321,11 +321,11 @@ pub(crate) mod tests {
         let mut dev = Device::new(
             Fake::new(|req| {
                 let from = u32::from_le_bytes(req[2..6].try_into().unwrap());
-                let n = 130u32.saturating_sub(from).min(60) as u8;
+                let n = 130u32.saturating_sub(from).min(40) as u8;
                 let mut p = from.to_le_bytes().to_vec();
                 p.push(n);
                 for _ in 0..n {
-                    p.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                    p.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
                 }
                 parts(req[0], req[1], &p)
             }),

@@ -320,6 +320,7 @@ mod tests {
             b: 0xc1,
             c: 1,
             value: 4200,
+            noise: None,
         };
         assert_eq!(
             describe_event(&back),
@@ -346,6 +347,7 @@ mod tests {
             b: 70,
             c: 0,
             value: 0,
+            noise: None,
         };
         assert_eq!(describe_event(&moved), "moved from channel 2 to channel 70");
     }
@@ -360,6 +362,7 @@ mod tests {
             b: 0xae,
             c: 0xb1,
             value: 340,
+            noise: None,
         };
         assert_eq!(
             describe_event(&gap),
@@ -377,6 +380,7 @@ mod tests {
             b: 0,
             c: 0,
             value: 1200,
+            noise: None,
         };
         assert_eq!(
             describe_event(&lost),
@@ -389,6 +393,7 @@ mod tests {
             b: 30,
             c: 34,
             value: 0,
+            noise: None,
         };
         assert_eq!(describe_event(&paired), "paired on channels 26 30 34");
         let failed = Event {

@@ -470,6 +470,7 @@ mod tests {
             b: 0,
             c: 0,
             value: 0,
+            noise: None,
         };
         indexes.map(|i| (i, event)).collect()
     }
@@ -536,6 +537,7 @@ mod tests {
                 avg,
                 max: avg,
             }),
+            noise: None,
         };
         let without = Minute {
             packets: 0,
@@ -569,7 +571,7 @@ mod tests {
         let mut p = first.to_le_bytes().to_vec();
         p.push(count);
         for _ in 0..count {
-            p.extend([boot, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            p.extend([boot, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         }
         p
     }
@@ -581,7 +583,7 @@ mod tests {
                     1 => status_payload(uptime_ms, next, oldest),
                     2 => {
                         let from = u32::from_le_bytes(req[2..6].try_into().unwrap()).max(oldest);
-                        let n = next.saturating_sub(from).min(60) as u8;
+                        let n = next.saturating_sub(from).min(40) as u8;
                         minutes_payload(from, n, boot)
                     }
                     _ => vec![0, 0, 0, 0, 0],
