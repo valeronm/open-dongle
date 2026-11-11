@@ -48,6 +48,13 @@ run = [
 	"cargo build --manifest-path tool/Cargo.toml",
 ]
 
+[tasks.lint]
+description = "Check the tool's formatting and lints"
+run = [
+	"cargo fmt --manifest-path tool/Cargo.toml --check",
+	"cargo clippy --manifest-path tool/Cargo.toml --all-targets -- -D warnings",
+]
+
 [tasks.flash]
 description = "Flash the built firmware without asking for confirmation"
 usage = 'arg "[serial]" help="USB serial of the board, when several are connected"'
