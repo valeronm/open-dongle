@@ -36,7 +36,8 @@ static struct reports reports;
 static struct history history;
 static struct chan_survey survey;
 static atomic_t host_leds;
-static int8_t last_rssi;
+/* Pipe 1 is addressed to this dongle, so only its paired keyboard sends there. */
+static int8_t keyboard_rssi;
 static uint32_t link_down_ms;
 static bool link_was_lost;
 static uint32_t reset_cause;
@@ -167,14 +168,14 @@ static void apply(const struct link_out *out)
 		uint32_t gap = k_uptime_get_32() - link.last_rx_ms;
 
 		counters.link_losses++;
-		printk("link lost after %u ms, last rssi %d\n", gap, last_rssi);
-		log_event(HISTORY_LINK_LOST, (uint8_t)last_rssi, 0, 0, gap);
+		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
+		log_event(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, 0, 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		release_keys();
 	}
 	if (out->up) {
-		log_event(HISTORY_LINK_UP, link.channel, (uint8_t)last_rssi, link_was_lost,
+		log_event(HISTORY_LINK_UP, link.channel, (uint8_t)keyboard_rssi, link_was_lost,
 			  k_uptime_get_32() - link_down_ms);
 	}
 	if (out->moved) {
@@ -212,7 +213,7 @@ static void handle(const struct rx_item *item)
 {
 	struct nuphy_msg m = nuphy_parse(item->data, item->len);
 	struct link_out out = {0};
-	int8_t rssi_before = last_rssi;
+	int8_t rssi_before = keyboard_rssi;
 	bool changed;
 
 	if (m.kind == NUPHY_INVALID) {
@@ -220,10 +221,12 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	counters.packets++;
-	last_rssi = item->rssi;
+	if (item->pipe == 1) {
+		keyboard_rssi = item->rssi;
+		history_rssi(&history, item->rssi);
+	}
 	heard = true;
 	last_packet_ms = k_uptime_get_32();
-	history_rssi(&history, item->rssi);
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	if (out.gap_ms > 0) {
 		counters.gaps++;
@@ -306,7 +309,7 @@ static void fill_status(struct diag_status *s)
 		.reset_cause = reset_cause,
 		.link_state = link.state,
 		.channel = link.channel,
-		.last_rssi = last_rssi,
+		.last_rssi = keyboard_rssi,
 		.last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX,
 		.usb_live = usb_live(),
 		.usb_suspended = usb_suspended(),

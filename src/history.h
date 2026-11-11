@@ -19,7 +19,7 @@ struct history_totals {
 	uint32_t gaps;
 };
 
-/* Counts saturate; the signal fields are 0 for a minute without packets. */
+/* Counts saturate; the signal fields are 0 for a minute without a history_rssi reading. */
 struct history_minute {
 	uint16_t packets;
 	uint8_t invalid, dropped, channel_changes, link_losses, usb_retries, gaps;

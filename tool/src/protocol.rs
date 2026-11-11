@@ -243,7 +243,13 @@ pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
             link_losses,
             usb_retries,
             gaps,
-            rssi: (packets > 0).then_some(rssi),
+            rssi: (rssi
+                != Rssi {
+                    min: 0,
+                    avg: 0,
+                    max: 0,
+                })
+            .then_some(rssi),
         })
     })
 }
@@ -541,5 +547,15 @@ pub(crate) mod tests {
         let mut payload = fixture("minutes.hex");
         payload.resize(CHUNK, 0);
         assert_eq!(decode_minutes(&payload).unwrap().1.len(), 2);
+    }
+
+    #[test]
+    fn a_minute_of_other_devices_packets_has_no_signal() {
+        let mut payload = 0u32.to_le_bytes().to_vec();
+        payload.push(1);
+        payload.extend([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let (_, m) = decode_minutes(&payload).unwrap();
+        assert_eq!(m[0].packets, 5);
+        assert_eq!(m[0].rssi, None);
     }
 }
