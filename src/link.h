@@ -55,7 +55,6 @@ struct link {
 	uint8_t host_leds;
 	bool host_suspended;
 	bool suspend_sent;
-	bool pairing_allowed;
 };
 
 /* own is the three channels from the last pairing, or NULL for a dongle that never paired. */

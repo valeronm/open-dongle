@@ -66,7 +66,6 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint
 		memcpy(l->own, own, sizeof(l->own));
 		l->own_known = true;
 	}
-	l->pairing_allowed = true;
 	go_idle(l, now_ms, out);
 }
 
@@ -81,7 +80,7 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 		l->last_rx_ms = now_ms;
 	}
 	if (m->kind == NUPHY_PAIR_REQUEST) {
-		if (l->state == LINK_IDLE && l->pairing_allowed) {
+		if (l->state == LINK_IDLE) {
 			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
 			if (l->offer_valid && now_ms - l->offered_ms < OFFER_REUSE_MS) {

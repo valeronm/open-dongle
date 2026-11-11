@@ -205,20 +205,6 @@ static void test_a_request_10_s_after_a_survey_surveys_again(void)
 	CHECK(out.start_survey);
 }
 
-static void test_pairing_not_allowed_ignores_requests(void)
-{
-	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
-
-	init(NULL);
-	l.pairing_allowed = false;
-	deliver(&request, 0, 10);
-	CHECK(!out.start_survey);
-
-	l.pairing_allowed = true;
-	deliver(&request, 0, 20);
-	CHECK(out.start_survey);
-}
-
 static void test_failed_survey_returns_to_idle(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -407,7 +393,6 @@ int main(void)
 	RUN(test_confirm_for_another_dongle_is_ignored);
 	RUN(test_a_request_soon_after_a_survey_reuses_its_channels);
 	RUN(test_a_request_10_s_after_a_survey_surveys_again);
-	RUN(test_pairing_not_allowed_ignores_requests);
 	RUN(test_failed_survey_returns_to_idle);
 	RUN(test_rebooted_dongle_connects_on_home_and_sends_status_every_100_ms);
 	RUN(test_status_carries_host_leds);
