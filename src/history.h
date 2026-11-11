@@ -16,19 +16,20 @@ struct history_totals {
 	uint32_t channel_changes;
 	uint32_t link_losses;
 	uint32_t usb_retries;
+	uint32_t gaps;
 };
 
 /* Counts saturate; the signal fields are 0 for a minute without packets. */
 struct history_minute {
 	uint16_t packets;
-	uint8_t invalid, dropped, channel_changes, link_losses, usb_retries;
+	uint8_t invalid, dropped, channel_changes, link_losses, usb_retries, gaps;
 	int8_t rssi_min, rssi_avg, rssi_max;
 };
 
 enum history_event_type {
 	HISTORY_BOOT = 1, HISTORY_PAIRED, HISTORY_LINK_LOST, HISTORY_SURVEY,
 	HISTORY_NOISE, HISTORY_USB_SUSPEND, HISTORY_USB_RESUME,
-	HISTORY_CLEAR, HISTORY_LINK_UP, HISTORY_LINK_MOVED
+	HISTORY_CLEAR, HISTORY_LINK_UP, HISTORY_LINK_MOVED, HISTORY_LINK_GAP
 };
 
 struct history_event {

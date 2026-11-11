@@ -34,6 +34,9 @@ struct link_out {
 	bool up;
 	bool moved;
 	uint8_t moved_from;
+	/* Nonzero when this packet ended a gap. */
+	uint32_t gap_ms;
+	uint8_t gap_channel;
 };
 
 struct link {

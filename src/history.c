@@ -44,6 +44,7 @@ static struct history_minute close_minute(const struct history *h, const struct 
 		.channel_changes = sat8(t->channel_changes - s->channel_changes),
 		.link_losses = sat8(t->link_losses - s->link_losses),
 		.usb_retries = sat8(t->usb_retries - s->usb_retries),
+		.gaps = sat8(t->gaps - s->gaps),
 	};
 
 	if (h->rssi_count > 0) {

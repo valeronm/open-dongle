@@ -238,6 +238,13 @@ pub fn describe_event(e: &Event) -> String {
             e.b as i8
         ),
         EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
+        EventKind::LinkGap => format!(
+            "gap of {} on channel {}, signal {} dBm before, {} dBm after",
+            duration(e.value),
+            e.a,
+            e.b as i8,
+            e.c as i8
+        ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -295,6 +302,23 @@ mod tests {
             value: 0,
         };
         assert_eq!(describe_event(&moved), "moved from channel 2 to channel 70");
+    }
+
+    #[test]
+    fn describes_a_gap_with_the_signal_on_both_sides() {
+        use crate::protocol::{Event, EventKind};
+        let gap = Event {
+            time_ms: 0,
+            kind: EventKind::LinkGap,
+            a: 38,
+            b: 0xae,
+            c: 0xb1,
+            value: 340,
+        };
+        assert_eq!(
+            describe_event(&gap),
+            "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after"
+        );
     }
 
     #[test]

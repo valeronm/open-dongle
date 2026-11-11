@@ -55,7 +55,8 @@ static void test_status_matches_fixture(void)
 			   .dropped = 2,
 			   .channel_changes = 3,
 			   .link_losses = 4,
-			   .usb_retries = 5},
+			   .usb_retries = 5,
+			   .gaps = 8},
 		.merges = 6,
 		.surveys = 7,
 		.minute_next = 1500,
@@ -119,7 +120,12 @@ static void test_error_sets_the_flag_and_code(void)
 static void test_minutes_match_fixture(void)
 {
 	const struct history_minute m[] = {
-		{.packets = 300, .usb_retries = 1, .rssi_min = -80, .rssi_avg = -70, .rssi_max = -60},
+		{.packets = 300,
+		 .usb_retries = 1,
+		 .gaps = 3,
+		 .rssi_min = -80,
+		 .rssi_avg = -70,
+		 .rssi_max = -60},
 		{.channel_changes = 12, .link_losses = 1},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
@@ -190,7 +196,7 @@ static void test_event_type_numbers_match_fixture(void)
 	const uint8_t got[] = {HISTORY_BOOT, HISTORY_PAIRED, HISTORY_LINK_LOST,
 			       HISTORY_SURVEY, HISTORY_NOISE, HISTORY_USB_SUSPEND,
 			       HISTORY_USB_RESUME, HISTORY_CLEAR, HISTORY_LINK_UP,
-			       HISTORY_LINK_MOVED};
+			       HISTORY_LINK_MOVED, HISTORY_LINK_GAP};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 

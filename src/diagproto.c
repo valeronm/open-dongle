@@ -75,6 +75,7 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->totals.channel_changes, 4);
 	p = put_le(p, s->totals.link_losses, 4);
 	p = put_le(p, s->totals.usb_retries, 4);
+	p = put_le(p, s->totals.gaps, 4);
 	p = put_le(p, s->merges, 4);
 	p = put_le(p, s->surveys, 4);
 	p = put_le(p, s->minute_next, 4);
@@ -96,6 +97,7 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 		*p++ = m[i].channel_changes;
 		*p++ = m[i].link_losses;
 		*p++ = m[i].usb_retries;
+		*p++ = m[i].gaps;
 		*p++ = (uint8_t)m[i].rssi_min;
 		*p++ = (uint8_t)m[i].rssi_avg;
 		*p++ = (uint8_t)m[i].rssi_max;

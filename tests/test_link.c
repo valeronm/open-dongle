@@ -385,6 +385,69 @@ static void test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongl
 	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
 }
 
+static void test_a_250_ms_silence_while_connected_is_a_gap(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK_EQ(out.gap_ms, 0);
+	message(NUPHY_KEEPALIVE, 1, 259);
+	CHECK_EQ(out.gap_ms, 0);
+	message(NUPHY_KEEPALIVE, 1, 509);
+	CHECK_EQ(out.gap_ms, 250);
+	CHECK_EQ(out.gap_channel, 26);
+}
+
+static void test_a_radio_pause_is_not_a_gap(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	link_radio_resumed(&l, 1600);
+	message(NUPHY_KEEPALIVE, 1, 1610);
+	CHECK_EQ(out.gap_ms, 0);
+}
+
+static void test_the_packet_that_brings_the_link_up_is_not_a_gap(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	tick(1010);
+	message(NUPHY_KEEPALIVE, 1, 5000);
+	CHECK(out.up);
+	CHECK_EQ(out.gap_ms, 0);
+}
+
+static void test_the_first_packet_after_a_pairing_confirm_is_not_a_gap(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, dongle_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 20);
+	deliver(&confirm, 0, 30);
+	message(NUPHY_KEEPALIVE, 1, 400);
+	CHECK_EQ(out.gap_ms, 0);
+}
+
+static void test_a_gap_ended_by_the_move_home_is_on_the_pairing_channel(void)
+{
+	hear_keyboard_on_the_pairing_channel(home);
+	message(NUPHY_HELLO, 1, 700);
+	CHECK(out.moved);
+	CHECK_EQ(out.gap_ms, 290);
+	CHECK_EQ(out.gap_channel, 2);
+}
+
+static void test_the_wait_for_the_keyboard_after_a_move_home_is_a_gap(void)
+{
+	hear_keyboard_on_the_pairing_channel(home);
+	message(NUPHY_HELLO, 1, 520);
+	CHECK(out.moved);
+	message(NUPHY_KEEPALIVE, 1, 780);
+	CHECK_EQ(out.gap_ms, 260);
+	CHECK_EQ(out.gap_channel, home[0]);
+}
+
 int main(void)
 {
 	RUN(test_never_paired_idle_alternates_fixed_channels_with_channel_2);
@@ -408,5 +471,11 @@ int main(void)
 	RUN(test_a_keyboard_heard_on_the_pairing_channel_is_moved_home);
 	RUN(test_silence_after_the_move_home_starts_loses_the_link);
 	RUN(test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongle_stays);
+	RUN(test_a_250_ms_silence_while_connected_is_a_gap);
+	RUN(test_a_radio_pause_is_not_a_gap);
+	RUN(test_the_packet_that_brings_the_link_up_is_not_a_gap);
+	RUN(test_the_first_packet_after_a_pairing_confirm_is_not_a_gap);
+	RUN(test_a_gap_ended_by_the_move_home_is_on_the_pairing_channel);
+	RUN(test_the_wait_for_the_keyboard_after_a_move_home_is_a_gap);
 	return TEST_EXIT();
 }

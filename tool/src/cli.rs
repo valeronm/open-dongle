@@ -43,12 +43,13 @@ pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
         reset_causes(s.reset_cause)
     );
     println!(
-        "counters  packets {} invalid {} dropped {} channels {} losses {} usb-retries {} merges {} surveys {}",
+        "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
         c.packets,
         c.invalid,
         c.dropped,
         c.channel_changes,
         c.link_losses,
+        c.gaps,
         c.usb_retries,
         c.merges,
         c.surveys
@@ -71,13 +72,14 @@ pub fn history<T: Transport>(dev: &mut Device<T>, minutes: u32) -> Result<()> {
             .rssi
             .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
         println!(
-            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  usb-retries {:3}  signal {signal}",
+            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  gaps {:3}  usb-retries {:3}  signal {signal}",
             at.format("%Y-%m-%d %H:%M"),
             m.packets,
             m.invalid,
             m.dropped,
             m.channel_changes,
             m.link_losses,
+            m.gaps,
             m.usb_retries
         );
     }

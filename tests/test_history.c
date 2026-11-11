@@ -15,6 +15,7 @@ static void test_a_closed_minute_holds_its_counter_changes_and_signal(void)
 	t.packets = 400;
 	t.invalid = 3;
 	t.link_losses = 1;
+	t.gaps = 2;
 	history_rssi(&h, -60);
 	history_rssi(&h, -80);
 	history_rssi(&h, -71);
@@ -26,6 +27,7 @@ static void test_a_closed_minute_holds_its_counter_changes_and_signal(void)
 	CHECK_EQ(m.packets, 300);
 	CHECK_EQ(m.invalid, 2);
 	CHECK_EQ(m.link_losses, 1);
+	CHECK_EQ(m.gaps, 2);
 	CHECK_EQ(m.rssi_min, -80);
 	CHECK_EQ(m.rssi_max, -60);
 	CHECK_EQ(m.rssi_avg, -70);

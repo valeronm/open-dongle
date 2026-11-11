@@ -4,6 +4,8 @@
 #define IDLE_AFTER_MS 1000
 #define SLOT_MS 400
 #define STATUS_EVERY_MS 100
+/* A connected keyboard sends about every 40 ms, even with no key change. */
+#define GAP_MS 250
 /* The keyboard repeats a pair request that goes unanswered while a survey has the receiver off. */
 #define OFFER_REUSE_MS 10000
 
@@ -11,6 +13,11 @@
 #define PAIRING_CHANNEL 2
 /* The keyboard firmware fixes these channels besides the three it gets at pairing. */
 static const uint8_t fixed_channels[] = {16, 22, 44, 48, 58, 72, 78};
+
+static bool connected(const struct link *l)
+{
+	return l->state == LINK_CONNECTED || l->state == LINK_MOVING_HOME;
+}
 
 static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 {
@@ -138,6 +145,10 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 	if (pipe != 1) {
 		return;
 	}
+	if (connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {
+		out->gap_ms = now_ms - l->last_rx_ms;
+		out->gap_channel = l->channel;
+	}
 	l->last_rx_ms = now_ms;
 	switch (l->state) {
 	case LINK_CONFIRMED:
@@ -200,7 +211,7 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	case LINK_MOVING_HOME:
 	case LINK_PAIRING:
 		if (now_ms - l->last_rx_ms >= IDLE_AFTER_MS) {
-			out->lost = l->state == LINK_CONNECTED || l->state == LINK_MOVING_HOME;
+			out->lost = connected(l);
 			go_idle(l, now_ms, out);
 		}
 		break;
@@ -239,13 +250,8 @@ void link_set_host_suspended(struct link *l, bool suspended)
 
 enum link_led link_led(const struct link *l)
 {
-	switch (l->state) {
-	case LINK_IDLE:
+	if (l->state == LINK_IDLE) {
 		return LINK_LED_IDLE;
-	case LINK_CONNECTED:
-	case LINK_MOVING_HOME:
-		return LINK_LED_CONNECTED;
-	default:
-		return LINK_LED_PAIRING;
 	}
+	return connected(l) ? LINK_LED_CONNECTED : LINK_LED_PAIRING;
 }

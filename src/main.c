@@ -50,6 +50,7 @@ static struct {
 	uint32_t channel_changes;
 	uint32_t link_losses;
 	uint32_t usb_retries;
+	uint32_t gaps;
 	uint32_t surveys;
 } counters;
 
@@ -89,6 +90,7 @@ static struct history_totals totals(void)
 		.channel_changes = counters.channel_changes,
 		.link_losses = counters.link_losses,
 		.usb_retries = counters.usb_retries,
+		.gaps = counters.gaps,
 	};
 }
 
@@ -210,6 +212,7 @@ static void handle(const struct rx_item *item)
 {
 	struct nuphy_msg m = nuphy_parse(item->data, item->len);
 	struct link_out out = {0};
+	int8_t rssi_before = last_rssi;
 	bool changed;
 
 	if (m.kind == NUPHY_INVALID) {
@@ -222,6 +225,11 @@ static void handle(const struct rx_item *item)
 	last_packet_ms = k_uptime_get_32();
 	history_rssi(&history, item->rssi);
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
+	if (out.gap_ms > 0) {
+		counters.gaps++;
+		log_event(HISTORY_LINK_GAP, out.gap_channel, (uint8_t)rssi_before,
+			  (uint8_t)item->rssi, out.gap_ms);
+	}
 	apply(&out);
 	if (out.start_survey) {
 		run_survey();
@@ -281,10 +289,11 @@ static void on_usb_leds(uint8_t leds)
 
 static void print_counters(void)
 {
-	printk("counters: packets %u invalid %u dropped %u channels %u losses %u usb-retries %u "
-	       "merges %u surveys %u, ch%u state %d\n",
+	printk("counters: packets %u invalid %u dropped %u channels %u losses %u gaps %u "
+	       "usb-retries %u merges %u surveys %u, ch%u state %d\n",
 	       counters.packets, counters.invalid, counters.rx_dropped, counters.channel_changes,
-	       counters.link_losses, counters.usb_retries, reports.merges, counters.surveys,
+	       counters.link_losses, counters.gaps, counters.usb_retries, reports.merges,
+	       counters.surveys,
 	       link.channel, link.state);
 }
 

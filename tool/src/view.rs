@@ -330,28 +330,30 @@ impl App {
                 last_packet(s.last_rx_age_ms)
             )),
             Line::from(format!(
-                "usb {}   up {}   losses {}   dropped {}",
+                "usb {}   up {}   losses {}   gaps {}   dropped {}",
                 usb_state(s.usb_live, s.usb_suspended),
                 uptime(s.uptime_ms),
                 s.counters.link_losses,
+                s.counters.gaps,
                 s.counters.dropped
             )),
         ]
     }
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
-        let [losses_row, dropped_row, signal_row]: [Rect; 3] =
-            Layout::vertical([Constraint::Ratio(1, 3); 3]).areas(area);
+        let [losses_row, gaps_row, dropped_row, signal_row] =
+            Layout::vertical([Constraint::Ratio(1, 4); 4]).areas(area);
         let width = area.width.saturating_sub(2) as usize;
         self.scroll = self
             .scroll
             .min(self.history.minutes.len().saturating_sub(width));
         let end = self.history.minutes.len().saturating_sub(self.scroll);
         let shown = &self.history.minutes[end.saturating_sub(width)..end];
-        let series: [(&str, Rect, MinuteValue); 2] = [
+        let series: [(&str, Rect, MinuteValue); 3] = [
             ("link losses per minute", losses_row, |m| {
                 u64::from(m.link_losses)
             }),
+            ("gaps per minute", gaps_row, |m| u64::from(m.gaps)),
             ("dropped packets per minute", dropped_row, |m| {
                 u64::from(m.dropped)
             }),
@@ -528,6 +530,7 @@ mod tests {
             channel_changes: 0,
             link_losses: 0,
             usb_retries: 0,
+            gaps: 0,
             rssi: Some(Rssi {
                 min: avg,
                 avg,
@@ -566,7 +569,7 @@ mod tests {
         let mut p = first.to_le_bytes().to_vec();
         p.push(count);
         for _ in 0..count {
-            p.extend([boot, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            p.extend([boot, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
         }
         p
     }

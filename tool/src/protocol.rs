@@ -134,6 +134,7 @@ pub struct Counters {
     pub channel_changes: u32,
     pub link_losses: u32,
     pub usb_retries: u32,
+    pub gaps: u32,
     pub merges: u32,
     pub surveys: u32,
 }
@@ -181,6 +182,7 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
         channel_changes: r.u32()?,
         link_losses: r.u32()?,
         usb_retries: r.u32()?,
+        gaps: r.u32()?,
         merges: r.u32()?,
         surveys: r.u32()?,
     };
@@ -219,14 +221,15 @@ pub struct Minute {
     pub channel_changes: u8,
     pub link_losses: u8,
     pub usb_retries: u8,
+    pub gaps: u8,
     pub rssi: Option<Rssi>,
 }
 
 pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
     decode_page(payload, |r| {
         let packets = r.u16()?;
-        let (invalid, dropped, channel_changes, link_losses, usb_retries) =
-            (r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?);
+        let (invalid, dropped, channel_changes, link_losses, usb_retries, gaps) =
+            (r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?, r.u8()?);
         let rssi = Rssi {
             min: r.i8()?,
             avg: r.i8()?,
@@ -239,6 +242,7 @@ pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
             channel_changes,
             link_losses,
             usb_retries,
+            gaps,
             rssi: (packets > 0).then_some(rssi),
         })
     })
@@ -256,6 +260,7 @@ pub enum EventKind {
     Clear,
     LinkUp,
     LinkMoved,
+    LinkGap,
     Unknown(u8),
 }
 
@@ -272,6 +277,7 @@ impl From<u8> for EventKind {
             8 => Self::Clear,
             9 => Self::LinkUp,
             10 => Self::LinkMoved,
+            11 => Self::LinkGap,
             other => Self::Unknown(other),
         }
     }
@@ -385,6 +391,7 @@ pub(crate) mod tests {
                 channel_changes: 3,
                 link_losses: 4,
                 usb_retries: 5,
+                gaps: 8,
                 merges: 6,
                 surveys: 7
             }
@@ -459,6 +466,7 @@ pub(crate) mod tests {
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].packets, 300);
         assert_eq!(m[0].usb_retries, 1);
+        assert_eq!(m[0].gaps, 3);
         assert_eq!(
             m[0].rssi,
             Some(Rssi {
@@ -523,6 +531,7 @@ pub(crate) mod tests {
                 EventKind::Clear,
                 EventKind::LinkUp,
                 EventKind::LinkMoved,
+                EventKind::LinkGap,
             ]
         );
     }
