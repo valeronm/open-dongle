@@ -49,6 +49,26 @@ static void test_a_minute_without_packets_has_zero_signal(void)
 	CHECK_EQ(m[1].rssi_max, 0);
 }
 
+static void test_a_closed_minute_holds_its_noise(void)
+{
+	struct history_totals t = {0};
+	struct noise_tally n = {0};
+	struct history_minute m[2];
+	uint32_t first;
+
+	history_init(&h, 0, &t);
+	noise_add(&n, -96);
+	noise_add(&n, -50);
+	history_noise(&h, &n);
+	history_tick(&h, 2 * MINUTE, &t);
+	CHECK_EQ(history_minutes(&h, 0, &first, m, 2), 2);
+	CHECK_EQ(m[0].noise.peak, -50);
+	CHECK_EQ(m[0].noise.busy, 5000);
+	CHECK_EQ(m[0].noise.strong, 5000);
+	CHECK_EQ(m[1].noise.peak, 0);
+	CHECK_EQ(m[1].noise.busy, 0);
+}
+
 static void test_counts_saturate(void)
 {
 	struct history_totals t = {0};
@@ -120,6 +140,7 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 	history_event(&h, &(struct history_event){.type = HISTORY_BOOT});
 	t.packets = 80;
 	history_tick(&h, 3 * MINUTE, &t);
+	history_noise(&h, &(struct noise_tally){.readings = 1, .busy = 1, .strong = 1, .peak = -40});
 	t = (struct history_totals){0};
 	history_clear(&h, 3 * MINUTE + 5, &t);
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 0);
@@ -130,12 +151,14 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 1);
 	CHECK_EQ(first, 3);
 	CHECK_EQ(m.packets, 7);
+	CHECK_EQ(m.noise.peak, 0);
 }
 
 int main(void)
 {
 	RUN(test_a_closed_minute_holds_its_counter_changes_and_signal);
 	RUN(test_a_minute_without_packets_has_zero_signal);
+	RUN(test_a_closed_minute_holds_its_noise);
 	RUN(test_counts_saturate);
 	RUN(test_the_ring_keeps_the_newest_day);
 	RUN(test_a_boot_late_in_uptime_starts_at_that_minute);

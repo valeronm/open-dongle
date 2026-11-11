@@ -11,12 +11,13 @@ static uint8_t sat8(uint32_t v)
 	return v > UINT8_MAX ? UINT8_MAX : v;
 }
 
-static void reset_rssi(struct history *h)
+static void reset_minute(struct history *h)
 {
 	h->rssi_sum = 0;
 	h->rssi_count = 0;
 	h->rssi_min = 0;
 	h->rssi_max = 0;
+	h->noise = (struct noise_tally){0};
 }
 
 void history_clear(struct history *h, uint64_t now_ms, const struct history_totals *t)
@@ -25,7 +26,7 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 	h->minute_oldest = h->minute_next;
 	h->at_minute_start = *t;
 	h->events_oldest = h->events_total;
-	reset_rssi(h);
+	reset_minute(h);
 }
 
 void history_init(struct history *h, uint64_t now_ms, const struct history_totals *t)
@@ -52,6 +53,7 @@ static struct history_minute close_minute(const struct history *h, const struct 
 		m.rssi_max = h->rssi_max;
 		m.rssi_avg = h->rssi_sum / (int32_t)h->rssi_count;
 	}
+	m.noise = noise_record(&h->noise);
 	return m;
 }
 
@@ -66,7 +68,7 @@ void history_tick(struct history *h, uint64_t now_ms, const struct history_total
 			h->minute_oldest = h->minute_next - HISTORY_MINUTES;
 		}
 		h->at_minute_start = *t;
-		reset_rssi(h);
+		reset_minute(h);
 	}
 }
 
@@ -80,6 +82,11 @@ void history_rssi(struct history *h, int8_t dbm)
 	}
 	h->rssi_sum += dbm;
 	h->rssi_count++;
+}
+
+void history_noise(struct history *h, const struct noise_tally *t)
+{
+	noise_merge(&h->noise, t);
 }
 
 void history_event(struct history *h, const struct history_event *e)

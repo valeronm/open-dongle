@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "noise.h"
+
 #define HISTORY_MINUTES 1440
 #define HISTORY_EVENTS 512
 #define HISTORY_MINUTE_MS 60000
@@ -24,6 +26,7 @@ struct history_minute {
 	uint16_t packets;
 	uint8_t invalid, dropped, channel_changes, link_losses, usb_retries, gaps;
 	int8_t rssi_min, rssi_avg, rssi_max;
+	struct noise_record noise;
 };
 
 enum history_event_type {
@@ -36,6 +39,7 @@ struct history_event {
 	uint64_t time_ms;
 	uint8_t type, a, b, c;
 	uint32_t value;
+	struct noise_record noise;
 };
 
 /* Minute n covers uptime [n * HISTORY_MINUTE_MS, (n + 1) * HISTORY_MINUTE_MS). */
@@ -51,6 +55,7 @@ struct history {
 	struct history_event events[HISTORY_EVENTS];
 	uint32_t events_total;
 	uint32_t events_oldest;
+	struct noise_tally noise;
 };
 
 void history_init(struct history *h, uint64_t now_ms, const struct history_totals *t);
@@ -62,6 +67,7 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 void history_tick(struct history *h, uint64_t now_ms, const struct history_totals *t);
 void history_rssi(struct history *h, int8_t dbm);
 void history_event(struct history *h, const struct history_event *e);
+void history_noise(struct history *h, const struct noise_tally *t);
 
 /* Copies up to max held records from index from, or from the oldest held if that is later. */
 size_t history_minutes(const struct history *h, uint32_t from, uint32_t *first,
