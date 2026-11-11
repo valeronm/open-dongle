@@ -14,5 +14,5 @@ set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
   FIRMWARE_VERSION_PATCH=${CMAKE_MATCH_3})
 
 target_sources(app PRIVATE
-  src/main.c src/nuphy.c src/reports.c src/chanpick.c src/link.c
+  src/main.c src/nuphy.c src/reports.c src/chanpick.c src/noise.c src/link.c
   src/radio.c src/store.c src/usb.c src/indicator.c src/diag.c src/diagproto.c src/history.c)
