@@ -33,9 +33,14 @@ subcommands. The history lives in the dongle's RAM, so it covers only the time s
 last plugged in or reset. A noise map stops the keyboard for about 1.5 s, because the radio cannot
 listen while it measures.
 
+`open-dongle flash <file.uf2>` writes firmware to a running dongle, to a board in its bootloader, or
+to a new board still running its factory program, restarting it into the bootloader as needed. The
+firmware needs a bootloader on SoftDevice S140 6.x.
+
 Build the tool on the machine that runs it: a macOS binary cannot be built on Linux without Apple's
 SDK, and on macOS the HID library needs the Xcode command line tools. On Linux, the rule in
-`tools/udev` makes the interface readable without root.
+`tools/udev` lets the tool reach the dongle, its bootloader and a new board's factory program
+without root.
 
 ## Limits
 
@@ -44,14 +49,14 @@ Mouse keys, more than six simultaneous keys, and NuPhy's configuration channel a
 ## Building, testing and flashing
 
 Requires nRF Connect SDK v3.4.2 in `/opt/ncs/v3.4.2` with Zephyr SDK 1.0.1 in
-`/opt/ncs/zephyr-sdk-1.0.1`, and `adafruit-nrfutil` in `/opt/ncs/nrfutil-venv`. The ESB library
-and the USB device stack change their APIs between SDK releases, so other versions are untested.
-`./build.sh test` also runs the tool's tests, so it needs a Rust toolchain.
+`/opt/ncs/zephyr-sdk-1.0.1`. The ESB library and the USB device stack change their APIs between
+SDK releases, so other versions are untested.
+`./build.sh test` and `./build.sh flash` run the tool, so they need a Rust toolchain.
 
 ```
 ./build.sh build
 ./build.sh test
-./build.sh flash [/dev/ttyACM0]
+./build.sh flash [serial]
 ```
 
 Without this firmware, the board enters its bootloader when RST is shorted to GND twice quickly.

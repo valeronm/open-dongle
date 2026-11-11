@@ -3,7 +3,6 @@ set -euo pipefail
 
 app=$(cd "$(dirname "$0")" && pwd)
 ncs=/opt/ncs/v3.4.2
-nrfutil=/opt/ncs/nrfutil-venv/bin/adafruit-nrfutil
 export PATH=/opt/ncs/.venv/bin:$PATH
 export ZEPHYR_SDK_INSTALL_DIR=/opt/ncs/zephyr-sdk-1.0.1
 export ZEPHYR_TOOLCHAIN_VARIANT=zephyr
@@ -21,14 +20,11 @@ test)
 	cargo build --manifest-path "$app/tool/Cargo.toml"
 	;;
 flash)
-	port=${2:-/dev/ttyACM0}
-	"$nrfutil" dfu genpkg --dev-type 0x0052 \
-		--application "$app/build/app/$(basename "$app")/zephyr/zephyr.hex" "$app/build/app.zip"
-	"$nrfutil" dfu serial --package "$app/build/app.zip" -p "$port" -b 115200 \
-		--singlebank --touch 1200
+	cargo run --manifest-path "$app/tool/Cargo.toml" -- ${2:+--serial "$2"} flash --yes \
+		"$app/build/app/$(basename "$app")/zephyr/zephyr.uf2"
 	;;
 *)
-	echo "usage: $0 build|test|flash [port]" >&2
+	echo "usage: $0 build|test|flash [serial]" >&2
 	exit 2
 	;;
 esac
