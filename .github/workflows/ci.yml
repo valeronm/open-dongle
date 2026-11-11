@@ -12,9 +12,16 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # rustup's homes default to ~/.rustup and ~/.cargo, outside the mise data directory that
+      # mise-action caches.
+      MISE_RUSTUP_HOME: /home/runner/.local/share/mise/rustup
+      MISE_CARGO_HOME: /home/runner/.local/share/mise/cargo
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
+        with:
+          cache_key_prefix: mise-rustup-v1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: tool
