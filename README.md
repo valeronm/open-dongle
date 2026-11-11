@@ -21,41 +21,25 @@ Only the Pro Micro has been tested. A nice!nano or another clone with the same b
 work. Other nRF52840 boards need their own Zephyr board target, and `open-dongle flash`
 and the udev rule recognize only this bootloader.
 
-## What the PC needs
-
-Linux or macOS; Windows is untested.
-
-- [mise](https://mise.jdx.dev), which installs Rust, CMake, Ninja, Python and uv at the versions in
-  `mise.toml`.
-- A C compiler, for the tests.
-- On macOS, the Xcode command line tools and `dtc` (for example `brew install dtc`).
-
-In the clone:
-
-```
-mise trust
-mise install
-mise run setup
-```
-
-`mise run setup` downloads the nRF Connect SDK release named in `mise.toml` and the Zephyr SDK it
-requires, about 8 GB, into `~/ncs`, or into `NCS_ROOT` when it is set. It skips what is already in
-place, so it is safe to rerun. The ESB library and the USB device stack change their APIs between
-SDK releases, so other versions are untested.
-
 ## Installing the tool
 
-`tool/` holds `open-dongle`, which flashes the dongle and reads its [diagnostics](#diagnostics):
+`open-dongle` flashes the dongle and reads its [diagnostics](#diagnostics). It runs on x86_64 Linux
+and Apple Silicon macOS; Windows is untested. Download the archive for your platform from the
+[latest release](https://github.com/valeronm/open-dongle/releases/latest), unpack it, and put the
+`open-dongle` from the unpacked folder on your `PATH`.
+
+On macOS, the tool is unsigned, so clear the quarantine flag a browser download carries before
+unpacking:
 
 ```
-cargo install --path tool
+xattr -d com.apple.quarantine open-dongle-*.tar.gz
 ```
 
-On Linux, the rule in `tools/udev` lets the tool reach the board without root in every state
-[`open-dongle flash`](#flashing-the-firmware) handles:
+On Linux, the udev rule in the unpacked folder lets the tool reach the board without root in every
+state [`open-dongle flash`](#flashing-the-firmware) handles. From that folder:
 
 ```
-sudo cp tools/udev/70-open-dongle.rules /etc/udev/rules.d/
+sudo cp 70-open-dongle.rules /etc/udev/rules.d/
 sudo udevadm control --reload
 ```
 
@@ -63,16 +47,15 @@ Then replug the board.
 
 ## Flashing the firmware
 
+Download the `.uf2` from the same release and run:
+
 ```
-mise run build
-mise run flash [serial]
+open-dongle flash open-dongle-<version>-promicro_nrf52840.uf2
 ```
 
-`mise run flash` builds the tool and runs its `flash` command on the new image without asking for
-confirmation. `open-dongle flash <file.uf2>` writes firmware to a running dongle, to a board in its
-bootloader, or to a new board still running its factory program, restarting it into the bootloader
-as needed. A board `open-dongle flash` does not find enters its bootloader when RST is shorted to
-GND twice quickly.
+`open-dongle flash` writes firmware to a running dongle, to a board in its bootloader, or to a new
+board still running its factory program, restarting it into the bootloader as needed. A board
+`open-dongle flash` does not find enters its bootloader when RST is shorted to GND twice quickly.
 
 ## Pairing
 
@@ -100,10 +83,42 @@ time since the dongle was last plugged in or reset. A noise map takes the same m
 [pairing](#pairing) and stops the keyboard meanwhile, because the radio cannot listen while it
 measures.
 
+## Building from source
+
+- [mise](https://mise.jdx.dev), which installs Rust, CMake, Ninja, Python and uv at the versions in
+  `mise.toml`.
+- A C compiler, for the tests.
+- On macOS, the Xcode command line tools and `dtc` (for example `brew install dtc`).
+
+In the clone:
+
+```
+mise trust
+mise install
+mise run setup
+```
+
+`mise run setup` downloads the nRF Connect SDK release named in `mise.toml` and the Zephyr SDK it
+requires, about 8 GB, into `~/ncs`, or into `NCS_ROOT` when it is set. It skips what is already in
+place, so it is safe to rerun. The ESB library and the USB device stack change their APIs between
+SDK releases, so other versions are untested.
+
+```
+mise run build
+mise run flash [serial]
+cargo install --path tool
+```
+
+`mise run flash` flashes the image `mise run build` wrote. The udev rule is in `tools/udev`.
+
 ## Development
 
 `mise run test` runs the firmware modules' tests on the host and the tool's tests. It does not need
-the SDKs.
+the SDKs. `mise run lint` runs rustfmt and clippy. CI runs both on `main` and on pull requests.
 
 The keyboard's radio protocol, beyond what the code shows, is in
 [docs/nuphy-v2-2.4ghz.md](docs/nuphy-v2-2.4ghz.md).
+
+A release is built when a `v<version>` tag is pushed. Set the version in `tool/Cargo.toml`, which
+the firmware reads too, add its section to `CHANGELOG.md`, commit, and push the tag. The release
+fails when the tag, the version and the changelog disagree.

@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      ncs: ${{ steps.v.outputs.ncs }}
+      board: ${{ steps.v.outputs.board }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        run: |
+          version=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' tool/Cargo.toml | head -n1)
+          ncs=$(sed -n 's/^NCS_VERSION = "\(.*\)"$/\1/p' mise.toml)
+          board=$(sed -n 's/^BOARD = "\(.*\)"$/\1/p' mise.toml)
+          if [ -z "$version" ] || [ -z "$ncs" ] || [ -z "$board" ]; then
+            echo "::error::read version '$version' from tool/Cargo.toml, NCS_VERSION '$ncs' and BOARD '$board' from mise.toml"
+            exit 1
+          fi
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match tool/Cargo.toml version $version"
+            exit 1
+          fi
+          awk -v v="$version" '/^## \[/ { p = index($0, "[" v "]") } p && !/^## \[/' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no notes for $version"
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "ncs=$ncs"
+            echo "board=$board"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: notes
+          path: notes.md
+
+  firmware:
+    needs: check
+    runs-on: ubuntu-latest
+    container: ghcr.io/nrfconnect/sdk-nrf-toolchain:${{ needs.check.outputs.ncs }}
+    defaults:
+      run:
+        # The image's BASH_ENV puts west and the Zephyr SDK on PATH for every bash step.
+        shell: bash
+    env:
+      NCS: ${{ needs.check.outputs.ncs }}
+      BOARD: ${{ needs.check.outputs.board }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: open-dongle
+      - run: west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS" ncs
+      - run: cd ncs && west update --narrow -o=--depth=1
+      - run: open-dongle/tools/build-firmware.sh ncs build
+      - run: cp build/zephyr/zephyr.uf2 "open-dongle-$VERSION-${BOARD%%/*}.uf2"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: open-dongle-*.uf2
+
+  tool-linux:
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      DIR: open-dongle-${{ needs.check.outputs.version }}-x86_64-linux
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: rustup target add x86_64-unknown-linux-musl
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path tool/Cargo.toml
+      - run: |
+          mkdir "$DIR"
+          cp tool/target/x86_64-unknown-linux-musl/release/open-dongle LICENSE tools/udev/70-open-dongle.rules "$DIR"/
+          tar czf "$DIR.tar.gz" "$DIR"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tool-linux
+          path: open-dongle-*.tar.gz
+
+  tool-macos:
+    needs: check
+    runs-on: macos-latest
+    env:
+      DIR: open-dongle-${{ needs.check.outputs.version }}-aarch64-macos
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: cargo build --release --locked --manifest-path tool/Cargo.toml
+      - run: |
+          mkdir "$DIR"
+          cp tool/target/release/open-dongle LICENSE "$DIR"/
+          tar czf "$DIR.tar.gz" "$DIR"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: tool-macos
+          path: open-dongle-*.tar.gz
+
+  publish:
+    needs: [ci, check, firmware, tool-linux, tool-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: firmware
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: tool-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          name: notes
+      - run: cd dist && sha256sum -- * > SHA256SUMS
+      - if: github.event_name != 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/*
+      - if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$REPO" --title "$GITHUB_REF_NAME" --notes-file notes.md

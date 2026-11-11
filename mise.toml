@@ -30,13 +30,7 @@ west sdk install -t arm-zephyr-eabi -b "$NCS_ROOT"
 
 [tasks.build]
 description = "Build the firmware"
-run = '''
-#!/usr/bin/env bash
-set -euo pipefail
-# west finds Zephyr and the NCS modules from the workspace it runs in.
-cd "$NCS_DIR"
-west build --no-sysbuild -d "$FIRMWARE_BUILD" "{{ config_root }}"
-'''
+run = 'tools/build-firmware.sh "$NCS_DIR" "$FIRMWARE_BUILD"'
 
 [tasks.test]
 description = "Run the firmware modules' tests on the host and the tool's tests"
