@@ -4,6 +4,7 @@ cmake = "4.4"
 ninja = "1.13"
 python = "3.14"
 uv = "0.13"
+shellcheck = "0.11"
 
 [env]
 NCS_ROOT = "{{ get_env(name='NCS_ROOT', default=env.HOME ~ '/ncs') }}"
@@ -43,10 +44,11 @@ run = [
 ]
 
 [tasks.lint]
-description = "Check the tool's formatting and lints"
+description = "Check the tool's formatting and lints, and the shell scripts"
 run = [
 	"cargo fmt --manifest-path tool/Cargo.toml --check",
 	"cargo clippy --manifest-path tool/Cargo.toml --all-targets -- -D warnings",
+	"shellcheck tools/*.sh",
 ]
 
 [tasks.flash]

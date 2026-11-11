@@ -24,30 +24,21 @@ and the udev rule recognize only this bootloader.
 ## Installing the tool
 
 `open-dongle` flashes the dongle and reads its [diagnostics](#diagnostics). It runs on x86_64 Linux
-and Apple Silicon macOS; Windows is untested. Download the archive for your platform from the
-[latest release](https://github.com/valeronm/open-dongle/releases/latest), unpack it, and put the
-`open-dongle` from the unpacked folder on your `PATH`.
-
-On macOS, the tool is unsigned, so clear the quarantine flag a browser download carries before
-unpacking:
+and Apple Silicon macOS; Windows is untested. To install the latest release into `~/.local/bin`,
+or into `PREFIX` when it is set:
 
 ```
-xattr -d com.apple.quarantine open-dongle-*.tar.gz
+curl -fsSL https://raw.githubusercontent.com/valeronm/open-dongle/main/tools/get.sh | sh
 ```
 
-On Linux, the udev rule in the unpacked folder lets the tool reach the board without root in every
-state [`open-dongle flash`](#flashing-the-firmware) handles. From that folder:
-
-```
-sudo cp 70-open-dongle.rules /etc/udev/rules.d/
-sudo udevadm control --reload
-```
-
-Then replug the board.
+On Linux, a udev rule lets the tool reach the board without root in every state
+[`open-dongle flash`](#flashing-the-firmware) handles. The installer leaves the rule in
+`~/.local/share/open-dongle` and prints the commands that install it.
 
 ## Flashing the firmware
 
-Download the `.uf2` from the same release and run:
+Download the `.uf2` from the [latest release](https://github.com/valeronm/open-dongle/releases/latest)
+and run:
 
 ```
 open-dongle flash open-dongle-<version>-promicro_nrf52840.uf2
@@ -114,7 +105,8 @@ cargo install --path tool
 ## Development
 
 `mise run test` runs the firmware modules' tests on the host and the tool's tests. It does not need
-the SDKs. `mise run lint` runs rustfmt and clippy. CI runs both on `main` and on pull requests.
+the SDKs. `mise run lint` runs rustfmt, clippy and shellcheck. CI runs both on `main` and on pull
+requests.
 
 The keyboard's radio protocol, beyond what the code shows, is in
 [docs/nuphy-v2-2.4ghz.md](docs/nuphy-v2-2.4ghz.md).

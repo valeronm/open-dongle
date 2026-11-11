@@ -213,7 +213,8 @@ pub fn open_port(path: &str, baud: u32) -> Result<Box<dyn serialport::SerialPort
             {
                 if Instant::now() > deadline {
                     bail!(
-                        "no access to {path}: install tools/udev/70-open-dongle.rules, or run \
+                        "no access to {path}: install ~/.local/share/open-dongle/70-open-dongle.rules \
+                         into /etc/udev/rules.d, or run \
                          sudo setfacl -m u:$USER:rw {path}"
                     );
                 }
