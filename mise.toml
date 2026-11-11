@@ -9,6 +9,7 @@ uv = "0.13"
 NCS_ROOT = "{{ get_env(name='NCS_ROOT', default=env.HOME ~ '/ncs') }}"
 NCS_VERSION = "v3.4.2"
 NCS_DIR = "{{ env.NCS_ROOT }}/{{ env.NCS_VERSION }}"
+BOARD = "promicro_nrf52840/nrf52840/uf2"
 FIRMWARE_BUILD = "{{ config_root }}/build/app"
 _.python.venv = { path = ".venv", create = true }
 
@@ -34,7 +35,7 @@ run = '''
 set -euo pipefail
 # west finds Zephyr and the NCS modules from the workspace it runs in.
 cd "$NCS_DIR"
-west build --no-sysbuild -b promicro_nrf52840/nrf52840/uf2 -d "$FIRMWARE_BUILD" "{{ config_root }}"
+west build --no-sysbuild -d "$FIRMWARE_BUILD" "{{ config_root }}"
 '''
 
 [tasks.test]
