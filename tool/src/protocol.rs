@@ -280,6 +280,10 @@ pub struct Rssi {
     pub max: i8,
 }
 
+// Equal to the firmware's `NOISE_BUSY_DBM` and `NOISE_STRONG_DBM`.
+pub const BUSY_DBM: i8 = -85;
+pub const STRONG_DBM: i8 = -60;
+
 /// `busy` and `strong` are shares of the readings in hundredths of a percent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Noise {

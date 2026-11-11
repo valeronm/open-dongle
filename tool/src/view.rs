@@ -21,7 +21,7 @@ use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
     link_state_name, noise_level, noise_ruler, paired, uptime, usb_state, wall_clock,
 };
-use crate::protocol::{Action, Event, Minute, NoiseChannel, Rssi, Status};
+use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Rssi, Status};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
@@ -341,21 +341,25 @@ impl App {
     }
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
-        let [losses_row, gaps_row, dropped_row, signal_row] =
-            Layout::vertical([Constraint::Ratio(1, 4); 4]).areas(area);
+        let [losses_row, gaps_row, dropped_row, noise_row, signal_row] =
+            Layout::vertical([Constraint::Ratio(1, 5); 5]).areas(area);
         let width = area.width.saturating_sub(2) as usize;
         self.scroll = self
             .scroll
             .min(self.history.minutes.len().saturating_sub(width));
         let end = self.history.minutes.len().saturating_sub(self.scroll);
         let shown = &self.history.minutes[end.saturating_sub(width)..end];
-        let series: [(&str, Rect, MinuteValue); 3] = [
+        let busy_title = format!("home channel busy, hundredths of % at {BUSY_DBM} dBm");
+        let series: [(&str, Rect, MinuteValue); 4] = [
             ("link losses per minute", losses_row, |m| {
                 u64::from(m.link_losses)
             }),
             ("gaps per minute", gaps_row, |m| u64::from(m.gaps)),
             ("dropped packets per minute", dropped_row, |m| {
                 u64::from(m.dropped)
+            }),
+            (&busy_title, noise_row, |m| {
+                m.noise.map_or(0, |n| u64::from(n.busy))
             }),
         ];
         for (title, row, value) in series {

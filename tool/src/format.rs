@@ -2,7 +2,9 @@ use anyhow::Result;
 use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
-use crate::protocol::{Action, Event, EventKind, Status, VersionMismatch};
+use crate::protocol::{
+    Action, BUSY_DBM, Event, EventKind, Noise, STRONG_DBM, Status, VersionMismatch,
+};
 
 pub const NOISE_QUESTION: &str =
     "The keyboard stops for about 1.5 s while the noise is measured. Measure?";
@@ -224,6 +226,30 @@ pub fn flashed(status: Result<Status, VersionMismatch>) -> String {
     }
 }
 
+fn share(hundredths: u16) -> String {
+    format!("{}.{:02}%", hundredths / 100, hundredths % 100)
+}
+
+fn noise_text(n: Noise) -> String {
+    format!(
+        "noise {} dBm, {} at {BUSY_DBM}, {} at {STRONG_DBM}",
+        n.peak,
+        share(n.busy),
+        share(n.strong)
+    )
+}
+
+pub fn noise(n: Option<Noise>) -> String {
+    n.map_or("noise -".into(), noise_text)
+}
+
+fn with_noise(line: String, n: Option<Noise>) -> String {
+    match n {
+        Some(n) => format!("{line}, {}", noise_text(n)),
+        None => line,
+    }
+}
+
 pub fn describe_event(e: &Event) -> String {
     match e.kind {
         EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
@@ -232,13 +258,14 @@ pub fn describe_event(e: &Event) -> String {
             "paired on channels {} {} {}, saving failed: {}",
             e.a, e.b, e.c, e.value as i32
         ),
-        EventKind::LinkLost => {
+        EventKind::LinkLost => with_noise(
             format!(
                 "link lost after {}, last signal {} dBm",
                 duration(e.value),
                 e.a as i8
-            )
-        }
+            ),
+            e.noise,
+        ),
         EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
         EventKind::Noise => "noise map".into(),
         EventKind::UsbSuspend => "usb suspended".into(),
@@ -257,12 +284,15 @@ pub fn describe_event(e: &Event) -> String {
             e.b as i8
         ),
         EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
-        EventKind::LinkGap => format!(
-            "gap of {} on channel {}, signal {} dBm before, {} dBm after",
-            duration(e.value),
-            e.a,
-            e.b as i8,
-            e.c as i8
+        EventKind::LinkGap => with_noise(
+            format!(
+                "gap of {} on channel {}, signal {} dBm before, {} dBm after",
+                duration(e.value),
+                e.a,
+                e.b as i8,
+                e.c as i8
+            ),
+            e.noise,
         ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
@@ -353,6 +383,17 @@ mod tests {
     }
 
     #[test]
+    fn noise_prints_its_peak_and_shares() {
+        let n = Some(Noise {
+            peak: -27,
+            busy: 102,
+            strong: 5,
+        });
+        assert_eq!(noise(n), "noise -27 dBm, 1.02% at -85, 0.05% at -60");
+        assert_eq!(noise(None), "noise -");
+    }
+
+    #[test]
     fn describes_a_gap_with_the_signal_on_both_sides() {
         use crate::protocol::{Event, EventKind};
         let gap = Event {
@@ -367,6 +408,19 @@ mod tests {
         assert_eq!(
             describe_event(&gap),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after"
+        );
+        let noisy = Event {
+            noise: Some(Noise {
+                peak: -50,
+                busy: 2500,
+                strong: 300,
+            }),
+            ..gap
+        };
+        assert_eq!(
+            describe_event(&noisy),
+            "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, \
+             noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
     }
 
@@ -385,6 +439,18 @@ mod tests {
         assert_eq!(
             describe_event(&lost),
             "link lost after 1 s, last signal -71 dBm"
+        );
+        let noisy = Event {
+            noise: Some(Noise {
+                peak: -50,
+                busy: 2500,
+                strong: 300,
+            }),
+            ..lost
+        };
+        assert_eq!(
+            describe_event(&noisy),
+            "link lost after 1 s, last signal -71 dBm, noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
         let paired = Event {
             time_ms: 0,

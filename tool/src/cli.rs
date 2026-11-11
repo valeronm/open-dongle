@@ -14,7 +14,7 @@ use crate::format::{
     usb_state, version, wall_clock,
 };
 use crate::protocol::{Action, ErrorCode, Status};
-use crate::{dfu, uf2};
+use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
     let id = s
@@ -71,7 +71,7 @@ pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> R
             .rssi
             .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
         println!(
-            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  gaps {:3}  usb-retries {:3}  signal {signal}",
+            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  gaps {:3}  usb-retries {:3}  signal {signal}  {}",
             at.format("%Y-%m-%d %H:%M"),
             m.packets,
             m.invalid,
@@ -79,7 +79,8 @@ pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> R
             m.channel_changes,
             m.link_losses,
             m.gaps,
-            m.usb_retries
+            m.usb_retries,
+            format::noise(m.noise)
         );
     }
     Ok(())
