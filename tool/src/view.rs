@@ -252,7 +252,7 @@ impl App {
     fn poll(&mut self) {
         if self.device.is_none() {
             match device::open(self.serial.as_deref()) {
-                Ok(d) => {
+                Ok((d, _)) => {
                     self.device = Some(d);
                     self.message.clear();
                 }

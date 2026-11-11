@@ -9,15 +9,14 @@ use chrono::Local;
 use crate::board::{self, State};
 use crate::device::{self, Device, Transport};
 use crate::format::{
-    NOISE_QUESTION, action_question, channel_description, describe_event, flash_question,
+    NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
     last_packet, link_state_name, noise_level, paired, reset_causes, uptime, usb_state, version,
     wall_clock,
 };
-use crate::protocol::Action;
+use crate::protocol::{Action, Status};
 use crate::{dfu, uf2};
 
-pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
-    let s = dev.status()?;
+pub fn status(s: &Status) -> Result<()> {
     let id = s
         .keyboard_id
         .iter()
@@ -62,8 +61,7 @@ pub fn status<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     Ok(())
 }
 
-pub fn history<T: Transport>(dev: &mut Device<T>, minutes: u32) -> Result<()> {
-    let s = dev.status()?;
+pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> Result<()> {
     let now = Local::now();
     let from = s.minute_next.saturating_sub(minutes);
     for (index, m) in dev.minutes_between(from, s.minute_next)? {
@@ -86,8 +84,7 @@ pub fn history<T: Transport>(dev: &mut Device<T>, minutes: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn events<T: Transport>(dev: &mut Device<T>, count: u32) -> Result<()> {
-    let s = dev.status()?;
+pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Result<()> {
     let now = Local::now();
     let from = s.events_total.saturating_sub(count);
     for (_, e) in dev.events_between(from, s.events_total)? {
@@ -113,15 +110,14 @@ pub fn confirm(question: &str, yes: bool) -> Result<bool> {
     Ok(matches!(line.trim(), "y" | "Y" | "yes"))
 }
 
-pub fn noise<T: Transport>(dev: &mut Device<T>, yes: bool) -> Result<()> {
+pub fn noise<T: Transport>(dev: &mut Device<T>, s: &Status, yes: bool) -> Result<()> {
     if !confirm(NOISE_QUESTION, yes)? {
         return Ok(());
     }
-    let s = dev.status()?;
     let rows: Vec<_> = dev
         .noise()?
         .into_iter()
-        .map(|c| (channel_description(c.channel, &s), c))
+        .map(|c| (channel_description(c.channel, s), c))
         .collect();
     let width = rows
         .iter()
@@ -199,11 +195,9 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
         "the board did not come back after flashing; if a replug doesn't bring it back, this \
          firmware can't run on it",
     )?;
-    let status = device::open(Some(&board.serial))?.status()?;
     println!(
-        "flashed; OpenDongle {} running, up {}",
-        version(status.firmware_version),
-        uptime(status.uptime_ms)
+        "{}",
+        flashed(device::open_unchecked(Some(&board.serial))?.read_status()?)
     );
     Ok(())
 }

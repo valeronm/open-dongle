@@ -3,8 +3,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    Action, CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, decode_events,
-    decode_minutes, decode_noise, decode_status, parse_part, request,
+    Action, CHUNK, Command, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status, VersionMismatch,
+    decode_events, decode_minutes, decode_noise, parse_part, read_status, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -80,7 +80,17 @@ impl<T: Transport> Device<T> {
     }
 
     pub fn status(&mut self) -> Result<Status> {
-        decode_status(&self.call(Command::Status, 0, TIMEOUT)?)
+        Ok(self.read_status()??)
+    }
+
+    pub fn read_status(&mut self) -> Result<Result<Status, VersionMismatch>> {
+        read_status(&self.call(Command::Status, 0, TIMEOUT)?)
+    }
+
+    /// Refuses a dongle that speaks a diagnostic protocol other than this tool's.
+    pub fn checked(mut self) -> Result<(Self, Status)> {
+        let status = self.status()?;
+        Ok((self, status))
     }
 
     pub fn minutes(&mut self, from: u32) -> Result<(u32, Vec<Minute>)> {
@@ -149,7 +159,12 @@ pub fn dongles(api: &hidapi::HidApi) -> impl Iterator<Item = &hidapi::DeviceInfo
         .filter(|d| d.vendor_id() == VID && d.product_id() == PID && d.usage_page() == USAGE_PAGE)
 }
 
-pub fn open(serial: Option<&str>) -> Result<Device<HidTransport>> {
+pub fn open(serial: Option<&str>) -> Result<(Device<HidTransport>, Status)> {
+    open_unchecked(serial)?.checked()
+}
+
+/// Skips the protocol check, for the commands every protocol version keeps.
+pub fn open_unchecked(serial: Option<&str>) -> Result<Device<HidTransport>> {
     let api = hidapi::HidApi::new().context("starting hidapi")?;
     let found: Vec<_> = dongles(&api)
         .filter(|d| serial.is_none_or(|s| d.serial_number() == Some(s)))
@@ -178,7 +193,7 @@ pub fn open(serial: Option<&str>) -> Result<Device<HidTransport>> {
 pub(crate) mod tests {
     use super::*;
     use crate::protocol::HEADER_LEN;
-    use crate::protocol::tests::fixture;
+    use crate::protocol::tests::{fixture, status_in_protocol};
     use std::collections::VecDeque;
 
     type Responder = Box<dyn FnMut(&[u8; REPORT_LEN]) -> Vec<[u8; REPORT_LEN]>>;
@@ -235,6 +250,25 @@ pub(crate) mod tests {
     fn an_action_succeeds_on_an_empty_reply() {
         let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0);
         dev.action(Action::Clear).unwrap();
+    }
+
+    fn dongle_in_protocol(version: u8) -> Device<Fake> {
+        Device::new(
+            Fake::new(move |req| parts(req[0], req[1], &status_in_protocol(version))),
+            0,
+        )
+    }
+
+    #[test]
+    fn a_dongle_in_this_protocol_connects_with_its_status() {
+        let (_, status) = dongle_in_protocol(1).checked().unwrap();
+        assert_eq!(status.channel, 26);
+    }
+
+    #[test]
+    fn a_dongle_in_another_protocol_is_refused_on_connect() {
+        let err = dongle_in_protocol(2).checked().err().unwrap().to_string();
+        assert!(err.starts_with("the dongle speaks diagnostic protocol 2, this tool 1;"));
     }
 
     #[test]

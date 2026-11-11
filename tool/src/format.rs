@@ -1,7 +1,8 @@
+use anyhow::Result;
 use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
-use crate::protocol::{Action, Event, EventKind, Status};
+use crate::protocol::{Action, Event, EventKind, Status, VersionMismatch};
 
 pub const NOISE_QUESTION: &str =
     "The keyboard stops for about 1.5 s while the noise is measured. Measure?";
@@ -205,6 +206,18 @@ pub fn wall_clock(now: DateTime<Local>, uptime_now_ms: u64, at_ms: u64) -> DateT
     now - Duration::milliseconds(uptime_now_ms.saturating_sub(at_ms) as i64)
 }
 
+/// Firmware in a protocol this tool cannot read still counts as flashed.
+pub fn flashed(status: Result<Status, VersionMismatch>) -> String {
+    match status {
+        Ok(s) => format!(
+            "flashed; OpenDongle {} running, up {}",
+            version(s.firmware_version),
+            uptime(s.uptime_ms)
+        ),
+        Err(m) => format!("flashed; {m}"),
+    }
+}
+
 pub fn describe_event(e: &Event) -> String {
     match e.kind {
         EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
@@ -252,7 +265,10 @@ pub fn describe_event(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{decode_status, tests::fixture};
+    use crate::protocol::{
+        read_status,
+        tests::{fixture, status_in_protocol},
+    };
     use chrono::TimeZone;
 
     #[test]
@@ -261,6 +277,21 @@ mod tests {
         assert_eq!(
             q,
             "Flash zephyr.uf2 onto board 55D8CCC8B3E3E5D1, running its factory program?"
+        );
+    }
+
+    #[test]
+    fn a_flash_ends_on_the_running_version() {
+        let line = flashed(read_status(&fixture("status.hex")).unwrap());
+        assert!(line.starts_with("flashed; OpenDongle 1.2.3 running, up "));
+    }
+
+    #[test]
+    fn a_flash_of_firmware_in_a_newer_protocol_says_to_update_the_tool() {
+        assert_eq!(
+            flashed(read_status(&status_in_protocol(2)).unwrap()),
+            "flashed; the dongle speaks diagnostic protocol 2, this tool 1; install the \
+             open-dongle tool from the firmware's release"
         );
     }
 
@@ -357,7 +388,7 @@ mod tests {
 
     #[test]
     fn channel_description_names_band_and_role() {
-        let s = decode_status(&fixture("status.hex")).unwrap();
+        let s = read_status(&fixture("status.hex")).unwrap().unwrap();
         assert_eq!(channel_description(2, &s), "wifi 1, ble adv");
         assert_eq!(channel_description(26, &s), "ble adv, current");
         assert_eq!(channel_description(30, &s), "wifi 6, paired");

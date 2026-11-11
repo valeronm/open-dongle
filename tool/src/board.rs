@@ -165,7 +165,7 @@ pub fn into_bootloader(board: &Board) -> Result<String> {
     let port = match &board.kind {
         Kind::Bootloader(port) => port.clone(),
         Kind::Dongle => {
-            device::open(Some(&board.serial))?.action(Action::Bootloader)?;
+            device::open_unchecked(Some(&board.serial))?.action(Action::Bootloader)?;
             bootloader_port(
                 &board.serial,
                 "the dongle did not restart into its bootloader",

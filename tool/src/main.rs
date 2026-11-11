@@ -71,15 +71,28 @@ fn main() -> Result<()> {
     let Some(command) = args.command else {
         return view::run(args.serial);
     };
-    let dev = || device::open(args.serial.as_deref());
+    let serial = args.serial.as_deref();
     match command {
-        Cmd::Flash { file, confirm } => cli::flash(&file, args.serial.as_deref(), confirm.yes),
-        Cmd::Status => cli::status(&mut dev()?),
-        Cmd::History { minutes } => cli::history(&mut dev()?, minutes),
-        Cmd::Events { count } => cli::events(&mut dev()?, count),
-        Cmd::Noise(c) => cli::noise(&mut dev()?, c.yes),
-        Cmd::Reboot(c) => cli::action(&mut dev()?, Action::Reboot, c.yes),
-        Cmd::Bootloader(c) => cli::action(&mut dev()?, Action::Bootloader, c.yes),
-        Cmd::Clear(c) => cli::action(&mut dev()?, Action::Clear, c.yes),
+        Cmd::Flash { file, confirm } => cli::flash(&file, serial, confirm.yes),
+        Cmd::Status => cli::status(&device::open(serial)?.1),
+        Cmd::History { minutes } => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::history(&mut dev, &s, minutes)
+        }
+        Cmd::Events { count } => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::events(&mut dev, &s, count)
+        }
+        Cmd::Noise(c) => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::noise(&mut dev, &s, c.yes)
+        }
+        Cmd::Reboot(c) => cli::action(&mut device::open(serial)?.0, Action::Reboot, c.yes),
+        Cmd::Bootloader(c) => cli::action(
+            &mut device::open_unchecked(serial)?,
+            Action::Bootloader,
+            c.yes,
+        ),
+        Cmd::Clear(c) => cli::action(&mut device::open(serial)?.0, Action::Clear, c.yes),
     }
 }

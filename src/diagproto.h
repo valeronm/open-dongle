@@ -8,6 +8,7 @@
 #include "chanpick.h"
 #include "history.h"
 
+/* Bumped only when a layout that a release has shipped changes. */
 #define DIAG_VERSION 1
 #define DIAG_REPORT_LEN 64
 #define DIAG_HEADER_LEN 4

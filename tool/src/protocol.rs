@@ -6,6 +6,33 @@ pub const CHUNK: usize = REPORT_LEN - HEADER_LEN;
 pub const ERROR_FLAG: u8 = 0x80;
 pub const VERSION: u8 = 1;
 
+/// A status reply in a diagnostic protocol other than [`VERSION`].
+#[derive(Debug)]
+pub struct VersionMismatch {
+    pub dongle: u8,
+}
+
+impl std::fmt::Display for VersionMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let fix = if self.dongle < VERSION {
+            concat!(
+                "flash the firmware of release ",
+                env!("CARGO_PKG_VERSION"),
+                " with `open-dongle flash`"
+            )
+        } else {
+            "install the open-dongle tool from the firmware's release"
+        };
+        write!(
+            f,
+            "the dongle speaks diagnostic protocol {}, this tool {VERSION}; {fix}",
+            self.dongle
+        )
+    }
+}
+
+impl std::error::Error for VersionMismatch {}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Command {
@@ -159,11 +186,12 @@ pub struct Status {
     pub events_oldest: u32,
 }
 
-pub fn decode_status(payload: &[u8]) -> Result<Status> {
+/// Fails on a reply too short for its layout; a reply in another protocol is the inner `Err`.
+pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let mut r = Reader::new(payload);
     let version = r.u8()?;
     if version != VERSION {
-        bail!("the dongle speaks diagnostic protocol {version}, this tool {VERSION}");
+        return Ok(Err(VersionMismatch { dongle: version }));
     }
     let firmware_version = r.bytes::<3>()?;
     let uptime_ms = r.u64()?;
@@ -186,7 +214,7 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
         merges: r.u32()?,
         surveys: r.u32()?,
     };
-    Ok(Status {
+    Ok(Ok(Status {
         firmware_version,
         uptime_ms,
         reset_cause,
@@ -203,7 +231,7 @@ pub fn decode_status(payload: &[u8]) -> Result<Status> {
         minute_oldest: r.u32()?,
         events_total: r.u32()?,
         events_oldest: r.u32()?,
-    })
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,6 +392,12 @@ pub(crate) mod tests {
         parse_hex(&fixture_text(name))
     }
 
+    pub(crate) fn status_in_protocol(version: u8) -> Vec<u8> {
+        let mut payload = fixture("status.hex");
+        payload[0] = version;
+        payload
+    }
+
     pub(crate) fn fixture_lines(name: &str) -> Vec<Vec<u8>> {
         fixture_text(name).lines().map(parse_hex).collect()
     }
@@ -377,7 +411,7 @@ pub(crate) mod tests {
 
     #[test]
     fn status_fixture_decodes() {
-        let s = decode_status(&fixture("status.hex")).unwrap();
+        let s = read_status(&fixture("status.hex")).unwrap().unwrap();
         assert_eq!(s.firmware_version, [1, 2, 3]);
         assert_eq!(s.uptime_ms, 0x01_0203_0405);
         assert_eq!(s.reset_cause, 1);
@@ -436,16 +470,37 @@ pub(crate) mod tests {
         );
     }
 
+    fn refusal(version: u8) -> String {
+        read_status(&status_in_protocol(version))
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+    }
+
     #[test]
-    fn another_protocol_version_is_refused() {
-        let mut payload = fixture("status.hex");
-        payload[0] = 2;
-        assert!(decode_status(&payload).is_err());
+    fn an_older_dongle_is_told_to_take_this_tools_firmware() {
+        assert_eq!(
+            refusal(0),
+            format!(
+                "the dongle speaks diagnostic protocol 0, this tool 1; flash the firmware of \
+                 release {} with `open-dongle flash`",
+                env!("CARGO_PKG_VERSION")
+            )
+        );
+    }
+
+    #[test]
+    fn a_newer_dongle_is_told_to_take_its_releases_tool() {
+        assert_eq!(
+            refusal(2),
+            "the dongle speaks diagnostic protocol 2, this tool 1; install the open-dongle tool \
+             from the firmware's release"
+        );
     }
 
     #[test]
     fn short_payload_is_refused() {
-        assert!(decode_status(&fixture("status.hex")[..40]).is_err());
+        assert!(read_status(&fixture("status.hex")[..40]).is_err());
     }
 
     #[test]
