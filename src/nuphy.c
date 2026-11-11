@@ -1,5 +1,5 @@
 #include <string.h>
-#include "protocol.h"
+#include "nuphy.h"
 
 #define FRAME_LONG 24
 #define FRAME_SHORT 8
@@ -29,13 +29,13 @@ static uint8_t sum8(const uint8_t *p, size_t n)
 	return s;
 }
 
-struct proto_msg proto_parse(const uint8_t *buf, size_t len)
+struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 {
-	struct proto_msg m = {.kind = PROTO_INVALID};
+	struct nuphy_msg m = {.kind = NUPHY_INVALID};
 
 	if (len == FRAME_SHORT) {
 		if (buf[1] == TYPE_KEEPALIVE && buf[2] == MARKER && sum8(buf, 3) == buf[3]) {
-			m.kind = PROTO_KEEPALIVE;
+			m.kind = NUPHY_KEEPALIVE;
 			m.seq = buf[0];
 		}
 		return m;
@@ -48,32 +48,32 @@ struct proto_msg proto_parse(const uint8_t *buf, size_t len)
 	m.seq = buf[0];
 	switch (buf[1]) {
 	case TYPE_KEYBOARD:
-		m.kind = PROTO_KEYBOARD;
-		memcpy(m.keyboard, &buf[2], PROTO_KEYBOARD_LEN);
+		m.kind = NUPHY_KEYBOARD;
+		memcpy(m.keyboard, &buf[2], NUPHY_KEYBOARD_LEN);
 		break;
 	case TYPE_CONSUMER:
 	case TYPE_SYSTEM:
-		m.kind = buf[1] == TYPE_CONSUMER ? PROTO_CONSUMER : PROTO_SYSTEM;
+		m.kind = buf[1] == TYPE_CONSUMER ? NUPHY_CONSUMER : NUPHY_SYSTEM;
 		m.usage = (uint16_t)(buf[2] | (buf[3] << 8));
 		break;
 	case TYPE_PAIR_REQUEST:
 	case TYPE_PAIR_CONFIRM:
-		m.kind = buf[1] == TYPE_PAIR_REQUEST ? PROTO_PAIR_REQUEST : PROTO_PAIR_CONFIRM;
-		memcpy(m.ids.keyboard, &buf[2], PROTO_ID_LEN);
-		memcpy(m.ids.dongle, &buf[6], PROTO_ID_LEN);
+		m.kind = buf[1] == TYPE_PAIR_REQUEST ? NUPHY_PAIR_REQUEST : NUPHY_PAIR_CONFIRM;
+		memcpy(m.ids.keyboard, &buf[2], NUPHY_ID_LEN);
+		memcpy(m.ids.dongle, &buf[6], NUPHY_ID_LEN);
 		break;
 	case TYPE_HELLO:
-		m.kind = PROTO_HELLO;
+		m.kind = NUPHY_HELLO;
 		break;
 	default:
-		m.kind = PROTO_IGNORED;
+		m.kind = NUPHY_IGNORED;
 		break;
 	}
 	return m;
 }
 
 /* The keyboard drops an ACK payload whose sequence byte is 0. */
-uint8_t proto_next_seq(uint8_t seq)
+uint8_t nuphy_next_seq(uint8_t seq)
 {
 	seq++;
 	return seq == 0 ? 1 : seq;
@@ -89,31 +89,31 @@ static size_t frame(uint8_t *out, uint8_t seq, uint8_t type, const uint8_t *data
 	return len + FRAME_OVERHEAD;
 }
 
-size_t proto_pair_reply(uint8_t *out, uint8_t seq, const uint8_t dongle_id[PROTO_ID_LEN],
-			const uint8_t keyboard_id[PROTO_ID_LEN], const uint8_t channels[3])
+size_t nuphy_pair_reply(uint8_t *out, uint8_t seq, const uint8_t dongle_id[NUPHY_ID_LEN],
+			const uint8_t keyboard_id[NUPHY_ID_LEN], const uint8_t channels[3])
 {
-	uint8_t data[2 * PROTO_ID_LEN + 3];
+	uint8_t data[2 * NUPHY_ID_LEN + 3];
 
-	_Static_assert(sizeof(data) + FRAME_OVERHEAD <= PROTO_FRAME_MAX,
-		       "the pair reply must fit PROTO_FRAME_MAX");
-	memcpy(data, dongle_id, PROTO_ID_LEN);
-	memcpy(data + PROTO_ID_LEN, keyboard_id, PROTO_ID_LEN);
-	memcpy(data + 2 * PROTO_ID_LEN, channels, 3);
+	_Static_assert(sizeof(data) + FRAME_OVERHEAD <= NUPHY_FRAME_MAX,
+		       "the pair reply must fit NUPHY_FRAME_MAX");
+	memcpy(data, dongle_id, NUPHY_ID_LEN);
+	memcpy(data + NUPHY_ID_LEN, keyboard_id, NUPHY_ID_LEN);
+	memcpy(data + 2 * NUPHY_ID_LEN, channels, 3);
 	return frame(out, seq, TYPE_PAIR_REPLY, data, sizeof(data));
 }
 
-size_t proto_status(uint8_t *out, uint8_t seq, const uint8_t dongle_id[PROTO_ID_LEN],
+size_t nuphy_status(uint8_t *out, uint8_t seq, const uint8_t dongle_id[NUPHY_ID_LEN],
 		    uint8_t host_leds)
 {
 	uint8_t data[8] = {0};
 
-	memcpy(data, dongle_id, PROTO_ID_LEN);
+	memcpy(data, dongle_id, NUPHY_ID_LEN);
 	/* The keyboard ignores the LED byte when any bit above Scroll Lock is set. */
-	data[PROTO_ID_LEN] = host_leds & 0x07;
+	data[NUPHY_ID_LEN] = host_leds & 0x07;
 	return frame(out, seq, TYPE_STATUS, data, sizeof(data));
 }
 
-size_t proto_suspend(uint8_t *out, uint8_t seq)
+size_t nuphy_suspend(uint8_t *out, uint8_t seq)
 {
 	static const uint8_t data[4];
 

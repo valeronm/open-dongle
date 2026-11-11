@@ -38,7 +38,7 @@ static void go_idle(struct link *l, uint32_t now_ms, struct link_out *out)
 
 static void reply(struct link *l, uint8_t pipe, struct link_out *out)
 {
-	l->seq = proto_next_seq(l->seq);
+	l->seq = nuphy_next_seq(l->seq);
 	out->reply = true;
 	out->reply_pipe = pipe;
 }
@@ -46,22 +46,22 @@ static void reply(struct link *l, uint8_t pipe, struct link_out *out)
 static void reply_status(struct link *l, uint32_t now_ms, struct link_out *out)
 {
 	reply(l, 1, out);
-	out->reply_len = proto_status(out->reply_buf, l->seq, l->dongle_id, l->host_leds);
+	out->reply_len = nuphy_status(out->reply_buf, l->seq, l->dongle_id, l->host_leds);
 	l->last_status_ms = now_ms;
 }
 
 static void reply_pairing(struct link *l, struct link_out *out)
 {
 	reply(l, 0, out);
-	out->reply_len = proto_pair_reply(out->reply_buf, l->seq, l->dongle_id, l->keyboard_id,
+	out->reply_len = nuphy_pair_reply(out->reply_buf, l->seq, l->dongle_id, l->keyboard_id,
 					  l->offered);
 }
 
-void link_init(struct link *l, const uint8_t dongle_id[PROTO_ID_LEN], const uint8_t *own,
+void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint8_t *own,
 	       uint32_t now_ms, struct link_out *out)
 {
 	memset(l, 0, sizeof(*l));
-	memcpy(l->dongle_id, dongle_id, PROTO_ID_LEN);
+	memcpy(l->dongle_id, dongle_id, NUPHY_ID_LEN);
 	if (own != NULL) {
 		memcpy(l->own, own, sizeof(l->own));
 		l->own_known = true;
@@ -70,19 +70,19 @@ void link_init(struct link *l, const uint8_t dongle_id[PROTO_ID_LEN], const uint
 	go_idle(l, now_ms, out);
 }
 
-static void on_pairing_message(struct link *l, const struct proto_msg *m, uint32_t now_ms,
+static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32_t now_ms,
 			       struct link_out *out)
 {
-	bool same_keyboard = memcmp(m->ids.keyboard, l->keyboard_id, PROTO_ID_LEN) == 0;
+	bool same_keyboard = memcmp(m->ids.keyboard, l->keyboard_id, NUPHY_ID_LEN) == 0;
 	bool pairing = l->state == LINK_SURVEY || l->state == LINK_PAIRING ||
 		       l->state == LINK_CONFIRMED;
 
 	if (pairing && same_keyboard) {
 		l->last_rx_ms = now_ms;
 	}
-	if (m->kind == PROTO_PAIR_REQUEST) {
+	if (m->kind == NUPHY_PAIR_REQUEST) {
 		if (l->state == LINK_IDLE && l->pairing_allowed) {
-			memcpy(l->keyboard_id, m->ids.keyboard, PROTO_ID_LEN);
+			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
 			if (l->offer_valid && now_ms - l->offered_ms < OFFER_REUSE_MS) {
 				l->state = LINK_PAIRING;
@@ -96,8 +96,8 @@ static void on_pairing_message(struct link *l, const struct proto_msg *m, uint32
 		}
 		return;
 	}
-	if (m->kind == PROTO_PAIR_CONFIRM && l->state == LINK_PAIRING && same_keyboard &&
-	    memcmp(m->ids.dongle, l->dongle_id, PROTO_ID_LEN) == 0) {
+	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_PAIRING && same_keyboard &&
+	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		memcpy(l->own, l->offered, sizeof(l->own));
 		l->own_known = true;
 		out->save_channels = true;
@@ -111,7 +111,7 @@ static void on_connected_message(struct link *l, uint32_t now_ms, struct link_ou
 {
 	if (l->host_suspended && !l->suspend_sent) {
 		reply(l, 1, out);
-		out->reply_len = proto_suspend(out->reply_buf, l->seq);
+		out->reply_len = nuphy_suspend(out->reply_buf, l->seq);
 		l->suspend_sent = true;
 		l->last_status_ms = now_ms;
 	} else if (now_ms - l->last_status_ms >= STATUS_EVERY_MS) {
@@ -126,10 +126,10 @@ static void move_home(struct link *l, uint32_t now_ms, struct link_out *out)
 	reply_status(l, now_ms, out);
 }
 
-void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, uint32_t now_ms,
+void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out)
 {
-	if (m->kind == PROTO_INVALID) {
+	if (m->kind == NUPHY_INVALID) {
 		return;
 	}
 	if (pipe == 0) {
@@ -147,7 +147,7 @@ void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, ui
 		break;
 	case LINK_MOVING_HOME:
 		/* A keyboard follows a move only after taking a status, which its hello shows. */
-		if (m->kind != PROTO_HELLO) {
+		if (m->kind != NUPHY_HELLO) {
 			on_connected_message(l, now_ms, out);
 			break;
 		}

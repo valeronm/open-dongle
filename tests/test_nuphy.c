@@ -1,6 +1,6 @@
 #include <string.h>
 #include "test.h"
-#include "protocol.h"
+#include "nuphy.h"
 
 static const uint8_t pair_request[] = {
 	0x82, 0x80, 0x70, 0x15, 0xa3, 0x29, 0x96, 0xbe, 0x5c, 0x89, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -31,9 +31,9 @@ static const uint8_t keyboard_id[4] = {0x70, 0x15, 0xa3, 0x29};
 static void test_pair_request_carries_keyboard_and_previous_dongle_ids(void)
 {
 	static const uint8_t previous[4] = {0x96, 0xbe, 0x5c, 0x89};
-	struct proto_msg m = proto_parse(pair_request, sizeof(pair_request));
+	struct nuphy_msg m = nuphy_parse(pair_request, sizeof(pair_request));
 
-	CHECK_EQ(m.kind, PROTO_PAIR_REQUEST);
+	CHECK_EQ(m.kind, NUPHY_PAIR_REQUEST);
 	CHECK_EQ(m.seq, 0x82);
 	CHECK_MEM(m.ids.keyboard, keyboard_id, 4);
 	CHECK_MEM(m.ids.dongle, previous, 4);
@@ -41,9 +41,9 @@ static void test_pair_request_carries_keyboard_and_previous_dongle_ids(void)
 
 static void test_pair_confirm_carries_both_ids(void)
 {
-	struct proto_msg m = proto_parse(pair_confirm, sizeof(pair_confirm));
+	struct nuphy_msg m = nuphy_parse(pair_confirm, sizeof(pair_confirm));
 
-	CHECK_EQ(m.kind, PROTO_PAIR_CONFIRM);
+	CHECK_EQ(m.kind, NUPHY_PAIR_CONFIRM);
 	CHECK_MEM(m.ids.keyboard, keyboard_id, 4);
 	CHECK_MEM(m.ids.dongle, dongle_id, 4);
 }
@@ -51,49 +51,49 @@ static void test_pair_confirm_carries_both_ids(void)
 static void test_keyboard_report_is_the_8_byte_boot_report(void)
 {
 	static const uint8_t expected[8] = {0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00};
-	struct proto_msg m = proto_parse(keyboard_f, sizeof(keyboard_f));
+	struct nuphy_msg m = nuphy_parse(keyboard_f, sizeof(keyboard_f));
 
-	CHECK_EQ(m.kind, PROTO_KEYBOARD);
+	CHECK_EQ(m.kind, NUPHY_KEYBOARD);
 	CHECK_MEM(m.keyboard, expected, 8);
 }
 
 static void test_media_and_system_reports_carry_a_usage(void)
 {
-	struct proto_msg consumer = proto_parse(consumer_volume_up, sizeof(consumer_volume_up));
-	struct proto_msg sys = proto_parse(system_sleep, sizeof(system_sleep));
+	struct nuphy_msg consumer = nuphy_parse(consumer_volume_up, sizeof(consumer_volume_up));
+	struct nuphy_msg sys = nuphy_parse(system_sleep, sizeof(system_sleep));
 
-	CHECK_EQ(consumer.kind, PROTO_CONSUMER);
+	CHECK_EQ(consumer.kind, NUPHY_CONSUMER);
 	CHECK_EQ(consumer.usage, 0x00e9);
-	CHECK_EQ(sys.kind, PROTO_SYSTEM);
+	CHECK_EQ(sys.kind, NUPHY_SYSTEM);
 	CHECK_EQ(sys.usage, 0x0082);
 }
 
 static void test_short_frame_is_a_keepalive(void)
 {
-	CHECK_EQ(proto_parse(keepalive, sizeof(keepalive)).kind, PROTO_KEEPALIVE);
+	CHECK_EQ(nuphy_parse(keepalive, sizeof(keepalive)).kind, NUPHY_KEEPALIVE);
 }
 
 static void test_hello_and_other_valid_types(void)
 {
-	CHECK_EQ(proto_parse(hello, sizeof(hello)).kind, PROTO_HELLO);
-	CHECK_EQ(proto_parse(name, sizeof(name)).kind, PROTO_IGNORED);
+	CHECK_EQ(nuphy_parse(hello, sizeof(hello)).kind, NUPHY_HELLO);
+	CHECK_EQ(nuphy_parse(name, sizeof(name)).kind, NUPHY_IGNORED);
 }
 
 static void test_bad_checksum_or_length_is_invalid(void)
 {
 	uint8_t corrupted[sizeof(pair_confirm)];
 
-	CHECK_EQ(proto_parse(pair_confirm, sizeof(pair_confirm)).kind, PROTO_PAIR_CONFIRM);
-	CHECK_EQ(proto_parse(keepalive, sizeof(keepalive)).kind, PROTO_KEEPALIVE);
+	CHECK_EQ(nuphy_parse(pair_confirm, sizeof(pair_confirm)).kind, NUPHY_PAIR_CONFIRM);
+	CHECK_EQ(nuphy_parse(keepalive, sizeof(keepalive)).kind, NUPHY_KEEPALIVE);
 	memcpy(corrupted, pair_confirm, sizeof(corrupted));
 	corrupted[5] ^= 0x01;
-	CHECK_EQ(proto_parse(corrupted, sizeof(corrupted)).kind, PROTO_INVALID);
-	CHECK_EQ(proto_parse(pair_confirm, 23).kind, PROTO_INVALID);
-	CHECK_EQ(proto_parse(keepalive, 7).kind, PROTO_INVALID);
+	CHECK_EQ(nuphy_parse(corrupted, sizeof(corrupted)).kind, NUPHY_INVALID);
+	CHECK_EQ(nuphy_parse(pair_confirm, 23).kind, NUPHY_INVALID);
+	CHECK_EQ(nuphy_parse(keepalive, 7).kind, NUPHY_INVALID);
 }
 
 /* Filled with 0xff before each build, so a builder that writes nothing fails the comparison. */
-static uint8_t out[PROTO_FRAME_MAX];
+static uint8_t out[NUPHY_FRAME_MAX];
 
 static uint8_t *blank_out(void)
 {
@@ -112,12 +112,12 @@ static void test_status_frame(void)
 	static const uint8_t expected[] = {0x01, 0x30, 0x26, 0xc1, 0x21, 0x59, 0x02, 0x00,
 					   0x00, 0x00, 0x5a, 0xee};
 
-	check_frame(proto_status(blank_out(), 0x01, dongle_id, 0x02), expected, sizeof(expected));
+	check_frame(nuphy_status(blank_out(), 0x01, dongle_id, 0x02), expected, sizeof(expected));
 }
 
 static void test_status_keeps_only_the_three_lock_bits(void)
 {
-	proto_status(blank_out(), 0x01, dongle_id, 0xfa);
+	nuphy_status(blank_out(), 0x01, dongle_id, 0xfa);
 	CHECK_EQ(out[6], 0x02);
 }
 
@@ -127,7 +127,7 @@ static void test_pair_reply_frame(void)
 	static const uint8_t expected[] = {0x02, 0x32, 0x26, 0xc1, 0x21, 0x59, 0x70, 0x15,
 					   0xa3, 0x29, 0x1a, 0x1e, 0x22, 0x5a, 0x9a};
 
-	check_frame(proto_pair_reply(blank_out(), 0x02, dongle_id, keyboard_id, channels), expected,
+	check_frame(nuphy_pair_reply(blank_out(), 0x02, dongle_id, keyboard_id, channels), expected,
 		    sizeof(expected));
 }
 
@@ -135,13 +135,13 @@ static void test_suspend_frame(void)
 {
 	static const uint8_t expected[] = {0x03, 0x34, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x91};
 
-	check_frame(proto_suspend(blank_out(), 0x03), expected, sizeof(expected));
+	check_frame(nuphy_suspend(blank_out(), 0x03), expected, sizeof(expected));
 }
 
 static void test_sequence_skips_zero(void)
 {
-	CHECK_EQ(proto_next_seq(0x01), 0x02);
-	CHECK_EQ(proto_next_seq(0xff), 0x01);
+	CHECK_EQ(nuphy_next_seq(0x01), 0x02);
+	CHECK_EQ(nuphy_next_seq(0xff), 0x01);
 }
 
 int main(void)

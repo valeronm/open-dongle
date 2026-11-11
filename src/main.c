@@ -10,7 +10,7 @@
 #include "history.h"
 #include "indicator.h"
 #include "link.h"
-#include "protocol.h"
+#include "nuphy.h"
 #include "radio.h"
 #include "reports.h"
 #include "store.h"
@@ -208,11 +208,11 @@ static void run_survey(void)
 
 static void handle(const struct rx_item *item)
 {
-	struct proto_msg m = proto_parse(item->data, item->len);
+	struct nuphy_msg m = nuphy_parse(item->data, item->len);
 	struct link_out out = {0};
 	bool changed;
 
-	if (m.kind == PROTO_INVALID) {
+	if (m.kind == NUPHY_INVALID) {
 		counters.invalid++;
 		return;
 	}
@@ -232,7 +232,7 @@ static void handle(const struct rx_item *item)
 	lock_reports();
 	changed = reports_on_message(&reports, &m);
 	unlock_reports(changed);
-	if (usb_suspended() && (changed || m.kind == PROTO_HELLO)) {
+	if (usb_suspended() && (changed || m.kind == NUPHY_HELLO)) {
 		usb_wakeup();
 	}
 }

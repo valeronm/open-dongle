@@ -5,7 +5,7 @@ static struct reports r;
 
 static bool send_key(uint8_t code)
 {
-	struct proto_msg m = {.kind = PROTO_KEYBOARD};
+	struct nuphy_msg m = {.kind = NUPHY_KEYBOARD};
 
 	m.keyboard[2] = code;
 	return reports_on_message(&r, &m);
@@ -59,7 +59,7 @@ static void test_quick_tap_keeps_press_and_release_in_order(void)
 
 static void test_media_report_carries_its_usage(void)
 {
-	struct proto_msg m = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
+	struct nuphy_msg m = {.kind = NUPHY_CONSUMER, .usage = 0x00e9};
 	struct report out;
 
 	before();
@@ -71,7 +71,7 @@ static void test_media_report_carries_its_usage(void)
 
 static void test_other_messages_change_nothing(void)
 {
-	struct proto_msg m = {.kind = PROTO_KEEPALIVE};
+	struct nuphy_msg m = {.kind = NUPHY_KEEPALIVE};
 	struct report out;
 
 	before();
@@ -118,8 +118,8 @@ static void test_release_all_lets_go_of_a_held_key(void)
 
 static void test_release_all_lets_go_of_held_media_and_system_keys(void)
 {
-	struct proto_msg consumer = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
-	struct proto_msg system = {.kind = PROTO_SYSTEM, .usage = 0x0081};
+	struct nuphy_msg consumer = {.kind = NUPHY_CONSUMER, .usage = 0x00e9};
+	struct nuphy_msg system = {.kind = NUPHY_SYSTEM, .usage = 0x0081};
 	struct report out;
 
 	before();
@@ -153,7 +153,7 @@ static void test_overflow_merges_the_oldest_change(void)
 
 static void test_consumer_report_does_not_hold_up_the_keyboard(void)
 {
-	struct proto_msg m = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
+	struct nuphy_msg m = {.kind = NUPHY_CONSUMER, .usage = 0x00e9};
 	struct report out;
 
 	before();
@@ -169,8 +169,8 @@ static void test_consumer_report_does_not_hold_up_the_keyboard(void)
 
 static void test_going_live_queues_each_kind_on_its_interface(void)
 {
-	struct proto_msg consumer = {.kind = PROTO_CONSUMER, .usage = 0x00e9};
-	struct proto_msg system = {.kind = PROTO_SYSTEM, .usage = 0x0081};
+	struct nuphy_msg consumer = {.kind = NUPHY_CONSUMER, .usage = 0x00e9};
+	struct nuphy_msg system = {.kind = NUPHY_SYSTEM, .usage = 0x0081};
 	struct report out;
 
 	before();

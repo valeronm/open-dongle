@@ -1,4 +1,4 @@
-# Keyboard radio protocol
+# NuPhy V2 2.4 GHz protocol
 
 The keyboard and the dongle talk over Nordic Enhanced ShockBurst (ESB), the proprietary 2.4 GHz
 protocol of the nRF52 radio. The keyboard's radio module is the transmitter (PTX) and the dongle is
@@ -14,7 +14,7 @@ The ESB configuration is in `src/radio.c`. What the code does not show:
 
 ## Messages
 
-Frame layouts, type codes and the checksum are in `src/protocol.h` and `src/protocol.c`. What the
+Frame layouts, type codes and the checksum are in `src/nuphy.h` and `src/nuphy.c`. What the
 code does not show:
 
 - Keyboard, media and system reports carry the current key state, not key events.

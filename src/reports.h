@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "protocol.h"
+#include "nuphy.h"
 
 #define REPORTS_QUEUE_LEN 64
 
@@ -17,7 +17,7 @@ enum report_kind {
 struct report {
 	enum report_kind kind;
 	union {
-		uint8_t keyboard[PROTO_KEYBOARD_LEN];
+		uint8_t keyboard[NUPHY_KEYBOARD_LEN];
 		uint16_t usage;
 	};
 };
@@ -44,7 +44,7 @@ struct reports {
 void reports_init(struct reports *r);
 
 /* Returns true when the message changed a report's state. */
-bool reports_on_message(struct reports *r, const struct proto_msg *m);
+bool reports_on_message(struct reports *r, const struct nuphy_msg *m);
 void reports_release_all(struct reports *r);
 
 /*

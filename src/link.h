@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "protocol.h"
+#include "nuphy.h"
 
 enum link_state {
 	LINK_IDLE,
@@ -28,7 +28,7 @@ struct link_out {
 	bool reply;
 	uint8_t reply_pipe;
 	uint8_t reply_len;
-	uint8_t reply_buf[PROTO_FRAME_MAX];
+	uint8_t reply_buf[NUPHY_FRAME_MAX];
 	bool save_channels;
 	bool lost;
 	bool up;
@@ -38,8 +38,8 @@ struct link_out {
 
 struct link {
 	enum link_state state;
-	uint8_t dongle_id[PROTO_ID_LEN];
-	uint8_t keyboard_id[PROTO_ID_LEN];
+	uint8_t dongle_id[NUPHY_ID_LEN];
+	uint8_t keyboard_id[NUPHY_ID_LEN];
 	uint8_t own[3];
 	bool own_known;
 	uint8_t offered[3];
@@ -59,9 +59,9 @@ struct link {
 };
 
 /* own is the three channels from the last pairing, or NULL for a dongle that never paired. */
-void link_init(struct link *l, const uint8_t dongle_id[PROTO_ID_LEN], const uint8_t *own,
+void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint8_t *own,
 	       uint32_t now_ms, struct link_out *out);
-void link_on_message(struct link *l, const struct proto_msg *m, uint8_t pipe, uint32_t now_ms,
+void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out);
 /* After a call sets start_survey, the caller must call link_on_survey or link_survey_failed. */
 void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,

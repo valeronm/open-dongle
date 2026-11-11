@@ -1,6 +1,6 @@
 # AGENTS.md
 
-- `src/protocol.*`, `src/reports.*`, `src/chanpick.*`, `src/link.*`, `src/diagproto.*` and
+- `src/nuphy.*`, `src/reports.*`, `src/chanpick.*`, `src/link.*`, `src/diagproto.*` and
   `src/history.*` include only the C standard library. Their tests build them with the host
   compiler, where no Zephyr, nrfx or ESB header exists.
 - Radio, USB, flash and the clock reach those modules only through `src/main.c`.

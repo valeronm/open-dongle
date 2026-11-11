@@ -50,19 +50,19 @@ static bool update(struct reports *r, const struct report *next)
 	return true;
 }
 
-bool reports_on_message(struct reports *r, const struct proto_msg *m)
+bool reports_on_message(struct reports *r, const struct nuphy_msg *m)
 {
 	struct report next;
 
 	switch (m->kind) {
-	case PROTO_KEYBOARD:
+	case NUPHY_KEYBOARD:
 		next.kind = REPORT_KEYBOARD;
 		memcpy(next.keyboard, m->keyboard, sizeof(next.keyboard));
 		break;
-	case PROTO_CONSUMER:
+	case NUPHY_CONSUMER:
 		next = (struct report){.kind = REPORT_CONSUMER, .usage = m->usage};
 		break;
-	case PROTO_SYSTEM:
+	case NUPHY_SYSTEM:
 		next = (struct report){.kind = REPORT_SYSTEM, .usage = m->usage};
 		break;
 	default:

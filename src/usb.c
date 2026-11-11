@@ -115,9 +115,9 @@ static const struct device *const keyboard_dev = DEVICE_DT_GET(DT_NODELABEL(hid_
 static const struct device *const extra_dev = DEVICE_DT_GET(DT_NODELABEL(hid_extra));
 static const struct device *const diag_dev = DEVICE_DT_GET(DT_NODELABEL(hid_diag));
 UDC_STATIC_BUF_DEFINE(diag_buf, DIAG_REPORT_LEN);
-UDC_STATIC_BUF_DEFINE(keyboard_buf, PROTO_KEYBOARD_LEN);
+UDC_STATIC_BUF_DEFINE(keyboard_buf, NUPHY_KEYBOARD_LEN);
 UDC_STATIC_BUF_DEFINE(extra_buf, EXTRA_REPORT_LEN);
-BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_keyboard), in_report_size) == PROTO_KEYBOARD_LEN);
+BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_keyboard), in_report_size) == NUPHY_KEYBOARD_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_extra), in_report_size) == EXTRA_REPORT_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), in_report_size) == DIAG_REPORT_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), out_report_size) == DIAG_REPORT_LEN);
@@ -302,8 +302,8 @@ int usb_start(const struct usb_callbacks *cb)
 int usb_send(const struct report *r)
 {
 	if (r->kind == REPORT_KEYBOARD) {
-		memcpy(keyboard_buf, r->keyboard, PROTO_KEYBOARD_LEN);
-		return hid_device_submit_report(keyboard_dev, PROTO_KEYBOARD_LEN, keyboard_buf);
+		memcpy(keyboard_buf, r->keyboard, NUPHY_KEYBOARD_LEN);
+		return hid_device_submit_report(keyboard_dev, NUPHY_KEYBOARD_LEN, keyboard_buf);
 	}
 	extra_buf[0] = r->kind == REPORT_CONSUMER ? EXTRA_ID_CONSUMER : EXTRA_ID_SYSTEM;
 	extra_buf[1] = r->usage & 0xff;
