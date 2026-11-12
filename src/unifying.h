@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "reports.h"
 
 #define UNIFYING_FRAME_MAX 22
 #define UNIFYING_KEY_LEN 16
@@ -14,6 +15,9 @@
 #define UNIFYING_PAIRING_CHANNELS 11
 #define UNIFYING_SWEEP_DWELL_MS 20
 #define UNIFYING_PAIRING_WINDOW_MS 60000
+#define UNIFYING_AES_BLOCK_LEN 16
+#define UNIFYING_KEEPALIVE_DEFAULT_MS 1100
+#define UNIFYING_LED_FRAME_LEN 10
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
 extern const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN];
@@ -100,5 +104,45 @@ void unifying_device_of(const struct unifying_pairing *p, struct unifying_device
 void unifying_pairing_restore(struct unifying_pairing *p, const struct unifying_device *d);
 
 bool unifying_is_encrypted_keyboard(const uint8_t *frame, size_t len);
+
+typedef void (*unifying_aes_fn)(const uint8_t key[UNIFYING_KEY_LEN],
+				const uint8_t in[UNIFYING_AES_BLOCK_LEN],
+				uint8_t out[UNIFYING_AES_BLOCK_LEN]);
+
+struct unifying_link {
+	uint64_t next_counter;
+	uint16_t keepalive_ms;
+	uint32_t last_ms;
+	bool keyboard_down;
+	bool media_down;
+};
+
+void unifying_link_reset(struct unifying_link *l);
+
+/*
+ * Decrypts an encrypted keystroke whose counter is not below next_counter. Returns false, leaving
+ * out and the link untouched, when the frame is anything else or the plaintext does not end in
+ * 0xc9.
+ */
+bool unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KEY_LEN],
+			const uint8_t *frame, size_t len, unifying_aes_fn aes, struct report *out);
+
+/* The usage's high byte (frame byte 3) is unconfirmed: every key seen used a usage below 0x100. */
+bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t len,
+			   struct report *out);
+
+size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN]);
+
+/*
+ * Records any frame from the keyboard; keep-alive and set-keep-alive frames also carry its timeout.
+ */
+void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t len,
+			 uint32_t now_ms);
+
+/*
+ * Returns true once when a key is held and nothing was heard for twice the keep-alive timeout; the
+ * held state is then cleared.
+ */
+bool unifying_link_silent(struct unifying_link *l, uint32_t now_ms);
 
 #endif

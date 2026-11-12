@@ -8,7 +8,15 @@
 #define CAP_UNIFYING 0x04
 #define REPORT_TYPE_MASK 0x1f
 #define REPORT_ENCRYPTED_KEYBOARD 0x13
+#define REPORT_MEDIA 0x03
+#define REPORT_LEDS 0x0e
 #define FINAL_LEN 10
+#define MEDIA_FRAME_LEN 10
+#define PLAINTEXT_MARKER 0xc9
+#define REPORT_KEEPALIVE 0x40
+#define REPORT_SET_KEEPALIVE 0x0f
+#define KEEPALIVE_LEN 5
+#define SET_KEEPALIVE_LEN 10
 
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
 const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
@@ -217,9 +225,116 @@ void unifying_pairing_restore(struct unifying_pairing *p, const struct unifying_
 	memcpy(p->key, d->key, sizeof(p->key));
 }
 
+static bool frame_is(const uint8_t *frame, size_t len, size_t want_len, uint8_t want_type)
+{
+	return len == want_len && (frame[1] & REPORT_TYPE_MASK) == want_type &&
+	       unifying_checksum_ok(frame, len);
+}
+
 bool unifying_is_encrypted_keyboard(const uint8_t *frame, size_t len)
 {
-	return len == UNIFYING_FRAME_MAX &&
-	       (frame[1] & REPORT_TYPE_MASK) == REPORT_ENCRYPTED_KEYBOARD &&
-	       unifying_checksum_ok(frame, len);
+	return frame_is(frame, len, UNIFYING_FRAME_MAX, REPORT_ENCRYPTED_KEYBOARD);
+}
+
+void unifying_link_reset(struct unifying_link *l)
+{
+	*l = (struct unifying_link){.keepalive_ms = UNIFYING_KEEPALIVE_DEFAULT_MS};
+}
+
+static void counter_block(const uint8_t *frame, uint8_t block[UNIFYING_AES_BLOCK_LEN])
+{
+	static const uint8_t head[7] = {0x04, 0x14, 0x1d, 0x1f, 0x27, 0x28, 0x0d};
+	static const uint8_t tail[5] = {0x0a, 0x0d, 0x13, 0x26, 0x0e};
+
+	memcpy(block, head, sizeof(head));
+	memcpy(&block[sizeof(head)], &frame[10], 4);
+	memcpy(&block[sizeof(head) + 4], tail, sizeof(tail));
+}
+
+bool unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KEY_LEN],
+			const uint8_t *frame, size_t len, unifying_aes_fn aes, struct report *out)
+{
+	uint8_t block[UNIFYING_AES_BLOCK_LEN], stream[UNIFYING_AES_BLOCK_LEN];
+	uint8_t p[REPORT_KEYBOARD_LEN], keys = 0;
+	uint64_t counter;
+
+	if (!unifying_is_encrypted_keyboard(frame, len)) {
+		return false;
+	}
+	counter = (uint64_t)frame[10] << 24 | (uint64_t)frame[11] << 16 | (uint64_t)frame[12] << 8 |
+		  frame[13];
+	if (counter < l->next_counter) {
+		return false;
+	}
+	counter_block(frame, block);
+	aes(key, block, stream);
+	for (size_t i = 0; i < sizeof(p); i++) {
+		p[i] = frame[2 + i] ^ stream[i];
+	}
+	if (p[7] != PLAINTEXT_MARKER) {
+		return false;
+	}
+	for (size_t i = 0; i < sizeof(p) - 1; i++) {
+		keys |= p[i];
+	}
+	l->next_counter = counter + 1;
+	l->keyboard_down = keys != 0;
+	*out = (struct report){.kind = REPORT_KEYBOARD};
+	out->keyboard[0] = p[0];
+	memcpy(&out->keyboard[2], &p[1], sizeof(p) - 2);
+	return true;
+}
+
+bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t len,
+			   struct report *out)
+{
+	if (!frame_is(frame, len, MEDIA_FRAME_LEN, REPORT_MEDIA)) {
+		return false;
+	}
+	*out = (struct report){.kind = REPORT_CONSUMER, .usage = frame[2] | frame[3] << 8};
+	l->media_down = out->usage != 0;
+	return true;
+}
+
+size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN])
+{
+	memset(out, 0, UNIFYING_LED_FRAME_LEN);
+	out[1] = REPORT_LEDS;
+	out[2] = leds;
+	return seal(out, UNIFYING_LED_FRAME_LEN);
+}
+
+static uint16_t keepalive_timeout(const uint8_t *frame, size_t len)
+{
+	if (frame_is(frame, len, KEEPALIVE_LEN, REPORT_KEEPALIVE & REPORT_TYPE_MASK) &&
+	    frame[1] == REPORT_KEEPALIVE) {
+		return (uint16_t)(frame[2] << 8 | frame[3]);
+	}
+	if (frame_is(frame, len, SET_KEEPALIVE_LEN, REPORT_SET_KEEPALIVE) && frame[2] == 0x00) {
+		return (uint16_t)(frame[3] << 8 | frame[4]);
+	}
+	return 0;
+}
+
+void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t len,
+			 uint32_t now_ms)
+{
+	uint16_t timeout = keepalive_timeout(frame, len);
+
+	l->last_ms = now_ms;
+	if (timeout != 0) {
+		l->keepalive_ms = timeout;
+	}
+}
+
+bool unifying_link_silent(struct unifying_link *l, uint32_t now_ms)
+{
+	bool silent = (l->keyboard_down || l->media_down) &&
+		      now_ms - l->last_ms > 2 * (uint32_t)l->keepalive_ms;
+
+	if (silent) {
+		l->keyboard_down = false;
+		l->media_down = false;
+	}
+	return silent;
 }

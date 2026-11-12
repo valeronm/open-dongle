@@ -434,6 +434,303 @@ static void test_a_restored_device_is_paired_and_a_new_request_still_starts_an_a
 	CHECK_EQ(q.state, UNIFYING_ANSWERED_1);
 }
 
+static const uint8_t aes_key[UNIFYING_KEY_LEN] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+						  0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f};
+static const uint8_t stream[UNIFYING_AES_BLOCK_LEN] = {
+	0x3a, 0x91, 0x07, 0xc4, 0x55, 0xe2, 0x18, 0x6b, 0xf0, 0x2d, 0x8e, 0x73, 0x49, 0xb6, 0x0c, 0xa5};
+static const uint8_t press_a[REPORT_KEYBOARD_LEN] = {0x00, 0x04, 0x00, 0x00,
+						     0x00, 0x00, 0x00, 0xc9};
+static const uint8_t media_volume_up[] = {0x00, 0xc3, 0xe9, 0x00, 0x00,
+					  0x00, 0x00, 0x00, 0x00, 0x54};
+static const uint8_t media_volume_down[] = {0x00, 0xc3, 0xea, 0x00, 0x00,
+					    0x00, 0x00, 0x00, 0x00, 0x53};
+static const uint8_t media_mute[] = {0x00, 0xc3, 0xcd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x70};
+static const uint8_t media_release[] = {0x00, 0xc3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x3d};
+static const uint8_t keep_alive_1100[] = {0x00, 0x40, 0x04, 0x4c, 0x70};
+static const uint8_t set_keep_alive_88[] = {0x00, 0x4f, 0x00, 0x00, 0x58,
+					    0x32, 0x14, 0x00, 0x00, 0x13};
+static const uint8_t pairing_complete[] = {0x00, 0x4f, 0x06, 0x01, 0x00,
+					   0x00, 0x00, 0x00, 0x00, 0xaa};
+
+static uint8_t aes_seen_key[UNIFYING_KEY_LEN];
+static uint8_t aes_seen_input[UNIFYING_AES_BLOCK_LEN];
+static int aes_calls;
+
+static void fake_aes(const uint8_t key[UNIFYING_KEY_LEN], const uint8_t in[UNIFYING_AES_BLOCK_LEN],
+		     uint8_t out[UNIFYING_AES_BLOCK_LEN])
+{
+	memcpy(aes_seen_key, key, UNIFYING_KEY_LEN);
+	memcpy(aes_seen_input, in, UNIFYING_AES_BLOCK_LEN);
+	memcpy(out, stream, UNIFYING_AES_BLOCK_LEN);
+	aes_calls++;
+}
+
+static void keystroke(uint8_t *f, uint32_t counter, const uint8_t plain[REPORT_KEYBOARD_LEN])
+{
+	memset(f, 0, UNIFYING_FRAME_MAX);
+	f[1] = 0xd3;
+	for (int i = 0; i < REPORT_KEYBOARD_LEN; i++) {
+		f[2 + i] = plain[i] ^ stream[i];
+	}
+	f[10] = counter >> 24;
+	f[11] = counter >> 16;
+	f[12] = counter >> 8;
+	f[13] = counter;
+	seal(f, UNIFYING_FRAME_MAX);
+}
+
+static bool receive_keystroke(struct unifying_link *l, uint32_t counter,
+			      const uint8_t plain[REPORT_KEYBOARD_LEN], struct report *r)
+{
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	keystroke(f, counter, plain);
+	return unifying_keystroke(l, aes_key, f, sizeof(f), fake_aes, r);
+}
+
+static void test_keystroke_passes_the_key_and_the_counter_block_to_aes(void)
+{
+	static const uint8_t expected[UNIFYING_AES_BLOCK_LEN] = {
+		0x04, 0x14, 0x1d, 0x1f, 0x27, 0x28, 0x0d, 0x5f, 0x66, 0xf4, 0x59, 0x0a, 0x0d, 0x13, 0x26, 0x0e};
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	aes_calls = 0;
+	CHECK(receive_keystroke(&l, 0x5f66f459, press_a, &r));
+	CHECK_EQ(aes_calls, 1);
+	CHECK_MEM(aes_seen_input, expected, UNIFYING_AES_BLOCK_LEN);
+	CHECK_MEM(aes_seen_key, aes_key, UNIFYING_KEY_LEN);
+}
+
+static void test_keystroke_report_is_the_decrypted_modifier_and_keys(void)
+{
+	static const struct {
+		uint8_t plain[REPORT_KEYBOARD_LEN];
+		uint8_t want[REPORT_KEYBOARD_LEN];
+	} cases[] = {
+		{{0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc9},
+		 {0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		{{0x02, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc9},
+		 {0x02, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		{{0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc9},
+		 {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
+		{{0x00, 0x4f, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc9},
+		 {0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x00, 0x00}},
+	};
+	struct unifying_link l;
+	struct report r;
+
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		unifying_link_reset(&l);
+		CHECK(receive_keystroke(&l, 1, cases[i].plain, &r));
+		CHECK_EQ(r.kind, REPORT_KEYBOARD);
+		CHECK_MEM(r.keyboard, cases[i].want, REPORT_KEYBOARD_LEN);
+		CHECK(l.keyboard_down);
+	}
+}
+
+static void test_a_counter_below_the_next_expected_one_is_refused(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	CHECK(receive_keystroke(&l, 1000, press_a, &r));
+	aes_calls = 0;
+	CHECK(!receive_keystroke(&l, 1000, press_a, &r));
+	CHECK(!receive_keystroke(&l, 999, press_a, &r));
+	CHECK_EQ(aes_calls, 0);
+	CHECK(receive_keystroke(&l, 1001, press_a, &r));
+	CHECK(!receive_keystroke(&l, 1001, press_a, &r));
+	unifying_link_reset(&l);
+	CHECK(receive_keystroke(&l, 1000, press_a, &r));
+}
+
+static void test_the_first_counter_may_be_zero_or_the_largest(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	CHECK(receive_keystroke(&l, 0, press_a, &r));
+	unifying_link_reset(&l);
+	CHECK(receive_keystroke(&l, 0xffffffff, press_a, &r));
+	CHECK(!receive_keystroke(&l, 0xffffffff, press_a, &r));
+	CHECK(!receive_keystroke(&l, 0, press_a, &r));
+}
+
+static void test_a_plaintext_without_the_marker_byte_is_rejected_and_keeps_the_counter(void)
+{
+	static const uint8_t forged[REPORT_KEYBOARD_LEN] = {0x00, 0x04, 0x00, 0x00,
+							    0x00, 0x00, 0x00, 0x00};
+	struct unifying_link l;
+	struct report r = {.kind = REPORT_SYSTEM};
+
+	unifying_link_reset(&l);
+	CHECK(!receive_keystroke(&l, 0xffffffff, forged, &r));
+	CHECK_EQ(r.kind, REPORT_SYSTEM);
+	CHECK(!l.keyboard_down);
+	CHECK_EQ(l.next_counter, 0);
+	CHECK(receive_keystroke(&l, 0xffffffff, press_a, &r));
+	CHECK(l.keyboard_down);
+	CHECK_EQ(l.next_counter, 0x100000000LL);
+}
+
+static void test_an_unencrypted_keyboard_frame_is_refused(void)
+{
+	struct unifying_link l;
+	struct report r;
+	uint8_t f[UNIFYING_FRAME_MAX] = {0x00, 0xc1};
+
+	unifying_link_reset(&l);
+	aes_calls = 0;
+	seal(f, sizeof(f));
+	CHECK(!unifying_keystroke(&l, aes_key, f, sizeof(f), fake_aes, &r));
+	CHECK_EQ(aes_calls, 0);
+	CHECK_EQ(l.next_counter, 0);
+}
+
+static void test_media_frames_carry_the_usage_in_bytes_2_and_3(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	CHECK(unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r));
+	CHECK_EQ(r.kind, REPORT_CONSUMER);
+	CHECK_EQ(r.usage, 0x00e9);
+	CHECK(l.media_down);
+	CHECK(unifying_media_report(&l, media_volume_down, sizeof(media_volume_down), &r));
+	CHECK_EQ(r.usage, 0x00ea);
+	CHECK(unifying_media_report(&l, media_mute, sizeof(media_mute), &r));
+	CHECK_EQ(r.usage, 0x00cd);
+	CHECK(unifying_media_report(&l, media_release, sizeof(media_release), &r));
+	CHECK_EQ(r.kind, REPORT_CONSUMER);
+	CHECK_EQ(r.usage, 0);
+	CHECK(!l.media_down);
+}
+
+static void test_a_media_frame_with_a_bad_checksum_or_another_type_is_refused(void)
+{
+	uint8_t f[sizeof(media_volume_up)];
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	memcpy(f, media_volume_up, sizeof(f));
+	f[sizeof(f) - 1] ^= 0x10;
+	CHECK(!unifying_media_report(&l, f, sizeof(f), &r));
+	f[1] = 0xc1;
+	seal(f, sizeof(f));
+	CHECK(!unifying_media_report(&l, f, sizeof(f), &r));
+	f[1] = 0xc3;
+	seal(f, sizeof(f));
+	CHECK(!unifying_media_report(&l, f, sizeof(f) - 1, &r));
+	CHECK(!l.media_down);
+}
+
+static void test_the_led_frame_carries_the_led_bits(void)
+{
+	static const uint8_t expected[UNIFYING_LED_FRAME_LEN] = {0x00, 0x0e, 0x02, 0x00, 0x00,
+								 0x00, 0x00, 0x00, 0x00, 0xf0};
+	uint8_t f[UNIFYING_LED_FRAME_LEN];
+
+	CHECK_EQ(unifying_led_frame(0x02, f), UNIFYING_LED_FRAME_LEN);
+	CHECK_MEM(f, expected, UNIFYING_LED_FRAME_LEN);
+}
+
+static void hold_a_key(struct unifying_link *l)
+{
+	struct report r;
+
+	receive_keystroke(l, 1, press_a, &r);
+}
+
+static void test_keep_alive_frames_set_the_timeout(void)
+{
+	struct unifying_link l;
+
+	unifying_link_reset(&l);
+	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 5);
+	CHECK_EQ(l.keepalive_ms, 88);
+	CHECK_EQ(l.last_ms, 5);
+	unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 9);
+	CHECK_EQ(l.keepalive_ms, 1100);
+	CHECK_EQ(l.last_ms, 9);
+}
+
+static void test_other_frames_leave_the_timeout_but_count_as_heard(void)
+{
+	struct unifying_link l;
+	uint8_t bad[sizeof(keep_alive_1100)];
+
+	unifying_link_reset(&l);
+	unifying_link_heard(&l, pairing_complete, sizeof(pairing_complete), 7);
+	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
+	CHECK_EQ(l.last_ms, 7);
+	memcpy(bad, keep_alive_1100, sizeof(bad));
+	bad[sizeof(bad) - 1] ^= 0x10;
+	unifying_link_heard(&l, bad, sizeof(bad), 8);
+	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
+}
+
+static void test_a_held_key_goes_stuck_after_twice_the_timeout_once(void)
+{
+	struct unifying_link l;
+	uint32_t t = 10000;
+
+	unifying_link_reset(&l);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), t);
+	hold_a_key(&l);
+	CHECK(!unifying_link_silent(&l, t + 176));
+	CHECK(unifying_link_silent(&l, t + 177));
+	CHECK(!unifying_link_silent(&l, t + 1000));
+	CHECK(!l.keyboard_down);
+}
+
+static void test_a_frame_heard_in_time_postpones_the_stuck_key(void)
+{
+	struct unifying_link l;
+
+	unifying_link_reset(&l);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	hold_a_key(&l);
+	unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 100);
+	CHECK(!unifying_link_silent(&l, 1000));
+	CHECK(!unifying_link_silent(&l, 100 + 2 * 1100));
+	CHECK(unifying_link_silent(&l, 100 + 2 * 1100 + 1));
+}
+
+static void test_nothing_held_is_never_silent(void)
+{
+	struct unifying_link l;
+
+	unifying_link_reset(&l);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	CHECK(!unifying_link_silent(&l, 100000));
+}
+
+static void test_a_release_report_clears_the_held_state(void)
+{
+	static const uint8_t released[REPORT_KEYBOARD_LEN] = {0x00, 0x00, 0x00, 0x00,
+							      0x00, 0x00, 0x00, 0xc9};
+	struct unifying_link l;
+	struct report r;
+
+	unifying_link_reset(&l);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	hold_a_key(&l);
+	receive_keystroke(&l, 2, released, &r);
+	CHECK(!unifying_link_silent(&l, 100000));
+	unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r);
+	CHECK(unifying_link_silent(&l, 100000));
+	unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r);
+	unifying_media_report(&l, media_release, sizeof(media_release), &r);
+	CHECK(!unifying_link_silent(&l, 200000));
+}
+
 int main(void)
 {
 	RUN(test_checksum_is_the_negated_sum);
@@ -461,5 +758,20 @@ int main(void)
 	RUN(test_sweep_holds_once_the_window_closes);
 	RUN(test_sweep_continues_in_the_window_after_a_pairing);
 	RUN(test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt);
+	RUN(test_keystroke_passes_the_key_and_the_counter_block_to_aes);
+	RUN(test_keystroke_report_is_the_decrypted_modifier_and_keys);
+	RUN(test_a_counter_below_the_next_expected_one_is_refused);
+	RUN(test_the_first_counter_may_be_zero_or_the_largest);
+	RUN(test_a_plaintext_without_the_marker_byte_is_rejected_and_keeps_the_counter);
+	RUN(test_an_unencrypted_keyboard_frame_is_refused);
+	RUN(test_media_frames_carry_the_usage_in_bytes_2_and_3);
+	RUN(test_a_media_frame_with_a_bad_checksum_or_another_type_is_refused);
+	RUN(test_the_led_frame_carries_the_led_bits);
+	RUN(test_keep_alive_frames_set_the_timeout);
+	RUN(test_other_frames_leave_the_timeout_but_count_as_heard);
+	RUN(test_a_held_key_goes_stuck_after_twice_the_timeout_once);
+	RUN(test_a_frame_heard_in_time_postpones_the_stuck_key);
+	RUN(test_nothing_held_is_never_silent);
+	RUN(test_a_release_report_clears_the_held_state);
 	return TEST_EXIT();
 }
