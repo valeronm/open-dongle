@@ -6,6 +6,10 @@
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.
 - The tool names the errors the dongle reports.
+- Each minute of history, and each link loss or gap in the events, records the home channel's noise,
+  read between keyboard packets: the loudest reading and the shares at or above -85 and -60 dBm.
+  The tool prints it and charts the share at or above -85 dBm in the live view.
+- The diagnostic protocol is now 2, so the 0.1.0 tool reads only `flash` from new firmware.
 
 ## [0.1.0] - 2026-11-11
 

@@ -105,6 +105,14 @@ static void log_event(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t va
 							.value = value});
 }
 
+static void take_noise(void)
+{
+	struct noise_tally t;
+	uint8_t channel = radio_noise_take(&t);
+
+	history_noise(&history, &t, link.own_known && channel == link.own[0]);
+}
+
 static void show_state(void)
 {
 	static const enum indicator_mode by_link[] = {
@@ -169,6 +177,7 @@ static void apply(const struct link_out *out)
 
 		counters.link_losses++;
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
+		take_noise();
 		log_event(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, 0, 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
@@ -223,15 +232,18 @@ static void handle(const struct rx_item *item)
 	counters.packets++;
 	if (item->pipe == 1) {
 		keyboard_rssi = item->rssi;
-		history_rssi(&history, item->rssi);
 	}
 	heard = true;
 	last_packet_ms = k_uptime_get_32();
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
+	take_noise();
 	if (out.gap_ms > 0) {
 		counters.gaps++;
 		log_event(HISTORY_LINK_GAP, out.gap_channel, (uint8_t)rssi_before,
 			  (uint8_t)item->rssi, out.gap_ms);
+	}
+	if (item->pipe == 1) {
+		history_rssi(&history, item->rssi);
 	}
 	apply(&out);
 	if (out.start_survey) {
@@ -510,6 +522,7 @@ int main(void)
 			}
 			was_suspended = suspended;
 		}
+		take_noise();
 		t = totals();
 		history_tick(&history, k_uptime_get(), &t);
 		out = (struct link_out){0};

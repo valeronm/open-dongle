@@ -7,9 +7,14 @@
 #define SURVEY_ROUND_GAP_MS 35
 #define ACK_WAIT_MAX_US 1000
 #define ACK_POLL_US 10
+#define NOISE_TICK_US 500
 
 static radio_rx_cb rx_cb;
 static uint8_t current_channel;
+static struct noise_tally noise;
+static volatile bool listening;
+static volatile uint32_t listen_generation;
+static volatile uint32_t payloads_seen;
 
 static void on_esb_event(const struct esb_evt *evt)
 {
@@ -19,6 +24,7 @@ static void on_esb_event(const struct esb_evt *evt)
 		return;
 	}
 	while (esb_read_rx_payload(&rx) == 0) {
+		payloads_seen++;
 		rx_cb(rx.data, rx.length, rx.pipe, -(int8_t)rx.rssi);
 	}
 }
@@ -39,11 +45,68 @@ static bool transmitting(void)
 /* ESB reports a packet before sending its acknowledgment, which may carry a queued reply. */
 static int stop_rx(void)
 {
+	unsigned int key;
+
 	for (int i = 0; i < ACK_WAIT_MAX_US / ACK_POLL_US && transmitting(); i++) {
 		k_busy_wait(ACK_POLL_US);
 	}
+	key = irq_lock();
+	listening = false;
+	listen_generation++;
+	noise = (struct noise_tally){0};
+	irq_unlock(key);
 	return esb_stop_rx();
 }
+
+static void rssi_start(void)
+{
+	nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_RSSIEND);
+	nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RSSISTART);
+}
+
+static int8_t rssi_dbm(void)
+{
+	return -(int8_t)nrf_radio_rssi_sample_get(NRF_RADIO);
+}
+
+/* A reading starts only after a tick that saw no packet, and is kept only when the two ticks
+ * after its start saw none either; a restart of reception counts as a packet. */
+static void noise_tick(struct k_timer *timer)
+{
+	static bool started;
+	static bool held;
+	static int8_t held_dbm;
+	static uint32_t last_payloads;
+	static uint32_t last_generation;
+	uint32_t payloads = payloads_seen;
+	uint32_t generation = listen_generation;
+	bool address = nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS);
+	bool packet = address || payloads != last_payloads || generation != last_generation;
+	bool rx;
+
+	ARG_UNUSED(timer);
+	if (address) {
+		nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_ADDRESS);
+	}
+	last_payloads = payloads;
+	last_generation = generation;
+	if (held && !packet) {
+		noise_add(&noise, held_dbm);
+	}
+	rx = nrf_radio_state_get(NRF_RADIO) == NRF_RADIO_STATE_RX;
+	held = started && !packet && rx &&
+	       nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_RSSIEND);
+	if (held) {
+		held_dbm = rssi_dbm();
+	}
+	/* While reception is stopped the radio may be sampled by hand, which waits on RSSIEND. */
+	started = listening && rx && !packet;
+	if (started) {
+		rssi_start();
+	}
+}
+
+K_TIMER_DEFINE(noise_timer, noise_tick, NULL);
 
 int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
 {
@@ -76,6 +139,9 @@ int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
 	if (!err) {
 		err = radio_set_channel(channel);
 	}
+	if (!err) {
+		k_timer_start(&noise_timer, K_USEC(NOISE_TICK_US), K_USEC(NOISE_TICK_US));
+	}
 	return err;
 }
 
@@ -91,7 +157,22 @@ int radio_set_channel(uint8_t channel)
 		return err;
 	}
 	current_channel = channel;
-	return esb_start_rx();
+	err = esb_start_rx();
+	if (!err) {
+		listening = true;
+	}
+	return err;
+}
+
+uint8_t radio_noise_take(struct noise_tally *t)
+{
+	unsigned int key = irq_lock();
+	uint8_t channel = current_channel;
+
+	*t = noise;
+	noise = (struct noise_tally){0};
+	irq_unlock(key);
+	return channel;
 }
 
 int radio_reply(uint8_t pipe, const uint8_t *frame, size_t len)
@@ -114,11 +195,10 @@ static int8_t sample_dbm(uint8_t channel)
 	nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_START);
 	/* The RSSI filter needs about 15 us in RX before a sample is valid. */
 	k_busy_wait(15);
-	nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_RSSIEND);
-	nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_RSSISTART);
+	rssi_start();
 	while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_RSSIEND)) {
 	}
-	dbm = -(int8_t)nrf_radio_rssi_sample_get(NRF_RADIO);
+	dbm = rssi_dbm();
 	nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_DISABLED);
 	nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_DISABLE);
 	while (!nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_DISABLED)) {

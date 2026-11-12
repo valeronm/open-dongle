@@ -1,6 +1,7 @@
 #ifndef HISTORY_H
 #define HISTORY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -56,6 +57,7 @@ struct history {
 	uint32_t events_total;
 	uint32_t events_oldest;
 	struct noise_tally noise;
+	struct noise_tally since_packet;
 };
 
 void history_init(struct history *h, uint64_t now_ms, const struct history_totals *t);
@@ -65,9 +67,15 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 
 /* Closes every minute that ended before now_ms. */
 void history_tick(struct history *h, uint64_t now_ms, const struct history_totals *t);
+
+/* A gap's event is logged before the keyboard packet that ended the gap comes here. */
 void history_rssi(struct history *h, int8_t dbm);
+
+/* A gap or loss event records the readings since the last history_rssi in place of e's noise. */
 void history_event(struct history *h, const struct history_event *e);
-void history_noise(struct history *h, const struct noise_tally *t);
+
+/* Readings off the home channel count toward a gap or loss but not toward the minute. */
+void history_noise(struct history *h, const struct noise_tally *t, bool home);
 
 /* Copies up to max held records from index from, or from the oldest held if that is later. */
 size_t history_minutes(const struct history *h, uint32_t from, uint32_t *first,

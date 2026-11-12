@@ -26,6 +26,7 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 	h->minute_oldest = h->minute_next;
 	h->at_minute_start = *t;
 	h->events_oldest = h->events_total;
+	h->since_packet = (struct noise_tally){0};
 	reset_minute(h);
 }
 
@@ -82,16 +83,26 @@ void history_rssi(struct history *h, int8_t dbm)
 	}
 	h->rssi_sum += dbm;
 	h->rssi_count++;
+	h->since_packet = (struct noise_tally){0};
 }
 
-void history_noise(struct history *h, const struct noise_tally *t)
+void history_noise(struct history *h, const struct noise_tally *t, bool home)
 {
-	noise_merge(&h->noise, t);
+	noise_merge(&h->since_packet, t);
+	if (home) {
+		noise_merge(&h->noise, t);
+	}
 }
 
 void history_event(struct history *h, const struct history_event *e)
 {
-	h->events[h->events_total % HISTORY_EVENTS] = *e;
+	struct history_event *stored = &h->events[h->events_total % HISTORY_EVENTS];
+
+	*stored = *e;
+	if (e->type == HISTORY_LINK_GAP || e->type == HISTORY_LINK_LOST) {
+		stored->noise = noise_record(&h->since_packet);
+		h->since_packet = (struct noise_tally){0};
+	}
 	h->events_total++;
 	if (h->events_total - h->events_oldest > HISTORY_EVENTS) {
 		h->events_oldest = h->events_total - HISTORY_EVENTS;

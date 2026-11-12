@@ -72,7 +72,8 @@ counters for the last day, recent events and a radio noise map. With no argument
 view; `--help` lists the subcommands. The history lives in the dongle's RAM, so it covers only the
 time since the dongle was last plugged in or reset. A noise map takes the same measurement as
 [pairing](#pairing) and stops the keyboard meanwhile, because the radio cannot listen while it
-measures.
+measures. Each minute of history and each gap or loss event also records the noise on the home
+channel, read between keyboard packets.
 
 ## Building from source
 
