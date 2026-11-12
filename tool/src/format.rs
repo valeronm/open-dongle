@@ -226,7 +226,7 @@ pub fn flashed(status: Result<Status, VersionMismatch>) -> String {
     }
 }
 
-fn share(hundredths: u16) -> String {
+pub fn share(hundredths: u16) -> String {
     format!("{}.{:02}%", hundredths / 100, hundredths % 100)
 }
 

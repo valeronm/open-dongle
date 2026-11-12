@@ -9,55 +9,191 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
     symbols,
-    text::Line,
+    text::{Line, Span},
     widgets::{
-        Axis, Bar, BarChart, BarGroup, Block, Chart, Dataset, GraphType, List, ListItem, Paragraph,
-        Sparkline,
+        Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, GraphType, List, ListItem,
+        Paragraph,
     },
 };
 
 use crate::device::{self, Device, Transport};
 use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
-    link_state_name, noise_level, noise_ruler, paired, uptime, usb_state, wall_clock,
+    link_state_name, noise_level, noise_ruler, paired, share, uptime, usb_state, wall_clock,
 };
-use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Rssi, Status};
+use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Status};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
 const EVENT_ROWS: usize = 8;
+const CHART_MIN_ROWS: u16 = 7;
+const TIME_AXIS_ROWS: u16 = 1;
+const PANEL_ROWS: [Constraint; 3] = [
+    Constraint::Min(CHART_MIN_ROWS),
+    Constraint::Length(STRIPS.len() as u16),
+    Constraint::Length(TIME_AXIS_ROWS),
+];
+const HISTORY_MIN_ROWS: u16 = 2 + min_rows(&PANEL_ROWS);
+const CLOCK: &str = "%H:%M:%S";
 
-type MinuteValue = fn(&Minute) -> u64;
+/// Wide enough for a strip's name beside its scale at 100.00%.
+const GUTTER: u16 = 12;
+const DBM_FLOOR: i8 = -100;
+const DBM_CEILING: i8 = -20;
+const DBM_LABELS: [i8; 3] = [DBM_FLOOR, -60, DBM_CEILING];
 
-fn dataset<'a>(name: Option<&'a str>, color: Color, data: &'a [(f64, f64)]) -> Dataset<'a> {
-    let dataset = Dataset::default()
-        .marker(symbols::Marker::Braille)
-        .graph_type(GraphType::Line)
-        .style(Style::default().fg(color))
-        .data(data);
-    match name {
-        Some(name) => dataset.name(name),
-        None => dataset,
-    }
+type MinuteDbm = fn(&Minute) -> Option<i8>;
+
+/// Each line lies over the ones before it.
+const SIGNAL_LINES: [(&str, Color, MinuteDbm); 4] = [
+    ("noise peak", Color::Gray, |m| m.noise.map(|n| n.peak)),
+    ("min", Color::Red, |m| m.rssi.map(|r| r.min)),
+    ("avg", Color::Yellow, |m| m.rssi.map(|r| r.avg)),
+    ("max", Color::Green, |m| m.rssi.map(|r| r.max)),
+];
+
+struct Strip {
+    name: &'static str,
+    value: fn(&Minute) -> u16,
+    scale: fn(u16) -> String,
 }
 
-/// A chart line joins neighboring points, so each minute without packets ends a run.
-fn signal_runs(shown: &[(u32, Minute)], pick: fn(&Rssi) -> i8) -> Vec<Vec<(f64, f64)>> {
-    let indexed: Vec<_> = shown.iter().enumerate().collect();
-    indexed
-        .split(|(_, (_, minute))| minute.rssi.is_none())
-        .filter(|run| !run.is_empty())
-        .map(|run| {
-            run.iter()
-                .filter_map(|(x, (_, minute))| {
-                    minute
-                        .rssi
-                        .as_ref()
-                        .map(|r| (*x as f64, f64::from(pick(r))))
-                })
-                .collect()
+fn count(n: u16) -> String {
+    n.to_string()
+}
+
+const STRIPS: [Strip; 4] = [
+    Strip {
+        name: "losses",
+        value: |m| u16::from(m.link_losses),
+        scale: count,
+    },
+    Strip {
+        name: "gaps",
+        value: |m| u16::from(m.gaps),
+        scale: count,
+    },
+    Strip {
+        name: "dropped",
+        value: |m| u16::from(m.dropped),
+        scale: count,
+    },
+    Strip {
+        name: "busy",
+        value: |m| m.noise.map_or(0, |n| n.busy),
+        scale: share,
+    },
+];
+
+const fn min_rows(rows: &[Constraint]) -> u16 {
+    let mut sum = 0;
+    let mut i = 0;
+    while i < rows.len() {
+        sum += match rows[i] {
+            Constraint::Min(n) | Constraint::Length(n) => n,
+            _ => panic!("a panel row needs a fixed minimum"),
+        };
+        i += 1;
+    }
+    sum
+}
+
+/// A chart line joins neighboring points, so each minute without a reading ends a run.
+fn dbm_runs(shown: &[(u32, Minute)], pick: MinuteDbm) -> Vec<Vec<(f64, f64)>> {
+    let points: Vec<Option<(f64, f64)>> = shown
+        .iter()
+        .enumerate()
+        .map(|(x, (_, minute))| {
+            pick(minute).map(|dbm| (x as f64, f64::from(dbm.clamp(DBM_FLOOR, DBM_CEILING))))
         })
+        .collect();
+    points
+        .split(Option::is_none)
+        .filter(|run| !run.is_empty())
+        .map(|run| run.iter().flatten().copied().collect())
         .collect()
+}
+
+/// The chart row a reading lands on, by the braille canvas's own scaling of four dots to a row.
+fn dbm_row(dbm: i8, rows: u16) -> usize {
+    let dots = f64::from(rows) * 4.0 - 1.0;
+    let span = f64::from(DBM_CEILING) - f64::from(DBM_FLOOR);
+    ((f64::from(DBM_CEILING) - f64::from(dbm)) * dots / span) as usize / 4
+}
+
+/// Rounds each bar up, so a nonzero value never draws blank beside a much larger one.
+fn bar_strip(values: &[u16]) -> (u16, String) {
+    use symbols::bar::*;
+    const BARS: [&str; 8] = [
+        ONE_EIGHTH,
+        ONE_QUARTER,
+        THREE_EIGHTHS,
+        HALF,
+        FIVE_EIGHTHS,
+        THREE_QUARTERS,
+        SEVEN_EIGHTHS,
+        FULL,
+    ];
+    let top = values.iter().copied().max().unwrap_or(0);
+    let strip = values
+        .iter()
+        .map(|&v| match v {
+            0 => " ",
+            _ => BARS[(u32::from(v) * 8).div_ceil(u32::from(top)) as usize - 1],
+        })
+        .collect();
+    (top, strip)
+}
+
+const MINUTE_TICK: char = '╵';
+
+fn time_axis(boot: DateTime<Local>, shown: &[(u32, Minute)]) -> String {
+    let at = |column: usize| {
+        (boot + TimeDelta::minutes(i64::from(shown[column].0)))
+            .format(CLOCK)
+            .to_string()
+    };
+    let Some(last) = shown.len().checked_sub(1) else {
+        return String::new();
+    };
+    let first = at(0);
+    let span = 1 + first.len();
+    let apart = |left: usize, right: usize| left + span + 2 <= right;
+    let last_start = shown
+        .len()
+        .checked_sub(span)
+        .filter(|start| apart(0, *start));
+    let middle = shown.len() / 2;
+    let show_middle = apart(0, middle) && last_start.is_none_or(|l| apart(middle, l));
+    let labels = [
+        Some((0, format!("{MINUTE_TICK}{first}"))),
+        show_middle.then(|| (middle, format!("{MINUTE_TICK}{}", at(middle)))),
+        last_start.map(|start| (start, format!("{}{MINUTE_TICK}", at(last)))),
+    ];
+    labels
+        .into_iter()
+        .flatten()
+        .fold(String::new(), |line, (start, label)| {
+            format!("{line:start$}{label}")
+        })
+}
+
+fn signal_legend() -> Line<'static> {
+    let key = |name: &'static str, color: Color| {
+        [
+            Span::raw("  "),
+            Span::styled("━ ", Style::default().fg(color)),
+            Span::raw(name),
+        ]
+    };
+    Line::from_iter(
+        [Span::raw("signal dBm")].into_iter().chain(
+            SIGNAL_LINES
+                .iter()
+                .rev()
+                .flat_map(|(name, color, _)| key(name, *color)),
+        ),
+    )
 }
 
 /// The dongle's history as last fetched, kept in step with its indexes.
@@ -174,22 +310,26 @@ struct App {
 
 pub fn run(serial: Option<String>) -> Result<()> {
     let mut terminal = ratatui::init();
-    let mut app = App {
-        serial,
-        device: None,
-        history: History::default(),
-        noise: None,
-        prompt: None,
-        message: String::new(),
-        scroll: 0,
-        event_rows: EVENT_ROWS,
-    };
+    let mut app = App::new(serial);
     let result = app.run(&mut terminal);
     ratatui::restore();
     result
 }
 
 impl App {
+    fn new(serial: Option<String>) -> Self {
+        App {
+            serial,
+            device: None,
+            history: History::default(),
+            noise: None,
+            prompt: None,
+            message: String::new(),
+            scroll: 0,
+            event_rows: EVENT_ROWS,
+        }
+    }
+
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut last_poll: Option<Instant> = None;
         loop {
@@ -294,8 +434,8 @@ impl App {
     fn draw(&mut self, f: &mut Frame) {
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(4),
-            Constraint::Min(9),
-            Constraint::Length(EVENT_ROWS as u16 + 2),
+            Constraint::Min(HISTORY_MIN_ROWS),
+            Constraint::Max(EVENT_ROWS as u16 + 2),
             Constraint::Length(1),
         ])
         .areas(f.area());
@@ -341,56 +481,80 @@ impl App {
     }
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
-        let [losses_row, gaps_row, dropped_row, noise_row, signal_row] =
-            Layout::vertical([Constraint::Ratio(1, 5); 5]).areas(area);
-        let width = area.width.saturating_sub(2) as usize;
+        let block = Block::bordered()
+            .title(signal_legend())
+            .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+        let [gutter, axis_line, plot] = Layout::horizontal([
+            Constraint::Length(GUTTER),
+            Constraint::Length(1),
+            Constraint::Fill(1),
+        ])
+        .areas(inner);
+        let rows = Layout::vertical(PANEL_ROWS);
+        let [dbm_labels, strip_labels, _] = rows.areas(gutter);
+        let [chart_axis, _, _] = rows.areas(axis_line);
+        let [chart, strips, axis] = rows.areas(plot);
+
+        let width = usize::from(plot.width);
         self.scroll = self
             .scroll
             .min(self.history.minutes.len().saturating_sub(width));
         let end = self.history.minutes.len().saturating_sub(self.scroll);
         let shown = &self.history.minutes[end.saturating_sub(width)..end];
-        let busy_title = format!("home channel busy, hundredths of % at {BUSY_DBM} dBm");
-        let series: [(&str, Rect, MinuteValue); 4] = [
-            ("link losses per minute", losses_row, |m| {
-                u64::from(m.link_losses)
-            }),
-            ("gaps per minute", gaps_row, |m| u64::from(m.gaps)),
-            ("dropped packets per minute", dropped_row, |m| {
-                u64::from(m.dropped)
-            }),
-            (&busy_title, noise_row, |m| {
-                m.noise.map_or(0, |n| u64::from(n.busy))
-            }),
-        ];
-        for (title, row, value) in series {
-            let data: Vec<u64> = shown.iter().map(|(_, m)| value(m)).collect();
-            f.render_widget(
-                Sparkline::default()
-                    .block(Block::bordered().title(title))
-                    .data(&data),
-                row,
-            );
-        }
-        let bands = [
-            ("min", Color::Red, signal_runs(shown, |r| r.min)),
-            ("avg", Color::Yellow, signal_runs(shown, |r| r.avg)),
-            ("max", Color::Green, signal_runs(shown, |r| r.max)),
-        ];
-        let datasets: Vec<Dataset> = bands
+
+        let runs: Vec<_> = SIGNAL_LINES
             .iter()
-            .flat_map(|(name, color, runs)| {
-                runs.iter()
-                    .enumerate()
-                    .map(move |(i, run)| dataset((i == 0).then_some(*name), *color, run))
+            .map(|(_, color, pick)| (*color, dbm_runs(shown, *pick)))
+            .collect();
+        let datasets: Vec<Dataset> = runs
+            .iter()
+            .flat_map(|(color, runs)| {
+                runs.iter().map(|run| {
+                    Dataset::default()
+                        .marker(symbols::Marker::Braille)
+                        .graph_type(GraphType::Line)
+                        .style(Style::default().fg(*color))
+                        .data(run)
+                })
             })
             .collect();
         f.render_widget(
             Chart::new(datasets)
-                .block(Block::bordered().title("signal dBm, min/avg/max"))
-                .x_axis(Axis::default().bounds([0.0, width.max(1) as f64]))
-                .y_axis(Axis::default().bounds([-100.0, -20.0])),
-            signal_row,
+                .x_axis(Axis::default().bounds([0.0, width.saturating_sub(1).max(1) as f64]))
+                .y_axis(Axis::default().bounds([f64::from(DBM_FLOOR), f64::from(DBM_CEILING)])),
+            chart,
         );
+        f.render_widget(Block::new().borders(Borders::LEFT), chart_axis);
+        let mut label_rows = vec![Line::default(); usize::from(dbm_labels.height)];
+        for dbm in DBM_LABELS {
+            if let Some(row) = label_rows.get_mut(dbm_row(dbm, dbm_labels.height)) {
+                *row = Line::from(dbm.to_string());
+            }
+        }
+        f.render_widget(Paragraph::new(label_rows).right_aligned(), dbm_labels);
+
+        let mut names = Vec::new();
+        let mut scales = Vec::new();
+        let mut bars = Vec::new();
+        for strip in &STRIPS {
+            let values: Vec<u16> = shown.iter().map(|(_, m)| (strip.value)(m)).collect();
+            let (top, bar) = bar_strip(&values);
+            names.push(Line::from(strip.name));
+            scales.push(match top {
+                0 => Line::default(),
+                _ => Line::from((strip.scale)(top)),
+            });
+            bars.push(Line::from(bar));
+        }
+        f.render_widget(Paragraph::new(names), strip_labels);
+        f.render_widget(Paragraph::new(scales).right_aligned(), strip_labels);
+        f.render_widget(Paragraph::new(bars), strips);
+
+        if let Some(boot) = self.history.boot {
+            f.render_widget(Paragraph::new(time_axis(boot, shown)), axis);
+        }
     }
 
     fn draw_noise(&self, f: &mut Frame, area: Rect, noise: &[NoiseChannel]) {
@@ -450,7 +614,7 @@ impl App {
                 .rev()
                 .map(|(_, e)| {
                     let at = boot + TimeDelta::milliseconds(e.time_ms as i64);
-                    ListItem::new(format!("{}  {}", at.format("%H:%M:%S"), describe_event(e)))
+                    ListItem::new(format!("{}  {}", at.format(CLOCK), describe_event(e)))
                 })
                 .collect(),
             None => Vec::new(),
@@ -463,8 +627,10 @@ impl App {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, parts};
-    use crate::protocol::EventKind;
     use crate::protocol::tests::fixture;
+    use crate::protocol::{EventKind, Noise, Rssi};
+    use chrono::TimeZone;
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn events(indexes: Range<u32>) -> Vec<(u32, Event)> {
         let event = Event {
@@ -527,8 +693,14 @@ mod tests {
     }
 
     #[test]
-    fn minutes_without_packets_split_the_signal_into_runs() {
-        let with = |avg: i8| Minute {
+    fn a_bar_strip_scales_to_its_largest_value_and_shows_every_nonzero_one() {
+        assert_eq!(bar_strip(&[0, 1, 12, 6, 0]), (12, " ▁█▄ ".to_string()));
+        assert_eq!(bar_strip(&[0, 0]), (0, "  ".to_string()));
+        assert_eq!(bar_strip(&[]), (0, String::new()));
+    }
+
+    fn quiet() -> Minute {
+        Minute {
             packets: 1,
             invalid: 0,
             dropped: 0,
@@ -536,26 +708,133 @@ mod tests {
             link_losses: 0,
             usb_retries: 0,
             gaps: 0,
-            rssi: Some(Rssi {
-                min: avg,
-                avg,
-                max: avg,
-            }),
+            rssi: None,
             noise: None,
+        }
+    }
+
+    fn with_signal(dbm: i8) -> Minute {
+        Minute {
+            rssi: Some(Rssi {
+                min: dbm,
+                avg: dbm,
+                max: dbm,
+            }),
+            ..quiet()
+        }
+    }
+
+    fn boot() -> DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 11, 12, 10, 0, 5).unwrap()
+    }
+
+    #[test]
+    fn the_time_axis_labels_the_first_middle_and_last_minute() {
+        let shown: Vec<_> = (0..40).map(|i| (i, quiet())).collect();
+        assert_eq!(
+            time_axis(boot(), &shown),
+            "╵10:00:05           ╵10:20:05  10:39:05╵"
+        );
+    }
+
+    #[test]
+    fn the_time_axis_leaves_out_labels_that_would_touch() {
+        let shown: Vec<_> = (0..20).map(|i| (i, quiet())).collect();
+        assert_eq!(time_axis(boot(), &shown), "╵10:00:05  10:19:05╵");
+        assert_eq!(time_axis(boot(), &shown[..3]), "╵10:00:05");
+        assert_eq!(time_axis(boot(), &[]), "");
+    }
+
+    fn panel_with(marked: Minute, height: u16) -> Vec<String> {
+        let mut app = App::new(None);
+        app.history.boot = Some(boot());
+        app.history.minutes = (0..10).map(|i| (i, quiet())).collect();
+        app.history.minutes[4].1 = marked;
+        let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
+        terminal.draw(|f| app.draw_history(f, f.area())).unwrap();
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn plotted(rows: &[String]) -> Vec<(usize, usize)> {
+        rows.iter()
+            .enumerate()
+            .flat_map(|(y, r)| {
+                r.chars()
+                    .enumerate()
+                    .filter(|(_, c)| ('\u{2801}'..='\u{28ff}').contains(c))
+                    .map(move |(x, _)| (x, y))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_minute_sits_in_one_column_across_the_chart_and_the_strips() {
+        let marked = Minute {
+            gaps: 3,
+            ..with_signal(-60)
         };
+        let rows = panel_with(marked, HISTORY_MIN_ROWS);
+        let gaps = rows
+            .iter()
+            .find(|r| r.starts_with("│gaps"))
+            .expect("a gaps strip");
+        let column = gaps.chars().position(|c| ('▁'..='█').contains(&c)).unwrap();
+        let plotted = plotted(&rows);
+        assert!(!plotted.is_empty());
+        assert!(plotted.iter().all(|(x, _)| *x == column), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_reading_sits_on_its_labeled_row_or_on_the_edge_past_the_chart() {
+        for (dbm, label) in [(-60, "-60"), (-15, "-20"), (-110, "-100")] {
+            for height in HISTORY_MIN_ROWS..HISTORY_MIN_ROWS + 6 {
+                let rows = panel_with(with_signal(dbm), height);
+                let labeled = rows.iter().position(|r| r.contains(label)).unwrap();
+                let plotted = plotted(&rows);
+                assert!(!plotted.is_empty(), "{rows:#?}");
+                assert!(plotted.iter().all(|(_, y)| *y == labeled), "{rows:#?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_full_busy_share_keeps_apart_from_its_name() {
+        let marked = Minute {
+            noise: Some(Noise {
+                peak: -40,
+                busy: 10_000,
+                strong: 10_000,
+            }),
+            ..quiet()
+        };
+        let rows = panel_with(marked, HISTORY_MIN_ROWS);
+        assert!(
+            rows.iter().any(|r| r.starts_with("│busy 100.00% ")),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn minutes_without_packets_split_the_signal_into_runs() {
         let without = Minute {
             packets: 0,
-            rssi: None,
-            ..with(0)
+            ..quiet()
         };
         let shown = [
-            (10, with(-60)),
-            (11, with(-61)),
+            (10, with_signal(-60)),
+            (11, with_signal(-61)),
             (12, without),
-            (13, with(-70)),
+            (13, with_signal(-70)),
         ];
         assert_eq!(
-            signal_runs(&shown, |r| r.avg),
+            dbm_runs(&shown, |m| m.rssi.map(|r| r.avg)),
             vec![vec![(0.0, -60.0), (1.0, -61.0)], vec![(3.0, -70.0)]]
         );
     }

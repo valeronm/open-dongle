@@ -9,7 +9,11 @@
 - Each minute of history records the home channel's noise, and each link loss or gap in the events
   the noise on the channel the link was on, read between keyboard packets: the loudest reading and
   the shares at or above -85 and -60 dBm.
-  The tool prints it and charts the share at or above -85 dBm in the live view.
+  The tool prints it, and the live view charts the loudest reading beside the signal and the share
+  at or above -85 dBm.
+- The live view labels its signal chart in dBm and wall-clock time, and draws link losses, gaps,
+  dropped packets and the noise share under it as bars that each carry their own scale, in one panel
+  that fits a 24-row terminal.
 - The diagnostic protocol is now 2, so the 0.1.0 tool reads only `flash` from new firmware.
 
 ## [0.1.0] - 2026-11-11
