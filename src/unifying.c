@@ -20,10 +20,21 @@ void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIF
 	out[4] = r->device_octet;
 }
 
+static bool attempting(const struct unifying_pairing *p)
+{
+	return p->state == UNIFYING_ANSWERED_1 || p->state == UNIFYING_ANSWERED_2;
+}
+
+static bool window_open(uint32_t now_ms)
+{
+	return now_ms < UNIFYING_PAIRING_WINDOW_MS;
+}
+
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint32_t now_ms)
 {
-	if (p->state == UNIFYING_IDLE && now_ms - s->last_ms >= UNIFYING_SWEEP_DWELL_MS) {
+	if (window_open(now_ms) && !attempting(p) &&
+	    now_ms - s->last_ms >= UNIFYING_SWEEP_DWELL_MS) {
 		s->index = (s->index + 1) % UNIFYING_PAIRING_CHANNELS;
 		s->last_ms = now_ms;
 	}
@@ -158,7 +169,8 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 	if (step == 1) {
 		bool repeat = p->state != UNIFYING_IDLE && frame[0] == p->id;
 
-		return repeat ? 0 : start(p, r, nonce, frame, now_ms, reply, refused);
+		return !window_open(now_ms) || repeat ? 0
+						       : start(p, r, nonce, frame, now_ms, reply, refused);
 	}
 	if (step == 0) {
 		return 0;
@@ -185,13 +197,24 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 
 bool unifying_pairing_expired(struct unifying_pairing *p, uint32_t now_ms)
 {
-	bool attempting = p->state == UNIFYING_ANSWERED_1 || p->state == UNIFYING_ANSWERED_2;
-
-	if (attempting && now_ms - p->last_ms > UNIFYING_PAIRING_TIMEOUT_MS) {
+	if (attempting(p) && now_ms - p->last_ms > UNIFYING_PAIRING_TIMEOUT_MS) {
 		p->state = UNIFYING_IDLE;
 		return true;
 	}
 	return false;
+}
+
+void unifying_device_of(const struct unifying_pairing *p, struct unifying_device *d)
+{
+	memcpy(d->wpid, p->device_wpid, sizeof(d->wpid));
+	memcpy(d->key, p->key, sizeof(d->key));
+}
+
+void unifying_pairing_restore(struct unifying_pairing *p, const struct unifying_device *d)
+{
+	*p = (struct unifying_pairing){.state = UNIFYING_PAIRED};
+	memcpy(p->device_wpid, d->wpid, sizeof(p->device_wpid));
+	memcpy(p->key, d->key, sizeof(p->key));
 }
 
 bool unifying_is_encrypted_keyboard(const uint8_t *frame, size_t len)

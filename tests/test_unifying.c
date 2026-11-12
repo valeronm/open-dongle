@@ -367,6 +367,73 @@ static void test_sweep_resumes_once_an_attempt_expires(void)
 	CHECK(unifying_sweep_channel(&s, &p, 1006 + UNIFYING_PAIRING_TIMEOUT_MS) != held);
 }
 
+static void test_request_1_after_the_window_is_ignored(void)
+{
+	struct unifying_pairing p = {0};
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+	bool refused;
+
+	request_1(f, 0xe1, 0x05);
+	CHECK_EQ(feed(&p, f, sizeof(f), UNIFYING_PAIRING_WINDOW_MS, reply, &refused), 0);
+	CHECK(!refused);
+	CHECK_EQ(p.state, UNIFYING_IDLE);
+}
+
+static void test_an_attempt_started_in_the_window_finishes_after_it(void)
+{
+	struct unifying_pairing p = {0};
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+	bool refused;
+	uint32_t t = UNIFYING_PAIRING_WINDOW_MS - 10;
+
+	request_1(f, 0xe1, 0x05);
+	CHECK_EQ(feed(&p, f, sizeof(f), t, reply, &refused), UNIFYING_FRAME_MAX);
+	request_2(f, 0xe1);
+	CHECK_EQ(feed(&p, f, sizeof(f), t + 20, reply, &refused), UNIFYING_FRAME_MAX);
+	request_3(f, 0x00);
+	CHECK_EQ(feed(&p, f, sizeof(f), t + 30, reply, &refused), 10);
+	CHECK_EQ(p.state, UNIFYING_PAIRED);
+}
+
+static void test_sweep_holds_once_the_window_closes(void)
+{
+	struct unifying_sweep s = {0};
+	struct unifying_pairing p = {0};
+	uint8_t held = unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS - 5);
+
+	CHECK_EQ(unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS + 100), held);
+	CHECK_EQ(unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS + 5000), held);
+}
+
+static void test_sweep_continues_in_the_window_after_a_pairing(void)
+{
+	struct unifying_sweep s = {0};
+	struct unifying_pairing p = {.state = UNIFYING_PAIRED};
+	uint8_t first = unifying_sweep_channel(&s, &p, 1000);
+
+	CHECK(unifying_sweep_channel(&s, &p, 1000 + UNIFYING_SWEEP_DWELL_MS) != first);
+}
+
+static void test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt(void)
+{
+	struct unifying_pairing p = {0}, q = {0};
+	struct unifying_device d;
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+	bool refused;
+
+	pair_through_request_2(&p);
+	request_3(f, 0x00);
+	feed(&p, f, sizeof(f), 20, reply, &refused);
+	unifying_device_of(&p, &d);
+	unifying_pairing_restore(&q, &d);
+	CHECK_EQ(q.state, UNIFYING_PAIRED);
+	CHECK_MEM(q.key, p.key, UNIFYING_KEY_LEN);
+	CHECK_MEM(q.device_wpid, p.device_wpid, 2);
+	request_1(f, 0xe7, 0x05);
+	CHECK_EQ(feed(&q, f, sizeof(f), 1000, reply, &refused), UNIFYING_FRAME_MAX);
+	CHECK_EQ(q.state, UNIFYING_ANSWERED_1);
+}
+
 int main(void)
 {
 	RUN(test_checksum_is_the_negated_sum);
@@ -389,5 +456,10 @@ int main(void)
 	RUN(test_idle_sweep_steps_through_the_pairing_channels);
 	RUN(test_sweep_holds_the_channel_from_the_first_request);
 	RUN(test_sweep_resumes_once_an_attempt_expires);
+	RUN(test_request_1_after_the_window_is_ignored);
+	RUN(test_an_attempt_started_in_the_window_finishes_after_it);
+	RUN(test_sweep_holds_once_the_window_closes);
+	RUN(test_sweep_continues_in_the_window_after_a_pairing);
+	RUN(test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt);
 	return TEST_EXIT();
 }

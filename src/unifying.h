@@ -13,6 +13,7 @@
 #define UNIFYING_ADDRESS_LEN 5
 #define UNIFYING_PAIRING_CHANNELS 11
 #define UNIFYING_SWEEP_DWELL_MS 20
+#define UNIFYING_PAIRING_WINDOW_MS 60000
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
 extern const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN];
@@ -47,6 +48,11 @@ struct unifying_pairing {
 	uint8_t key[UNIFYING_KEY_LEN];
 };
 
+struct unifying_device {
+	uint8_t wpid[2];
+	uint8_t key[UNIFYING_KEY_LEN];
+};
+
 struct unifying_sweep {
 	uint8_t index;
 	uint32_t last_ms;
@@ -71,7 +77,7 @@ void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIF
  * starts an attempt, so it must be one no earlier attempt used. A repeat of an answered request
  * gets 0, since ESB keeps its reply queued until the keyboard moves on; a Request 1 with a new id
  * restarts pairing from any state. *refused is set when a Request 1 lacks the Unifying-compatible
- * capability.
+ * capability. A Request 1 is ignored from UNIFYING_PAIRING_WINDOW_MS on; Requests 2 and 3 are not.
  */
 size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_receiver *r,
 			   const uint8_t nonce[UNIFYING_NONCE_LEN], const uint8_t *frame, size_t len,
@@ -81,12 +87,17 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 bool unifying_pairing_expired(struct unifying_pairing *p, uint32_t now_ms);
 
 /*
- * Returns the channel to listen on: while pairing is idle the receiver steps through the pairing
- * channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too, and from the first
- * request it holds the channel that request arrived on.
+ * Returns the channel to listen on: until UNIFYING_PAIRING_WINDOW_MS it steps through the pairing
+ * channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too; during an attempt and
+ * after the window it holds the current one.
  */
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint32_t now_ms);
+
+void unifying_device_of(const struct unifying_pairing *p, struct unifying_device *d);
+
+/* Discards whatever state p holds, an attempt in progress included. */
+void unifying_pairing_restore(struct unifying_pairing *p, const struct unifying_device *d);
 
 bool unifying_is_encrypted_keyboard(const uint8_t *frame, size_t len);
 
