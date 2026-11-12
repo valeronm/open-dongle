@@ -230,24 +230,15 @@ fn share(hundredths: u16) -> String {
     format!("{}.{:02}%", hundredths / 100, hundredths % 100)
 }
 
-fn noise_text(n: Noise) -> String {
-    format!(
-        "noise {} dBm, {} at {BUSY_DBM}, {} at {STRONG_DBM}",
-        n.peak,
-        share(n.busy),
-        share(n.strong)
-    )
-}
-
 pub fn noise(n: Option<Noise>) -> String {
-    n.map_or("noise -".into(), noise_text)
-}
-
-fn with_noise(line: String, n: Option<Noise>) -> String {
-    match n {
-        Some(n) => format!("{line}, {}", noise_text(n)),
-        None => line,
-    }
+    n.map_or("noise -".into(), |n| {
+        format!(
+            "noise {} dBm, {} at {BUSY_DBM}, {} at {STRONG_DBM}",
+            n.peak,
+            share(n.busy),
+            share(n.strong)
+        )
+    })
 }
 
 pub fn describe_event(e: &Event) -> String {
@@ -258,13 +249,11 @@ pub fn describe_event(e: &Event) -> String {
             "paired on channels {} {} {}, saving failed: {}",
             e.a, e.b, e.c, e.value as i32
         ),
-        EventKind::LinkLost => with_noise(
-            format!(
-                "link lost after {}, last signal {} dBm",
-                duration(e.value),
-                e.a as i8
-            ),
-            e.noise,
+        EventKind::LinkLost => format!(
+            "link lost after {}, last signal {} dBm, {}",
+            duration(e.value),
+            e.a as i8,
+            noise(e.noise)
         ),
         EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
         EventKind::Noise => "noise map".into(),
@@ -284,15 +273,13 @@ pub fn describe_event(e: &Event) -> String {
             e.b as i8
         ),
         EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
-        EventKind::LinkGap => with_noise(
-            format!(
-                "gap of {} on channel {}, signal {} dBm before, {} dBm after",
-                duration(e.value),
-                e.a,
-                e.b as i8,
-                e.c as i8
-            ),
-            e.noise,
+        EventKind::LinkGap => format!(
+            "gap of {} on channel {}, signal {} dBm before, {} dBm after, {}",
+            duration(e.value),
+            e.a,
+            e.b as i8,
+            e.c as i8,
+            noise(e.noise)
         ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
@@ -407,7 +394,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&gap),
-            "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after"
+            "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, noise -"
         );
         let noisy = Event {
             noise: Some(Noise {
@@ -438,7 +425,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&lost),
-            "link lost after 1 s, last signal -71 dBm"
+            "link lost after 1 s, last signal -71 dBm, noise -"
         );
         let noisy = Event {
             noise: Some(Noise {
