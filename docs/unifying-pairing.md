@@ -2,7 +2,8 @@
 
 Reference for the first open-dongle Unifying milestone: complete the pairing handshake with a
 Unifying keyboard (an MX Keys, original Unifying version) and derive the 16-byte AES link key.
-Decryption, USB output and channel hopping are out of scope here.
+USB output and channel hopping are out of scope here; §5 covers decrypting the keystrokes and
+the frames the receiver sends back.
 
 Open-dongle plays the **receiver** (the dongle). In Enhanced ShockBurst terms the keyboard is the
 transmitter (PTX) and the receiver is the PRX, so every receiver→keyboard frame is an ESB **ACK
@@ -13,8 +14,8 @@ Every fact below carries a source. Flags:
 
 - **[VERIFIED]** — read directly from source code, agreed by two or more independent sources, or
   cross-checked against a captured frame. **[VERIFIED on air]** marks what open-dongle's Unifying
-  build saw or had accepted while pairing an MX Keys (WPID `408A`) and receiving its encrypted
-  keystrokes; such a value is sufficient for that keyboard, not proven required by every device.
+  build saw or had accepted while pairing an MX Keys (WPID `408A`) and decrypting its keystrokes;
+  such a value is sufficient for that keyboard, not proven required by every device.
 - **[INFERRED]** — follows from the sources but is not stated outright; usually the receiver side of
   a behavior the sources only show from the keyboard side.
 - **[UNVERIFIED]** — one source only, or sources disagree, or the value is a guess a real
@@ -419,7 +420,7 @@ That 16-byte `key` is the AES-128 link key. [VERIFIED]
 
 ---
 
-## 5. After pairing: keep-alive and the first encrypted frame
+## 5. After pairing: keep-alive, keystrokes and what the receiver sends back
 
 ### Keep-alive
 
@@ -457,7 +458,7 @@ should expect a wake-up (not a fresh pairing) from an already-paired keyboard at
 octet in byte 0. A receiver whose address base is unchanged gets the keyboard back with no new
 pairing.
 
-### First encrypted keyboard frame
+### Encrypted keyboard frame
 
 [VERIFIED] — layout agreed by LOGITacker (`logitacker_unifying.c`,
 `extract_counter_from_encrypted_keyboard_frame`) and decrazyo
@@ -477,17 +478,78 @@ pairing.
 (type `0x13` with bits `0x40` and `0x80`), zero padding, and a counter that rises by one per frame:
 `00 d3 19 3f 57 a9 f9 e9 53 fd 5f 66 f4 59 00 … 91`.
 
-Recognizing that this frame arrived — correct length 22, `data[1] & 0x1f == 0x13`, valid checksum,
-and a plausible counter at bytes 10–13 — is enough for the milestone. [VERIFIED]
+A frame is recognized by length 22, `data[1] & 0x1f == 0x13`, a valid checksum and the counter at
+bytes 10–13. [VERIFIED]
 
-**For later (decryption, out of scope but documented so it isn't re-researched):** the keystroke is
-XORed with the first 8 bytes of AES-128-ECB(counter block) under the link key. The counter block is
-a fixed 16-byte template with the 4-byte counter at offset 7. [VERIFIED] decrazyo
-`unifying_aes_nonce_prefix = {0x04,0x14,0x1D,0x1F,0x27,0x28,0x0D}` (bytes 0–6) and
+### Decrypting a keystroke
+
+The 8 ciphertext bytes are XORed with the first 8 bytes of AES-128-ECB(link key, counter block).
+The counter block is a fixed 16-byte template with the 4-byte counter at offset 7. [VERIFIED]
+decrazyo `unifying_aes_nonce_prefix = {0x04,0x14,0x1D,0x1F,0x27,0x28,0x0D}` (bytes 0–6) and
 `unifying_aes_nonce_suffix = {0x0A,0x0D,0x13,0x26,0x0E}` (bytes 11–15), with the counter at 7–10
 (`unifying_const.c`); LOGITacker calls the same template `little_known_secret` and copies the counter
 to `[7..10]` (`logitacker_unifying_crypto.c`). The counter is big-endian for Unifying/G700 and
 little-endian for Lightspeed (LOGITacker work-mode switch).
+
+[VERIFIED on air] With the link key derived in §4, the MX Keys's frames decrypt to an 8-byte HID
+keyboard report:
+
+| Plaintext byte | Content |
+|---|---|
+| 0 | HID modifier bits |
+| 1–6 | HID key codes, `00` for an unused slot |
+| 7 | `0xc9`, always |
+
+| Key pressed | Plaintext |
+|---|---|
+| `a` | `00 04 00 00 00 00 00 c9` |
+| Shift+`a` | `02 04 00 00 00 00 00 c9` |
+| Left Ctrl | `01 00 00 00 00 00 00 c9` |
+| Right Arrow | `00 4f 00 00 00 00 00 c9` |
+| All keys up | `00 00 00 00 00 00 00 c9` |
+
+Byte 7 comes out as `0xc9` only under the correct key and counter, so a receiver can use it to
+reject forged or corrupted frames.
+
+**Counter.** [VERIFIED on air] It rises by one per frame and continues across a receiver reboot
+without re-pairing. After a new pairing it starts from an unrelated value.
+
+### Media keys
+
+[VERIFIED on air] Media keys arrive unencrypted, as a 10-byte frame on the device address:
+
+| Off | Size | Field |
+|---|---|---|
+| 0 | 1 | `0x00` |
+| 1 | 1 | `0xc3` (report type `0x03` with bits `0x40` and `0x80`) |
+| 2 | 1 | HID consumer usage |
+| 3 | 6 | zero |
+| 9 | 1 | checksum |
+
+Usages seen: volume up `e9`, volume down `ea`, play/pause `cd`. A release is the same frame with
+usage `00`. Whether byte 3 is the usage's high byte is [UNVERIFIED]: every key seen used a usage
+below `0x100`.
+
+### LED state from the receiver
+
+[VERIFIED on air] The receiver sends the host's LED state as a 10-byte ACK payload on the device
+address:
+
+| Off | Size | Field |
+|---|---|---|
+| 0 | 1 | ignored (`00` and the device octet both work) |
+| 1 | 1 | marker `0x0e` |
+| 2 | 1 | LED bits, as in the HID LED output report; `0x02` = Caps Lock, which lights the key's LED |
+| 3 | 6 | zero |
+| 9 | 1 | checksum |
+
+The same frame with marker `0x4e` is ignored. The keyboard acknowledges each accepted LED frame with
+a 22-byte `00 51 07 0e 00 <leds> …` on the device address.
+
+### Keys that send no frame
+
+[VERIFIED on air] F1 (brightness down by default on the MX Keys) sent no frame of any type to this
+receiver. [UNVERIFIED] Such keys probably need to be enabled by HID++ from the receiver.
 
 ---
 
@@ -559,10 +621,10 @@ little-endian for Lightspeed (LOGITacker work-mode switch).
   C/Go sources and validated against a captured Phase-1 frame.
 - Key derivation: confirmed byte-for-byte by three independent implementations; this is the most
   solid part of the document.
-- The encrypted-keyboard frame layout and counter position.
+- The encrypted-keyboard frame layout, counter position and decryption.
 - Everything marked [VERIFIED on air]: the ESB address byte order, the response bytes the MX Keys
   accepted, Request 3's `0x00` id, the connect frames on the receiver's own address, keep-alive
-  units, and encrypted frames arriving after pairing.
+  units, the decrypted keystroke layout, media-key frames and the LED frame.
 
 **Inferred (the receiver side of keyboard-side evidence):**
 
@@ -582,3 +644,7 @@ little-endian for Lightspeed (LOGITacker work-mode switch).
    naming disagreement between LOGITacker and decrazyo; neither affects the key.
 5. **The connect frames' fields** on the receiver's own address (`07 51 07 04 …`, `07 4f 07 …`) and
    the first device-address frame (`00 51 07 07 00 32 14 …`) beyond their observed bytes.
+6. **Keys that send no frame.** F1 and similar special keys sent nothing to this receiver; whether
+   HID++ from the receiver enables them is untested.
+7. **The media usage's high byte.** Whether byte 3 of the media frame carries it is untested,
+   since every key seen used a usage below `0x100`.
