@@ -92,8 +92,8 @@ bool unifying_pairing_expired(struct unifying_pairing *p, uint32_t now_ms);
 
 /*
  * Returns the channel to listen on: until UNIFYING_PAIRING_WINDOW_MS it steps through the pairing
- * channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too; during an attempt and
- * after the window it holds the current one.
+ * channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too; during an attempt, once
+ * paired and after the window it holds the current one.
  */
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint32_t now_ms);

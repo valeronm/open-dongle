@@ -5,6 +5,7 @@
 
 #define CHANNELS_KEY "dongle/channels"
 #define FORCED_KEY "dongle/forced"
+#define UNIFYING_KEY "dongle/unifying"
 
 int store_init(void)
 {
@@ -39,4 +40,14 @@ int store_save_forced(const uint8_t *channels)
 {
 	return channels == NULL ? settings_delete(FORCED_KEY)
 				: settings_save_one(FORCED_KEY, channels, 3);
+}
+
+bool store_load_unifying(void *out, size_t len)
+{
+	return settings_load_one(UNIFYING_KEY, out, len) == (ssize_t)len;
+}
+
+int store_save_unifying(const void *in, size_t len)
+{
+	return settings_save_one(UNIFYING_KEY, in, len);
 }

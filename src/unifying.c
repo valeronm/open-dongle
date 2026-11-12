@@ -41,7 +41,7 @@ static bool window_open(uint32_t now_ms)
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint32_t now_ms)
 {
-	if (window_open(now_ms) && !attempting(p) &&
+	if (window_open(now_ms) && p->state == UNIFYING_IDLE &&
 	    now_ms - s->last_ms >= UNIFYING_SWEEP_DWELL_MS) {
 		s->index = (s->index + 1) % UNIFYING_PAIRING_CHANNELS;
 		s->last_ms = now_ms;

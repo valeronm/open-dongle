@@ -405,13 +405,14 @@ static void test_sweep_holds_once_the_window_closes(void)
 	CHECK_EQ(unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS + 5000), held);
 }
 
-static void test_sweep_continues_in_the_window_after_a_pairing(void)
+static void test_sweep_holds_inside_the_window_once_paired(void)
 {
 	struct unifying_sweep s = {0};
 	struct unifying_pairing p = {.state = UNIFYING_PAIRED};
 	uint8_t first = unifying_sweep_channel(&s, &p, 1000);
 
-	CHECK(unifying_sweep_channel(&s, &p, 1000 + UNIFYING_SWEEP_DWELL_MS) != first);
+	CHECK_EQ(unifying_sweep_channel(&s, &p, 1000 + UNIFYING_SWEEP_DWELL_MS), first);
+	CHECK_EQ(unifying_sweep_channel(&s, &p, 1000 + 5 * UNIFYING_SWEEP_DWELL_MS), first);
 }
 
 static void test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt(void)
@@ -756,7 +757,7 @@ int main(void)
 	RUN(test_request_1_after_the_window_is_ignored);
 	RUN(test_an_attempt_started_in_the_window_finishes_after_it);
 	RUN(test_sweep_holds_once_the_window_closes);
-	RUN(test_sweep_continues_in_the_window_after_a_pairing);
+	RUN(test_sweep_holds_inside_the_window_once_paired);
 	RUN(test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt);
 	RUN(test_keystroke_passes_the_key_and_the_counter_block_to_aes);
 	RUN(test_keystroke_report_is_the_decrypted_modifier_and_keys);

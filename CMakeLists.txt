@@ -15,7 +15,8 @@ set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
 
 target_sources(app PRIVATE src/radio.c src/noise.c src/usb.c src/indicator.c)
 if(CONFIG_UNIFYING_POC)
-  target_sources(app PRIVATE src/unifying_main.c src/unifying.c)
+  target_sources(app PRIVATE src/unifying_main.c src/unifying.c src/reports.c src/store.c
+    src/chanpick.c)
 else()
   target_sources(app PRIVATE
     src/main.c src/nuphy.c src/reports.c src/chanpick.c src/link.c src/store.c src/diag.c
