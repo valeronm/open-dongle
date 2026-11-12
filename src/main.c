@@ -158,9 +158,12 @@ static void release_keys(void)
 
 static void apply(const struct link_out *out)
 {
-	/* radio_set_channel flushes queued replies. */
-	if (out->set_channel && radio_set_channel(out->channel) == 0) {
-		counters.channel_changes++;
+	/* radio_set_channel flushes queued replies and drops the noise readings not yet taken. */
+	if (out->set_channel) {
+		take_noise();
+		if (radio_set_channel(out->channel) == 0) {
+			counters.channel_changes++;
+		}
 	}
 	if (out->reply) {
 		radio_reply(out->reply_pipe, out->reply_buf, out->reply_len);
@@ -177,7 +180,6 @@ static void apply(const struct link_out *out)
 
 		counters.link_losses++;
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		take_noise();
 		log_event(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, 0, 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
