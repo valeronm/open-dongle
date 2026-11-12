@@ -108,10 +108,10 @@ static void noise_tick(struct k_timer *timer)
 
 K_TIMER_DEFINE(noise_timer, noise_tick, NULL);
 
-int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
+static int start(enum esb_bitrate bitrate, enum esb_crc crc, const uint8_t base0[4],
+		 const uint8_t base1[4], const uint8_t *prefixes, uint8_t pipes, uint8_t channel,
+		 radio_rx_cb cb)
 {
-	static const uint8_t base0[4] = {0x56, 0x56, 0x56, 0x56};
-	static const uint8_t prefixes[8] = {0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58};
 	struct esb_config config = ESB_DEFAULT_CONFIG;
 	int err;
 
@@ -119,8 +119,8 @@ int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
 	config.protocol = ESB_PROTOCOL_ESB_DPL;
 	config.mode = ESB_MODE_PRX;
 	config.event_handler = on_esb_event;
-	config.bitrate = ESB_BITRATE_1MBPS;
-	config.crc = ESB_CRC_8BIT;
+	config.bitrate = bitrate;
+	config.crc = crc;
 	config.tx_output_power = 8;
 	config.payload_length = RADIO_MAX_PAYLOAD;
 	config.selective_auto_ack = false;
@@ -129,20 +129,45 @@ int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
 	if (!err) {
 		err = esb_set_base_address_0(base0);
 	}
-	/* The keyboard addresses pipe 1 with the dongle ID it was given at pairing. */
 	if (!err) {
-		err = esb_set_base_address_1(dongle_id);
+		err = esb_set_base_address_1(base1);
 	}
 	if (!err) {
-		err = esb_set_prefixes(prefixes, ARRAY_SIZE(prefixes));
+		err = esb_set_prefixes(prefixes, pipes);
 	}
 	if (!err) {
 		err = radio_set_channel(channel);
 	}
+	return err;
+}
+
+int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
+{
+	static const uint8_t base0[4] = {0x56, 0x56, 0x56, 0x56};
+	static const uint8_t prefixes[8] = {0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58};
+
+	int err;
+
+	/* The keyboard addresses pipe 1 with the dongle ID it was given at pairing. */
+	err = start(ESB_BITRATE_1MBPS, ESB_CRC_8BIT, base0, dongle_id, prefixes, ARRAY_SIZE(prefixes),
+		    channel, cb);
 	if (!err) {
 		k_timer_start(&noise_timer, K_USEC(NOISE_TICK_US), K_USEC(NOISE_TICK_US));
 	}
 	return err;
+}
+
+int radio_start_unifying(const uint8_t pairing[5], const uint8_t device[5], uint8_t channel,
+			 radio_rx_cb cb)
+{
+	/* ESB takes the base in reverse of the printed address order, and the last octet as the
+	 * prefix. */
+	const uint8_t prefixes[3] = {pairing[4], device[4], 0x00};
+	const uint8_t base0[4] = {pairing[3], pairing[2], pairing[1], pairing[0]};
+	const uint8_t base1[4] = {device[3], device[2], device[1], device[0]};
+
+	return start(ESB_BITRATE_2MBPS, ESB_CRC_16BIT, base0, base1, prefixes,
+		     ARRAY_SIZE(prefixes), channel, cb);
 }
 
 int radio_set_channel(uint8_t channel)

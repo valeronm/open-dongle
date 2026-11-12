@@ -12,6 +12,12 @@ typedef void (*radio_rx_cb)(const uint8_t *data, size_t len, uint8_t pipe, int8_
 
 /* cb runs in the ESB interrupt, once for every payload received. */
 int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb);
+
+/* Listens for Logitech Unifying on pipe 0 at pairing, pipe 1 at device, and pipe 2 at the
+ * receiver's own address, which is device's base with octet 0x00. Addresses are written in the
+ * order the Unifying sources print them. */
+int radio_start_unifying(const uint8_t pairing[5], const uint8_t device[5], uint8_t channel,
+			 radio_rx_cb cb);
 int radio_set_channel(uint8_t channel);
 
 /* Moves the kept readings into t and returns their channel. Readings start once radio_start
