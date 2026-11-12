@@ -72,7 +72,7 @@ pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> R
             .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
         println!(
             "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  gaps {:3}  usb-retries {:3}  signal {signal}  {}",
-            at.format("%Y-%m-%d %H:%M"),
+            at.format("%Y-%m-%d %H:%M:%S"),
             m.packets,
             m.invalid,
             m.dropped,
