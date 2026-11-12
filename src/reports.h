@@ -3,9 +3,9 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "nuphy.h"
 
 #define REPORTS_QUEUE_LEN 64
+#define REPORT_KEYBOARD_LEN 8
 
 enum report_kind {
 	REPORT_KEYBOARD,
@@ -17,7 +17,7 @@ enum report_kind {
 struct report {
 	enum report_kind kind;
 	union {
-		uint8_t keyboard[NUPHY_KEYBOARD_LEN];
+		uint8_t keyboard[REPORT_KEYBOARD_LEN];
 		uint16_t usage;
 	};
 };
@@ -43,8 +43,8 @@ struct reports {
 
 void reports_init(struct reports *r);
 
-/* Returns true when the message changed a report's state. */
-bool reports_on_message(struct reports *r, const struct nuphy_msg *m);
+/* Returns true when next changed its kind's state. */
+bool reports_update(struct reports *r, const struct report *next);
 void reports_release_all(struct reports *r);
 
 /*

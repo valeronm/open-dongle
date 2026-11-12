@@ -13,7 +13,7 @@ function(suite name)
 endfunction()
 
 suite(nuphy ../src/nuphy.c)
-suite(reports ../src/reports.c ../src/nuphy.c)
+suite(reports ../src/reports.c)
 suite(chanpick ../src/chanpick.c)
 suite(noise ../src/noise.c)
 suite(link ../src/link.c ../src/nuphy.c)

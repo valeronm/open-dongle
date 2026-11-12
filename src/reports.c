@@ -36,7 +36,7 @@ static bool same_state(const struct report *a, const struct report *b)
 	return a->usage == b->usage;
 }
 
-static bool update(struct reports *r, const struct report *next)
+bool reports_update(struct reports *r, const struct report *next)
 {
 	struct report *current = &r->current[next->kind];
 
@@ -50,33 +50,12 @@ static bool update(struct reports *r, const struct report *next)
 	return true;
 }
 
-bool reports_on_message(struct reports *r, const struct nuphy_msg *m)
-{
-	struct report next;
-
-	switch (m->kind) {
-	case NUPHY_KEYBOARD:
-		next.kind = REPORT_KEYBOARD;
-		memcpy(next.keyboard, m->keyboard, sizeof(next.keyboard));
-		break;
-	case NUPHY_CONSUMER:
-		next = (struct report){.kind = REPORT_CONSUMER, .usage = m->usage};
-		break;
-	case NUPHY_SYSTEM:
-		next = (struct report){.kind = REPORT_SYSTEM, .usage = m->usage};
-		break;
-	default:
-		return false;
-	}
-	return update(r, &next);
-}
-
 void reports_release_all(struct reports *r)
 {
 	for (int kind = 0; kind < REPORT_KINDS; kind++) {
 		struct report released = {.kind = kind};
 
-		update(r, &released);
+		reports_update(r, &released);
 	}
 }
 

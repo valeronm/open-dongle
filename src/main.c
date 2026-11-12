@@ -225,7 +225,8 @@ static void handle(const struct rx_item *item)
 	struct nuphy_msg m = nuphy_parse(item->data, item->len);
 	struct link_out out = {0};
 	int8_t rssi_before = keyboard_rssi;
-	bool changed;
+	struct report next;
+	bool changed = false;
 
 	if (m.kind == NUPHY_INVALID) {
 		counters.invalid++;
@@ -254,9 +255,11 @@ static void handle(const struct rx_item *item)
 	if (item->pipe != 1) {
 		return;
 	}
-	lock_reports();
-	changed = reports_on_message(&reports, &m);
-	unlock_reports(changed);
+	if (nuphy_report(&m, &next)) {
+		lock_reports();
+		changed = reports_update(&reports, &next);
+		unlock_reports(changed);
+	}
 	if (usb_suspended() && (changed || m.kind == NUPHY_HELLO)) {
 		usb_wakeup();
 	}

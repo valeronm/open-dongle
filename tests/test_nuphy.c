@@ -144,12 +144,40 @@ static void test_sequence_skips_zero(void)
 	CHECK_EQ(nuphy_next_seq(0xff), 0x01);
 }
 
+static void test_report_messages_convert_to_reports(void)
+{
+	struct nuphy_msg key = nuphy_parse(keyboard_f, sizeof(keyboard_f));
+	struct nuphy_msg consumer = nuphy_parse(consumer_volume_up, sizeof(consumer_volume_up));
+	struct nuphy_msg sys = nuphy_parse(system_sleep, sizeof(system_sleep));
+	struct report out;
+
+	CHECK(nuphy_report(&key, &out));
+	CHECK_EQ(out.kind, REPORT_KEYBOARD);
+	CHECK_MEM(out.keyboard, key.keyboard, REPORT_KEYBOARD_LEN);
+	CHECK(nuphy_report(&consumer, &out));
+	CHECK_EQ(out.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.usage, 0x00e9);
+	CHECK(nuphy_report(&sys, &out));
+	CHECK_EQ(out.kind, REPORT_SYSTEM);
+	CHECK_EQ(out.usage, 0x0082);
+}
+
+static void test_other_messages_carry_no_report(void)
+{
+	struct nuphy_msg m = nuphy_parse(keepalive, sizeof(keepalive));
+	struct report out;
+
+	CHECK(!nuphy_report(&m, &out));
+}
+
 int main(void)
 {
 	RUN(test_pair_request_carries_keyboard_and_previous_dongle_ids);
 	RUN(test_pair_confirm_carries_both_ids);
 	RUN(test_keyboard_report_is_the_8_byte_boot_report);
 	RUN(test_media_and_system_reports_carry_a_usage);
+	RUN(test_report_messages_convert_to_reports);
+	RUN(test_other_messages_carry_no_report);
 	RUN(test_short_frame_is_a_keepalive);
 	RUN(test_hello_and_other_valid_types);
 	RUN(test_bad_checksum_or_length_is_invalid);

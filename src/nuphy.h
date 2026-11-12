@@ -1,8 +1,10 @@
 #ifndef NUPHY_H
 #define NUPHY_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "reports.h"
 
 #define NUPHY_ID_LEN 4
 #define NUPHY_KEYBOARD_LEN 8
@@ -41,6 +43,9 @@ struct nuphy_msg {
  * union member matching the kind is set.
  */
 struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len);
+
+/* Returns false for a message that carries no report. */
+bool nuphy_report(const struct nuphy_msg *m, struct report *out);
 
 uint8_t nuphy_next_seq(uint8_t seq);
 

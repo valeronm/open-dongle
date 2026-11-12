@@ -72,6 +72,27 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 	return m;
 }
 
+_Static_assert(NUPHY_KEYBOARD_LEN == REPORT_KEYBOARD_LEN,
+	       "a NuPhy keyboard frame is a boot report");
+
+bool nuphy_report(const struct nuphy_msg *m, struct report *out)
+{
+	switch (m->kind) {
+	case NUPHY_KEYBOARD:
+		out->kind = REPORT_KEYBOARD;
+		memcpy(out->keyboard, m->keyboard, sizeof(out->keyboard));
+		return true;
+	case NUPHY_CONSUMER:
+		*out = (struct report){.kind = REPORT_CONSUMER, .usage = m->usage};
+		return true;
+	case NUPHY_SYSTEM:
+		*out = (struct report){.kind = REPORT_SYSTEM, .usage = m->usage};
+		return true;
+	default:
+		return false;
+	}
+}
+
 /* The keyboard drops an ACK payload whose sequence byte is 0. */
 uint8_t nuphy_next_seq(uint8_t seq)
 {
