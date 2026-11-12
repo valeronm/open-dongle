@@ -121,7 +121,7 @@ int radio_start(const uint8_t dongle_id[4], uint8_t channel, radio_rx_cb cb)
 	config.event_handler = on_esb_event;
 	config.bitrate = ESB_BITRATE_1MBPS;
 	config.crc = ESB_CRC_8BIT;
-	config.tx_output_power = 4;
+	config.tx_output_power = 8;
 	config.payload_length = RADIO_MAX_PAYLOAD;
 	config.selective_auto_ack = false;
 
