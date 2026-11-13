@@ -19,9 +19,10 @@ use ratatui::{
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
-    link_state_name, noise_level, noise_ruler, paired, share, uptime, usb_state, wall_clock,
+    link_state_name, noise_level, noise_ruler, paired, share, unifying_state_name, uptime,
+    usb_state, wall_clock, wpid,
 };
-use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Status};
+use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
@@ -215,19 +216,28 @@ pub(crate) struct History {
 }
 
 impl History {
+    fn forget_history(&mut self) {
+        self.minutes.clear();
+        self.events.clear();
+        self.events_top = None;
+    }
+
     pub(crate) fn refresh<T: Transport>(&mut self, dev: &mut Device<T>, s: Status) -> Result<()> {
         if self
             .status
             .as_ref()
             .is_some_and(|old| s.uptime_ms < old.uptime_ms)
         {
-            self.minutes.clear();
-            self.events.clear();
-            self.events_top = None;
+            self.forget_history();
             self.boot = None;
         }
         self.boot
             .get_or_insert_with(|| wall_clock(Local::now(), s.uptime_ms, 0));
+        if s.protocol == Protocol::Unifying {
+            self.forget_history();
+            self.status = Some(s);
+            return Ok(());
+        }
         self.minutes
             .retain(|(i, _)| *i >= s.minute_oldest && *i < s.minute_next);
         self.events
@@ -303,6 +313,19 @@ impl Prompt {
     }
 }
 
+/// Noise and clear are refused by the dongle outside NuPhy mode.
+fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Prompt)] {
+    const NOISE: (char, &str, Prompt) = ('n', "noise", Prompt::Noise);
+    const REBOOT: (char, &str, Prompt) = ('r', "reboot", Prompt::Action(Action::Reboot));
+    const BOOTLOADER: (char, &str, Prompt) =
+        ('b', "bootloader", Prompt::Action(Action::Bootloader));
+    const CLEAR: (char, &str, Prompt) = ('c', "clear", Prompt::Action(Action::Clear));
+    match protocol {
+        Protocol::Nuphy => &[NOISE, REBOOT, BOOTLOADER, CLEAR],
+        Protocol::Unifying => &[REBOOT, BOOTLOADER],
+    }
+}
+
 /// Holds every cause, since the outermost context alone often omits why it failed.
 fn error_text(e: &anyhow::Error) -> String {
     format!("{e:#}")
@@ -362,10 +385,7 @@ impl App {
             }
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char('n') => self.prompt = Some(Prompt::Noise),
-                KeyCode::Char('r') => self.prompt = Some(Prompt::Action(Action::Reboot)),
-                KeyCode::Char('b') => self.prompt = Some(Prompt::Action(Action::Bootloader)),
-                KeyCode::Char('c') => self.prompt = Some(Prompt::Action(Action::Clear)),
+                KeyCode::Char(c) => self.prompt = self.key_prompt(c),
                 KeyCode::Esc => self.noise = None,
                 KeyCode::Left => self.scroll += 10,
                 KeyCode::Right => self.scroll = self.scroll.saturating_sub(10),
@@ -412,6 +432,20 @@ impl<T: Transport> App<T> {
             scroll: 0,
             event_rows: EVENT_ROWS,
         }
+    }
+
+    fn protocol(&self) -> Protocol {
+        self.history
+            .status
+            .as_ref()
+            .map_or(Protocol::Nuphy, |s| s.protocol)
+    }
+
+    fn key_prompt(&self, key: char) -> Option<Prompt> {
+        action_keys(self.protocol())
+            .iter()
+            .find(|(k, _, _)| *k == key)
+            .map(|(_, _, prompt)| *prompt)
     }
 
     fn scroll_events(&mut self, step: EventsMove) {
@@ -470,6 +504,10 @@ impl<T: Transport> App<T> {
         );
         match &self.noise {
             Some(noise) => self.draw_noise(f, middle, noise),
+            None if self.protocol() == Protocol::Unifying => f.render_widget(
+                Paragraph::new("history is kept only in NuPhy mode").block(Block::bordered()),
+                middle,
+            ),
             None => self.draw_history(f, middle),
         }
         self.draw_events(f, bottom);
@@ -477,7 +515,14 @@ impl<T: Transport> App<T> {
             Some(p) => p.question(),
             None if !self.message.is_empty() => self.message.clone(),
             None => self.refresh_error.clone().unwrap_or_else(|| {
-                "n noise  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit".into()
+                let actions: Vec<_> = action_keys(self.protocol())
+                    .iter()
+                    .map(|(key, label, _)| format!("{key} {label}"))
+                    .collect();
+                format!(
+                    "{}  ←/→ history  ↑/↓ events  esc back  q quit",
+                    actions.join("  ")
+                )
             }),
         };
         f.render_widget(Paragraph::new(help), footer);
@@ -487,6 +532,24 @@ impl<T: Transport> App<T> {
         let Some(s) = &self.history.status else {
             return vec![Line::from("disconnected")];
         };
+        if s.protocol == Protocol::Unifying {
+            return vec![
+                Line::from(format!(
+                    "{} on {}, keyboard {}   signal {} dBm, {}",
+                    unifying_state_name(s.link_state),
+                    s.channel,
+                    wpid(s.keyboard_id),
+                    s.last_rssi,
+                    last_packet(s.last_rx_age_ms)
+                )),
+                Line::from(format!(
+                    "usb {}   up {}   {}",
+                    usb_state(s.usb_live, s.usb_suspended),
+                    uptime(s.uptime_ms),
+                    s.protocol.name()
+                )),
+            ];
+        }
         vec![
             Line::from(format!(
                 "{} on {} ({})   signal {} dBm, {}",
@@ -662,7 +725,7 @@ mod tests {
     use crate::device::tests::{Fake, error_part, parts};
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::fixture;
-    use crate::protocol::{ErrorCode, EventKind, Noise, Rssi};
+    use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -822,6 +885,83 @@ mod tests {
         );
         assert!(app.device.is_some());
         assert_eq!(app.history.minutes.len(), 1);
+    }
+
+    fn unifying_payload() -> Vec<u8> {
+        let mut payload = fixture("status.hex");
+        *payload.last_mut().unwrap() = Protocol::Unifying as u8;
+        payload
+    }
+
+    fn unifying_status() -> Status {
+        let mut s = crate::protocol::read_status(&unifying_payload())
+            .unwrap()
+            .unwrap();
+        s.link_state = 2;
+        s
+    }
+
+    #[test]
+    fn a_unifying_dongle_fetches_no_history() {
+        let payload = unifying_payload();
+        let dev = Device::new(
+            Fake::new(move |req| {
+                assert_eq!(req[0], Command::Status as u8, "only status is asked");
+                parts(req[0], req[1], &payload)
+            }),
+            0,
+        );
+        let mut h = History {
+            minutes: vec![(0, quiet())],
+            ..History::default()
+        };
+        catch_up(&mut h, dev).unwrap();
+        assert!(h.minutes.is_empty() && h.events.is_empty());
+        assert!(h.status.is_some());
+    }
+
+    #[test]
+    fn a_unifying_dongle_shows_its_state_and_no_history() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.history.boot = Some(boot());
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let rows = screen(&terminal);
+        let text = rows.join("\n");
+        assert!(
+            text.contains("connected on 26, keyboard 7015   signal -71 dBm, last packet 12 ms ago"),
+            "{text}"
+        );
+        assert!(text.contains("Unifying"), "{text}");
+        assert!(
+            text.contains("history is kept only in NuPhy mode"),
+            "{text}"
+        );
+        assert!(!text.contains("noise peak"), "{text}");
+        let footer = rows[23].trim_end();
+        assert!(
+            footer.contains("r reboot") && footer.contains("q quit"),
+            "{footer}"
+        );
+        assert!(
+            !footer.contains("n noise") && !footer.contains("c clear"),
+            "{footer}"
+        );
+    }
+
+    #[test]
+    fn the_noise_and_clear_keys_are_offered_only_in_nuphy_mode() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        assert!(app.key_prompt('n').is_none());
+        assert!(app.key_prompt('c').is_none());
+        app.history.status.as_mut().unwrap().protocol = Protocol::Nuphy;
+        assert!(matches!(app.key_prompt('n'), Some(Prompt::Noise)));
+        assert!(matches!(
+            app.key_prompt('c'),
+            Some(Prompt::Action(Action::Clear))
+        ));
     }
 
     struct Unplugged;
