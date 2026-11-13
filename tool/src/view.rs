@@ -18,9 +18,9 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, NOISE_QUESTION, PAIRING_OPEN, UNIFYING_PAIRING, action_question, channel_role,
-    describe_event, last_packet, link_state_name, noise_level, noise_ruler, paired, share,
-    switch_question, unifying_state_name, uptime, usb_state, wall_clock, wpid,
+    ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
+    link_state_name, noise_level, noise_ruler, paired, pairing_open, share, switch_question,
+    unifying_state_name, uptime, usb_state, wall_clock, wpid,
 };
 use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status};
 
@@ -316,15 +316,9 @@ enum Key {
     Pair,
 }
 
-fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Key)] {
+fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 6] {
     const NOISE: (char, &str, Key) = ('n', "noise", Key::Ask(Prompt::Noise));
     const PAIR: (char, &str, Key) = ('a', "pair", Key::Pair);
-    const TO_NUPHY: (char, &str, Key) = ('p', "nuphy", Key::Ask(Prompt::Switch(Protocol::Nuphy)));
-    const TO_UNIFYING: (char, &str, Key) = (
-        'p',
-        "unifying",
-        Key::Ask(Prompt::Switch(Protocol::Unifying)),
-    );
     const REBOOT: (char, &str, Key) = ('r', "reboot", Key::Ask(Prompt::Action(Action::Reboot)));
     const BOOTLOADER: (char, &str, Key) = (
         'b',
@@ -332,10 +326,12 @@ fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Key)] {
         Key::Ask(Prompt::Action(Action::Bootloader)),
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
-    match protocol {
-        Protocol::Nuphy => &[NOISE, TO_UNIFYING, REBOOT, BOOTLOADER, CLEAR],
-        Protocol::Unifying => &[NOISE, PAIR, TO_NUPHY, REBOOT, BOOTLOADER, CLEAR],
-    }
+    let (label, other) = match protocol {
+        Protocol::Nuphy => ("unifying", Protocol::Unifying),
+        Protocol::Unifying => ("nuphy", Protocol::Nuphy),
+    };
+    let switch = ('p', label, Key::Ask(Prompt::Switch(other)));
+    [NOISE, PAIR, switch, REBOOT, BOOTLOADER, CLEAR]
 }
 
 /// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
@@ -477,9 +473,9 @@ impl<T: Transport> App<T> {
 
     fn key(&self, c: char) -> Option<Key> {
         action_keys(self.protocol())
-            .iter()
+            .into_iter()
             .find(|(k, _, _)| *k == c)
-            .map(|(_, _, key)| *key)
+            .map(|(_, _, key)| key)
     }
 
     fn press(&mut self, c: char) {
@@ -496,7 +492,7 @@ impl<T: Transport> App<T> {
             return;
         };
         self.message = match dev.pair() {
-            Ok(()) => PAIRING_OPEN.into(),
+            Ok(()) => pairing_open(self.protocol()).into(),
             Err(e) => format!("failed: {}", error_text(&e)),
         };
     }
@@ -526,11 +522,8 @@ impl<T: Transport> App<T> {
 
     /// The dongle closes its pairing window on its own, so the message outlives the window.
     fn drop_pairing_message_once_closed(&mut self) {
-        let pairing =
-            self.history.status.as_ref().is_some_and(|s| {
-                s.protocol == Protocol::Unifying && s.link_state == UNIFYING_PAIRING
-            });
-        if !pairing && self.message == PAIRING_OPEN {
+        let pairing = self.history.status.as_ref().is_some_and(|s| s.pairing_open);
+        if !pairing && self.message == pairing_open(self.protocol()) {
             self.message.clear();
         }
     }
@@ -592,7 +585,7 @@ impl<T: Transport> App<T> {
                 Some(e) => flow(e.split(' '), " ", width),
                 None => {
                     let actions = action_keys(self.protocol())
-                        .iter()
+                        .into_iter()
                         .map(|(key, label, _)| format!("{key} {label}"));
                     let hints: Vec<_> = actions
                         .chain(
@@ -805,7 +798,6 @@ impl<T: Transport> App<T> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::format::UNIFYING_CONNECTED;
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::fixture;
     use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
@@ -1001,10 +993,10 @@ mod tests {
 
     #[test]
     fn a_message_breaks_between_words() {
-        let lines = flow(PAIRING_OPEN.split(' '), " ", 80);
+        let lines = flow(pairing_open(Protocol::Unifying).split(' '), " ", 80);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 80), "{lines:?}");
-        assert_eq!(lines.join(" "), PAIRING_OPEN);
+        assert_eq!(lines.join(" "), pairing_open(Protocol::Unifying));
     }
 
     #[test]
@@ -1050,9 +1042,13 @@ mod tests {
     }
 
     fn unifying_payload() -> Vec<u8> {
-        let mut payload = fixture("status.hex");
-        *payload.last_mut().unwrap() = Protocol::Unifying as u8;
-        payload
+        crate::protocol::tests::status_running(Protocol::Unifying as u8)
+    }
+
+    fn nuphy_status() -> Status {
+        crate::protocol::read_status(&fixture("status.hex"))
+            .unwrap()
+            .unwrap()
     }
 
     fn unifying_status() -> Status {
@@ -1106,14 +1102,11 @@ mod tests {
     #[test]
     fn the_nuphy_footer_is_one_line_of_hints() {
         let mut app: App = App::new(None);
-        app.history.status = Some(
-            crate::protocol::read_status(&fixture("status.hex"))
-                .unwrap()
-                .unwrap(),
-        );
+        app.history.status = Some(nuphy_status());
         assert_eq!(app.protocol(), Protocol::Nuphy);
         let hints = [
             "n noise",
+            "a pair",
             "p unifying",
             "r reboot",
             "b bootloader",
@@ -1123,7 +1116,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(app.help(100), [hints.join("  ")]);
+        assert_eq!(app.help(120), [hints.join("  ")]);
     }
 
     #[test]
@@ -1140,7 +1133,7 @@ mod tests {
             app.key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
         ));
-        assert!(app.key('a').is_none());
+        assert!(matches!(app.key('a'), Some(Key::Pair)));
         assert!(matches!(app.key('n'), Some(Key::Ask(Prompt::Noise))));
     }
 
@@ -1189,9 +1182,21 @@ mod tests {
         );
     }
 
-    fn refreshed_with_link_state(app: &mut App<Fake>, link_state: u8) {
+    #[test]
+    fn the_pair_key_in_nuphy_mode_says_to_hold_fn_4() {
+        let mut app = app_showing("");
+        app.history.status = Some(nuphy_status());
+        app.press('a');
+        assert_eq!(
+            footer(&mut app),
+            "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s"
+        );
+    }
+
+    fn refreshed_with_pairing(app: &mut App<Fake>, protocol: Protocol, open: bool) {
         let mut s = unifying_status();
-        s.link_state = link_state;
+        s.protocol = protocol;
+        s.pairing_open = open;
         s.minute_next = s.minute_oldest;
         s.events_total = s.events_oldest;
         app.refresh(Ok(s));
@@ -1206,15 +1211,17 @@ mod tests {
 
     #[test]
     fn the_pairing_message_stays_while_the_status_reads_pairing() {
-        let mut app = app_showing(PAIRING_OPEN);
-        refreshed_with_link_state(&mut app, UNIFYING_PAIRING);
-        assert_eq!(app.message, PAIRING_OPEN);
+        for protocol in [Protocol::Nuphy, Protocol::Unifying] {
+            let mut app = app_showing(pairing_open(protocol));
+            refreshed_with_pairing(&mut app, protocol, true);
+            assert_eq!(app.message, pairing_open(protocol));
+        }
     }
 
     #[test]
     fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
-        let mut app = app_showing(PAIRING_OPEN);
-        refreshed_with_link_state(&mut app, UNIFYING_CONNECTED);
+        let mut app = app_showing(pairing_open(Protocol::Unifying));
+        refreshed_with_pairing(&mut app, Protocol::Unifying, false);
         assert_eq!(app.message, "");
         assert_eq!(
             footer(&mut app),
@@ -1225,7 +1232,7 @@ mod tests {
     #[test]
     fn another_message_stays_when_the_status_no_longer_reads_pairing() {
         let mut app = app_showing("done");
-        refreshed_with_link_state(&mut app, UNIFYING_CONNECTED);
+        refreshed_with_pairing(&mut app, Protocol::Unifying, false);
         assert_eq!(app.message, "done");
     }
 
@@ -1377,7 +1384,8 @@ mod tests {
     fn status_payload(uptime_ms: u64, minute_next: u32, minute_oldest: u32) -> Vec<u8> {
         let mut p = fixture("status.hex");
         p[4..12].copy_from_slice(&uptime_ms.to_le_bytes());
-        let n = p.len() - 1;
+        // The protocol and pairing bytes follow the event counts.
+        let n = p.len() - 2;
         p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
         p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
         p[n - 8..n - 4].copy_from_slice(&0u32.to_le_bytes());

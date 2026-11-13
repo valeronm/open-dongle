@@ -62,22 +62,26 @@ minutes.
 
 ## Pairing
 
-A NuPhy keyboard starts pairing itself: put it in 2.4G mode and hold Fn+4 for 3 seconds. The dongle
-accepts pairing whenever it has no link. It measures the radio noise for about 1.5 seconds and gives
-the keyboard the three quietest channels, which both remember. The keyboard transmits at low power
-while pairing, so keep it close to the dongle. If Wi-Fi around you changes and the link gets worse,
-pair again.
+A keyboard pairs only while the dongle has pairing open, so a keyboard nearby cannot join on its
+own; NuPhy traffic is not encrypted, so this keeps out other keyboards, not an attacker.
+`open-dongle pair` opens pairing for 30 seconds. Plugging the dongle in opens it too, but the
+keyboard already paired closes it by connecting, so to pair again without the tool, plug the dongle
+in with the keyboard off. A dongle that has never paired in the running protocol keeps pairing open.
 
-A Unifying keyboard pairs only while the dongle has pairing open. `open-dongle pair` opens it for
-30 seconds; hold an Easy-Switch key on the keyboard until it blinks fast. A new keyboard replaces
-the one paired before.
+For a NuPhy keyboard, put it in 2.4G mode and hold Fn+4 for 3 seconds. The dongle measures the radio
+noise for about 1.5 seconds and gives the keyboard the three quietest channels, which both remember.
+The keyboard transmits at low power while pairing, so keep it close to the dongle. If Wi-Fi around
+you changes and the link gets worse, pair again.
+
+For a Unifying keyboard, hold an Easy-Switch key until it blinks fast. A new keyboard replaces the
+one paired before.
 
 ## LED
 
 | LED | Meaning |
 |-----|---------|
 | short flash every second | no keyboard link |
-| fast blink | pairing |
+| fast blink | pairing is open |
 | solid | connected |
 | off | the PC has suspended USB |
 | three flashes every two seconds | the radio failed to start |
@@ -86,7 +90,7 @@ the one paired before.
 
 `open-dongle` reads the dongle over a vendor HID interface: link state and signal, counter totals,
 per-minute counters for the last day, recent events and a radio noise map. With no arguments it
-shows a live view, where `p` switches the protocol after asking and `a` opens Unifying pairing;
+shows a live view, where `p` switches the protocol after asking and `a` opens pairing;
 `--help` lists the subcommands. The history lives in the dongle's RAM, so it covers only the time
 since the dongle was last plugged in, reset or switched to the other protocol. A noise map takes the
 same measurement as NuPhy [pairing](#pairing) and stops the keyboard meanwhile, because the radio

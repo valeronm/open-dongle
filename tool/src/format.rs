@@ -24,8 +24,14 @@ pub fn switch_question(to: Protocol) -> String {
     )
 }
 
-pub const PAIRING_OPEN: &str =
-    "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast";
+pub fn pairing_open(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::Nuphy => "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s",
+        Protocol::Unifying => {
+            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
+        }
+    }
+}
 
 pub fn flash_question(state: State, serial: &str, file: &str) -> String {
     let state = match state {
@@ -149,14 +155,11 @@ pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
     })
 }
 
-pub const UNIFYING_PAIRING: u8 = 1;
-pub const UNIFYING_CONNECTED: u8 = 2;
-
 pub fn unifying_state_name(state: u8) -> &'static str {
     match state {
         0 => "not paired",
-        UNIFYING_PAIRING => "pairing",
-        UNIFYING_CONNECTED => "connected",
+        1 => "pairing",
+        2 => "connected",
         3 => "silent",
         _ => "unknown",
     }
@@ -342,9 +345,19 @@ pub fn describe_event(e: &Event, protocol: Protocol) -> String {
             "paired keyboard {:02x}{:02x}, saving failed: {}",
             e.a, e.b, e.value as i32
         ),
-        EventKind::PairingOpened => "pairing opened".into(),
+        EventKind::PairingOpened => match (e.a, e.b) {
+            (1, 1) => "pairing opened at boot, until a keyboard pairs".into(),
+            (1, _) => "pairing opened at boot".into(),
+            (_, 1) => "pairing opened, until a keyboard pairs".into(),
+            _ => "pairing opened".into(),
+        },
         EventKind::PairingClosed => "pairing closed, nothing paired".into(),
-        EventKind::PairingTimeout => format!("pairing attempt timed out at request {}", e.a + 1),
+        EventKind::PairingTimeout => match protocol {
+            Protocol::Nuphy => {
+                "pairing attempt timed out waiting for the keyboard's confirm".into()
+            }
+            Protocol::Unifying => format!("pairing attempt timed out at request {}", e.a + 1),
+        },
         EventKind::Reconnect if e.a == 1 => "keyboard reconnected, held keys released".into(),
         EventKind::Reconnect => "keyboard reconnected".into(),
         EventKind::Attack => "forged keystroke, attack mode for 5 s".into(),
@@ -592,12 +605,27 @@ mod tests {
             "pairing opened"
         );
         assert_eq!(
+            d(event(EventKind::PairingOpened, 1, 0, 0, 0)),
+            "pairing opened at boot"
+        );
+        assert_eq!(
+            d(event(EventKind::PairingOpened, 1, 1, 0, 0)),
+            "pairing opened at boot, until a keyboard pairs"
+        );
+        assert_eq!(
             d(event(EventKind::PairingClosed, 0, 0, 0, 0)),
             "pairing closed, nothing paired"
         );
         assert_eq!(
             d(event(EventKind::PairingTimeout, 1, 0, 0, 0)),
             "pairing attempt timed out at request 2"
+        );
+        assert_eq!(
+            describe_event(
+                &event(EventKind::PairingTimeout, 0, 0, 0, 0),
+                Protocol::Nuphy
+            ),
+            "pairing attempt timed out waiting for the keyboard's confirm"
         );
         assert_eq!(
             d(event(EventKind::Reconnect, 1, 0, 0, 0)),

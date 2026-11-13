@@ -220,6 +220,7 @@ static void fill_status(struct diag_status *st)
 	uint64_t now = (uint64_t)k_uptime_get();
 
 	st->link_state = unifying_session_status(&session, now);
+	st->pairing_open = unifying_pairing_window_open(&session.pairing, now);
 	st->channel = session.channel;
 	st->last_rssi = session.rssi;
 	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)

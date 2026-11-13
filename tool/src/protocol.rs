@@ -250,6 +250,7 @@ pub struct Status {
     pub events_total: u32,
     pub events_oldest: u32,
     pub protocol: Protocol,
+    pub pairing_open: bool,
 }
 
 /// Fails on a reply too short for its layout or carrying an unknown [`Protocol`] code; a reply in
@@ -303,6 +304,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         protocol: Protocol::from_code(r.u8()?).ok_or_else(|| {
             anyhow::anyhow!("the dongle reports a protocol this tool does not know")
         })?,
+        pairing_open: r.u8()? != 0,
     }))
 }
 
@@ -499,6 +501,13 @@ pub(crate) mod tests {
         parse_hex(&fixture_text(name))
     }
 
+    pub(crate) fn status_running(code: u8) -> Vec<u8> {
+        let mut payload = fixture("status.hex");
+        let at = payload.len() - 2;
+        payload[at] = code;
+        payload
+    }
+
     pub(crate) fn status_in_protocol(version: u8) -> Vec<u8> {
         let mut payload = fixture("status.hex");
         payload[0] = version;
@@ -555,6 +564,14 @@ pub(crate) mod tests {
         assert_eq!((s.minute_next, s.minute_oldest), (1500, 60));
         assert_eq!((s.events_total, s.events_oldest), (600, 88));
         assert_eq!(s.protocol, Protocol::Nuphy);
+        assert!(s.pairing_open);
+    }
+
+    #[test]
+    fn a_zero_pairing_byte_reads_as_closed() {
+        let mut payload = fixture("status.hex");
+        *payload.last_mut().unwrap() = 0;
+        assert!(!read_status(&payload).unwrap().unwrap().pairing_open);
     }
 
     #[test]
@@ -652,9 +669,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unknown_protocol_in_status_is_refused() {
-        let mut payload = fixture("status.hex");
-        *payload.last_mut().unwrap() = 7;
-        assert!(read_status(&payload).is_err());
+        assert!(read_status(&status_running(7)).is_err());
     }
 
     #[test]

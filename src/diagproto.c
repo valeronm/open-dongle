@@ -104,6 +104,7 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->events_total, 4);
 	p = put_le(p, s->events_oldest, 4);
 	*p++ = s->protocol;
+	*p++ = s->pairing_open ? 1 : 0;
 	return p - out;
 }
 

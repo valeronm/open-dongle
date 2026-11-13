@@ -73,7 +73,7 @@ enum Cmd {
         #[arg(value_enum)]
         name: Option<ProtocolName>,
     },
-    /// Open Unifying pairing for 30 s
+    /// Open pairing for 30 s
     Pair,
     /// Restart the dongle firmware
     Reboot(Confirm),
@@ -120,7 +120,10 @@ fn main() -> Result<()> {
             cli::channels(&mut cli::open_nuphy(serial, "forced channels")?.0, forced)
         }
         Cmd::Protocol { name } => cli::protocol(serial, name.map(Into::into)),
-        Cmd::Pair => cli::pair(&mut device::open(serial)?.0),
+        Cmd::Pair => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::pair(&mut dev, s.protocol)
+        }
         Cmd::Reboot(c) => cli::action(&mut device::open(serial)?.0, Action::Reboot, c.yes),
         Cmd::Bootloader(c) => cli::action(
             &mut device::open_unchecked(serial)?,

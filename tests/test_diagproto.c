@@ -66,6 +66,7 @@ static void test_status_matches_fixture(void)
 		.events_total = 600,
 		.events_oldest = 88,
 		.protocol = PROTOCOL_NUPHY,
+		.pairing_open = true,
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];

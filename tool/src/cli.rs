@@ -110,14 +110,9 @@ pub fn open_nuphy(
     Ok((dev, s))
 }
 
-pub fn pair<T: Transport>(dev: &mut Device<T>) -> Result<()> {
-    dev.pair().map_err(|err| match err.downcast_ref::<Refused>() {
-        Some(r) if r.running == Some(Protocol::Nuphy) => anyhow!(
-            "the dongle runs NuPhy, whose keyboards start pairing themselves: hold Fn+4 on the keyboard"
-        ),
-        _ => err,
-    })?;
-    println!("{}", format::PAIRING_OPEN);
+pub fn pair<T: Transport>(dev: &mut Device<T>, protocol: Protocol) -> Result<()> {
+    dev.pair()?;
+    println!("{}", format::pairing_open(protocol));
     Ok(())
 }
 
@@ -450,8 +445,7 @@ mod tests {
 
     #[test]
     fn prints_a_unifying_status_without_pairing() {
-        let mut payload = crate::protocol::tests::fixture("status.hex");
-        *payload.last_mut().unwrap() = Protocol::Unifying as u8;
+        let payload = crate::protocol::tests::status_running(Protocol::Unifying as u8);
         let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
         s.link_state = 2;
         assert_eq!(
@@ -467,33 +461,5 @@ mod tests {
                 "history   1440 minutes, 512 events held",
             ]
         );
-    }
-
-    #[test]
-    fn pair_passes_through_a_refusal_not_naming_nuphy() {
-        let mut dev = Device::new(
-            Fake::new(|req| {
-                let mut e = error_part(req[0], req[1], 5);
-                e[5] = 2;
-                vec![e]
-            }),
-            0,
-        );
-        let err = pair(&mut dev).unwrap_err().to_string();
-        assert!(!err.contains("Fn+4"), "{err}");
-    }
-
-    #[test]
-    fn pair_in_nuphy_mode_says_how_nuphy_pairs() {
-        let mut dev = Device::new(
-            Fake::new(|req| {
-                let mut e = error_part(req[0], req[1], 5);
-                e[5] = 1;
-                vec![e]
-            }),
-            0,
-        );
-        let err = pair(&mut dev).unwrap_err().to_string();
-        assert!(err.contains("Fn+4"), "{err}");
     }
 }

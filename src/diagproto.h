@@ -71,6 +71,7 @@ struct diag_status {
 	uint32_t events_total;
 	uint32_t events_oldest;
 	uint8_t protocol;
+	bool pairing_open;
 };
 
 /* Returns false for a report shorter than DIAG_REQUEST_LEN. */
