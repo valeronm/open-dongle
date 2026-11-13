@@ -329,6 +329,21 @@ static void test_traffic_after_a_loss_reports_the_link_up(void)
 	CHECK(!out.up);
 }
 
+static void test_a_hello_that_brings_the_link_up_is_a_wake(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK(out.up);
+	CHECK(!out.woke);
+	tick(1010);
+	CHECK(out.lost);
+	message(NUPHY_HELLO, 1, 5000);
+	CHECK(out.up);
+	CHECK(out.woke);
+	message(NUPHY_HELLO, 1, 5010);
+	CHECK(!out.woke);
+}
+
 static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, dongle_id);
@@ -576,6 +591,7 @@ int main(void)
 	RUN(test_pipe0_traffic_does_not_keep_a_connected_link);
 	RUN(test_a_radio_pause_restarts_the_silence_timer);
 	RUN(test_traffic_after_a_loss_reports_the_link_up);
+	RUN(test_a_hello_that_brings_the_link_up_is_a_wake);
 	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
 	RUN(test_a_keyboard_heard_on_the_pairing_channel_is_moved_home);
 	RUN(test_silence_after_the_move_home_starts_loses_the_link);

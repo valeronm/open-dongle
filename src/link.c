@@ -184,6 +184,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		l->state = (l->on_pairing_channel && l->own_known) ? LINK_MOVING_HOME
 								   : LINK_CONNECTED;
 		out->up = true;
+		out->woke = m->kind == NUPHY_HELLO;
 		reply_status(l, now_ms, out);
 		break;
 	case LINK_CONNECTED:

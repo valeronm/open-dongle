@@ -36,6 +36,13 @@ enum history_event_type {
 	HISTORY_CLEAR, HISTORY_LINK_UP, HISTORY_LINK_MOVED, HISTORY_LINK_GAP
 };
 
+/* Byte c of HISTORY_LINK_UP. */
+enum history_link_up {
+	HISTORY_UP_FIRST,
+	HISTORY_UP_AGAIN,
+	HISTORY_UP_WOKE,
+};
+
 struct history_event {
 	uint64_t time_ms;
 	uint8_t type, a, b, c;

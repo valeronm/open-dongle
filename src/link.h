@@ -32,6 +32,8 @@ struct link_out {
 	bool save_channels;
 	bool lost;
 	bool up;
+	/* The packet that brought the link up was the keyboard's hello. */
+	bool woke;
 	bool moved;
 	uint8_t moved_from;
 	/* Nonzero when this packet ended a gap. */

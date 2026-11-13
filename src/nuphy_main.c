@@ -68,13 +68,17 @@ static void apply(const struct link_out *out)
 
 		core_count(CORE_LINK_LOSSES);
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		core_log(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, 0, 0, gap);
+		core_log(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, core_minutes_since_key(), 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();
 	}
 	if (out->up) {
-		core_log(HISTORY_LINK_UP, link.channel, (uint8_t)keyboard_rssi, link_was_lost,
+		uint8_t kind = !link_was_lost ? HISTORY_UP_FIRST
+				: out->woke   ? HISTORY_UP_WOKE
+					      : HISTORY_UP_AGAIN;
+
+		core_log(HISTORY_LINK_UP, link.channel, (uint8_t)keyboard_rssi, kind,
 			 k_uptime_get_32() - link_down_ms);
 	}
 	if (out->moved) {
