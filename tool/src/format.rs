@@ -28,7 +28,7 @@ pub fn pairing_open(protocol: Protocol) -> &'static str {
     match protocol {
         Protocol::Nuphy => "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s",
         Protocol::Unifying => {
-            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
+            "pairing is open for 30 s; switch the keyboard off and on, after holding an Easy-Switch key until it blinks fast if it has them"
         }
     }
 }

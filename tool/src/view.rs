@@ -1183,7 +1183,7 @@ mod tests {
         assert_eq!(sent.get(), Some(Command::Pair as u8));
         assert_eq!(
             footer(&mut app),
-            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it\nblinks fast"
+            "pairing is open for 30 s; switch the keyboard off and on, after holding an\nEasy-Switch key until it blinks fast if it has them"
         );
     }
 

@@ -64,17 +64,19 @@ minutes.
 
 A keyboard pairs only while the dongle has pairing open, so a keyboard nearby cannot join on its
 own; NuPhy traffic is not encrypted, so this keeps out other keyboards, not an attacker.
-`open-dongle pair` opens pairing for 30 seconds. Plugging the dongle in opens it too, but the
-keyboard already paired closes it by connecting, so to pair again without the tool, plug the dongle
-in with the keyboard off. A dongle that has never paired in the running protocol keeps pairing open.
+`open-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. Plugging the dongle in
+opens it too, until the paired keyboard connects. To pair without the tool, plug the dongle in with
+the paired keyboard off, or, to pair that keyboard again, with it already in pairing mode. A dongle
+that has never paired in the running protocol keeps pairing open.
 
-For a NuPhy keyboard, put it in 2.4G mode and hold Fn+4 for 3 seconds. The dongle measures the radio
-noise for about 1.5 seconds and gives the keyboard the three quietest channels, which both remember.
-The keyboard transmits at low power while pairing, so keep it close to the dongle. If Wi-Fi around
-you changes and the link gets worse, pair again.
+Put a NuPhy keyboard in 2.4G mode and hold Fn+4 for 3 seconds to enter pairing mode. The dongle
+measures the radio noise for about 1.5 seconds and gives the keyboard the three quietest channels,
+which both remember. The keyboard transmits at low power while pairing, so keep it close to the
+dongle. If Wi-Fi around you changes and the link gets worse, pair again.
 
-For a Unifying keyboard, hold an Easy-Switch key until it blinks fast. A new keyboard replaces the
-one paired before.
+A Unifying keyboard pairs when switched off and on while pairing is open. On a keyboard with
+Easy-Switch keys, such as the MX Keys, first enter pairing mode by holding an Easy-Switch key until
+it blinks fast. A new keyboard replaces the one paired before.
 
 ## LED
 
