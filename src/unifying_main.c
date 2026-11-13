@@ -22,7 +22,8 @@ static struct unifying_pairing pairing;
 static struct unifying_link link;
 static struct reports reports;
 static atomic_t host_leds;
-static atomic_t led_resend;
+static atomic_t led_requested;
+static struct unifying_led led;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
 static atomic_t rx_dropped;
 
@@ -103,34 +104,28 @@ static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rs
 
 static void on_paired(void)
 {
+	printk("counter floor reset: %d\n", store_save_unifying_counter(0));
+	printk("pairing saved: %d\n",
+	       store_save_unifying(&pairing.device, sizeof(pairing.device)));
 	unifying_link_reset(&link);
 	indicator_set(IND_CONNECTED);
 }
 
-static void save_pairing(void)
+static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, size_t n)
 {
-	struct unifying_device dev;
+	const struct unifying_attempt *a = &pairing.attempt;
 
-	unifying_device_of(&pairing, &dev);
-	printk("pairing saved: %d\n", store_save_unifying(&dev, sizeof(dev)));
-}
-
-static void report_pairing(void)
-{
-	switch (pairing.state) {
-	case UNIFYING_ANSWERED_1:
-		printk("request 1: id %02x wpid %02x%02x type %02x caps %02x\n", pairing.id,
-		       pairing.device_wpid[0], pairing.device_wpid[1], pairing.device_type,
-		       pairing.caps);
+	switch (event) {
+	case UNIFYING_RX_ANSWERED_1:
+		printk("request 1: id %02x wpid %02x%02x type %02x caps %02x\n", a->id,
+		       a->dev.wpid[0], a->dev.wpid[1], a->device_type, a->caps);
+		print_hex("reply", reply, n);
 		break;
-	case UNIFYING_ANSWERED_2:
-		print_hex("request 2: device nonce", pairing.device_nonce, UNIFYING_NONCE_LEN);
-		print_hex("dongle nonce", pairing.dongle_nonce, UNIFYING_NONCE_LEN);
-		print_hex("key", pairing.key, UNIFYING_KEY_LEN);
+	case UNIFYING_RX_ANSWERED_2:
+		printk("request 2: id %02x\n", a->id);
 		break;
-	case UNIFYING_PAIRED:
-		printk("request 3: name \"%.*s\", paired\n", pairing.name_len, pairing.name);
-		save_pairing();
+	case UNIFYING_RX_PAIRED:
+		printk("request 3: name \"%.*s\", paired\n", a->name_len, a->name);
 		on_paired();
 		break;
 	default:
@@ -138,19 +133,19 @@ static void report_pairing(void)
 	}
 }
 
-static void handle_pairing(const struct rx_item *item)
+static void handle_pairing(const struct rx_item *item, uint64_t now)
 {
 	uint8_t reply[UNIFYING_FRAME_MAX];
-	bool refused;
+	enum unifying_rx_event event;
 	size_t n;
 	int err;
 
 	n = unifying_pairing_rx(&pairing, &receiver, next_nonce, item->data, item->len,
-				k_uptime_get_32(), reply, &refused);
-	if (n != 0 && pairing.state == UNIFYING_ANSWERED_1) {
+				now, reply, &event);
+	if (event == UNIFYING_RX_ANSWERED_1) {
 		sys_rand_get(next_nonce, sizeof(next_nonce));
 	}
-	if (refused) {
+	if (event == UNIFYING_RX_REFUSED) {
 		print_hex("request 1 refused, not Unifying-compatible:", item->data, item->len);
 		return;
 	}
@@ -161,8 +156,7 @@ static void handle_pairing(const struct rx_item *item)
 	if (err) {
 		printk("queueing reply failed: %d\n", err);
 	}
-	report_pairing();
-	print_hex("reply", reply, n);
+	report_pairing(event, reply, n);
 }
 
 static void lock_reports(void)
@@ -192,17 +186,29 @@ static void submit(const struct report *r)
 	}
 }
 
-static void handle_keyboard(const struct rx_item *item, uint32_t now)
+static void handle_keyboard(const struct rx_item *item, uint64_t now)
 {
-	struct report r;
+	struct report typed[UNIFYING_KEYSTROKE_REPORTS];
+	uint64_t floor;
+	size_t n;
+	int err;
 
-	unifying_link_heard(&link, item->data, item->len, now);
-	if (pairing.state != UNIFYING_PAIRED) {
+	if (unifying_link_heard(&link, item->data, item->len, now, &floor)) {
+		err = store_save_unifying_counter(floor);
+		if (err) {
+			printk("saving counter floor failed: %d\n", err);
+		}
+	}
+	if (!unifying_has_device(&pairing)) {
 		return;
 	}
-	if (unifying_keystroke(&link, pairing.key, item->data, item->len, aes_ecb, &r) ||
-	    unifying_media_report(&link, item->data, item->len, &r)) {
-		submit(&r);
+	n = unifying_keystroke(&link, pairing.device.key, item->data, item->len, now, aes_ecb,
+			       typed);
+	if (n == 0 && unifying_media_report(&link, item->data, item->len, &typed[0])) {
+		n = 1;
+	}
+	for (size_t i = 0; i < n; i++) {
+		submit(&typed[i]);
 	}
 }
 
@@ -245,21 +251,23 @@ static void on_live(void)
 static void on_leds(uint8_t leds)
 {
 	atomic_set(&host_leds, leds);
-	atomic_set(&led_resend, 1);
+	atomic_set(&led_requested, 1);
 }
 
-static void send_leds(void)
+static void send_leds(uint64_t now)
 {
 	uint8_t frame[UNIFYING_LED_FRAME_LEN];
 	size_t n;
 
-	if (pairing.state != UNIFYING_PAIRED || atomic_get(&led_resend) == 0) {
+	if (atomic_clear(&led_requested) != 0) {
+		unifying_led_request(&led);
+	}
+	if (!unifying_led_due(&led, unifying_has_device(&pairing), now)) {
 		return;
 	}
-	atomic_set(&led_resend, 0);
 	n = unifying_led_frame((uint8_t)atomic_get(&host_leds), frame);
-	if (radio_reply(PIPE_DEVICE, frame, n) != 0) {
-		atomic_set(&led_resend, 1);
+	if (radio_reply(PIPE_DEVICE, frame, n) == 0) {
+		unifying_led_sent(&led, now);
 	}
 }
 
@@ -280,6 +288,7 @@ int main(void)
 	struct unifying_sweep sweep = {0};
 	uint8_t device_address[UNIFYING_ADDRESS_LEN];
 	struct unifying_device dev;
+	uint64_t counter_floor;
 	uint8_t channel;
 	int err;
 
@@ -303,10 +312,14 @@ int main(void)
 		printk("restored paired keyboard\n");
 	}
 	unifying_link_reset(&link);
+	if (unifying_has_device(&pairing) && store_load_unifying_counter(&counter_floor)) {
+		unifying_link_set_floor(&link, counter_floor);
+		printk("restored counter floor\n");
+	}
 	watchdog_start();
 	sys_rand_get(next_nonce, sizeof(next_nonce));
 
-	channel = unifying_sweep_channel(&sweep, &pairing, k_uptime_get_32());
+	channel = unifying_sweep_channel(&sweep, &pairing, (uint64_t)k_uptime_get());
 	while ((err = radio_start_unifying(unifying_pairing_address, device_address, channel,
 					   on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);
@@ -314,8 +327,8 @@ int main(void)
 		k_sleep(K_SECONDS(1));
 		watchdog_feed();
 	}
-	if (pairing.state == UNIFYING_PAIRED) {
-		on_paired();
+	if (unifying_has_device(&pairing)) {
+		indicator_set(IND_CONNECTED);
 	} else {
 		indicator_set(IND_PAIRING);
 	}
@@ -323,18 +336,18 @@ int main(void)
 
 	for (;;) {
 		struct rx_item item;
-		uint32_t now;
+		uint64_t now;
 		uint8_t next;
 		bool got;
 
 		got = k_msgq_get(&rx_queue, &item, K_MSEC(TICK_MS)) == 0;
-		now = k_uptime_get_32();
+		now = (uint64_t)k_uptime_get();
 		if (got) {
-			handle_pairing(&item);
+			handle_pairing(&item, now);
 			if (item.pipe == PIPE_DEVICE) {
 				handle_keyboard(&item, now);
 			} else if (item.pipe == PIPE_RECEIVER) {
-				atomic_set(&led_resend, 1);
+				unifying_led_request(&led);
 			}
 		}
 		if (unifying_link_silent(&link, now)) {
@@ -342,7 +355,7 @@ int main(void)
 			reports_release_all(&reports);
 			unlock_reports(true);
 		}
-		send_leds();
+		send_leds(now);
 		if (unifying_pairing_expired(&pairing, now)) {
 			printk("pairing timed out\n");
 		}

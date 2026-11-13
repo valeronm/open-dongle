@@ -6,6 +6,12 @@
 #define CHANNELS_KEY "dongle/channels"
 #define FORCED_KEY "dongle/forced"
 #define UNIFYING_KEY "dongle/unifying"
+#define UNIFYING_COUNTER_KEY "dongle/unifying_counter"
+
+static bool load_exact(const char *key, void *out, size_t len)
+{
+	return settings_load_one(key, out, len) == (ssize_t)len;
+}
 
 int store_init(void)
 {
@@ -14,7 +20,7 @@ int store_init(void)
 
 bool store_load_channels(uint8_t out[3])
 {
-	if (settings_load_one(CHANNELS_KEY, out, 3) != 3) {
+	if (!load_exact(CHANNELS_KEY, out, 3)) {
 		return false;
 	}
 	for (int i = 0; i < 3; i++) {
@@ -33,7 +39,7 @@ int store_save_channels(const uint8_t channels[3])
 
 bool store_load_forced(uint8_t out[3])
 {
-	return settings_load_one(FORCED_KEY, out, 3) == 3;
+	return load_exact(FORCED_KEY, out, 3);
 }
 
 int store_save_forced(const uint8_t *channels)
@@ -44,10 +50,20 @@ int store_save_forced(const uint8_t *channels)
 
 bool store_load_unifying(void *out, size_t len)
 {
-	return settings_load_one(UNIFYING_KEY, out, len) == (ssize_t)len;
+	return load_exact(UNIFYING_KEY, out, len);
 }
 
 int store_save_unifying(const void *in, size_t len)
 {
 	return settings_save_one(UNIFYING_KEY, in, len);
+}
+
+bool store_load_unifying_counter(uint64_t *out)
+{
+	return load_exact(UNIFYING_COUNTER_KEY, out, sizeof(*out));
+}
+
+int store_save_unifying_counter(uint64_t next_counter)
+{
+	return settings_save_one(UNIFYING_COUNTER_KEY, &next_counter, sizeof(next_counter));
 }
