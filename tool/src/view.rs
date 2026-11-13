@@ -215,8 +215,7 @@ pub(crate) struct History {
 }
 
 impl History {
-    pub(crate) fn refresh<T: Transport>(&mut self, dev: &mut Device<T>) -> Result<()> {
-        let s = dev.status()?;
+    pub(crate) fn refresh<T: Transport>(&mut self, dev: &mut Device<T>, s: Status) -> Result<()> {
         if self
             .status
             .as_ref()
@@ -382,19 +381,21 @@ impl App {
     }
 
     fn poll(&mut self) {
-        if self.device.is_none() {
-            match device::open(self.serial.as_deref()) {
-                Ok((d, _)) => {
+        let status = match self.device.as_mut() {
+            Some(dev) => dev.status(),
+            None => match device::open(self.serial.as_deref()) {
+                Ok((d, status)) => {
                     self.device = Some(d);
                     self.message.clear();
+                    Ok(status)
                 }
                 Err(e) => {
                     self.disconnect(&e);
                     return;
                 }
-            }
-        }
-        self.refresh();
+            },
+        };
+        self.refresh(status);
     }
 }
 
@@ -422,11 +423,11 @@ impl<T: Transport> App<T> {
         );
     }
 
-    fn refresh(&mut self) {
+    fn refresh(&mut self, status: Result<Status>) {
         let Some(dev) = self.device.as_mut() else {
             return;
         };
-        match self.history.refresh(dev) {
+        match status.and_then(|s| self.history.refresh(dev, s)) {
             Ok(()) => self.refresh_error = None,
             Err(e) if e.is::<Lost>() => self.disconnect(&e),
             Err(e) => self.refresh_error = Some(error_text(&e)),
@@ -813,7 +814,8 @@ mod tests {
             0,
         ));
         app.history.minutes = vec![(0, quiet())];
-        app.refresh();
+        let status = app.device.as_mut().unwrap().status();
+        app.refresh(status);
         assert_eq!(
             footer(&mut app),
             "the dongle refused Status: the radio failed"
@@ -843,7 +845,8 @@ mod tests {
     fn a_lost_dongle_disconnects() {
         let mut app = App::new(None);
         app.device = Some(Device::new(Unplugged, 0));
-        app.refresh();
+        let status = app.device.as_mut().unwrap().status();
+        app.refresh(status);
         assert_eq!(
             footer(&mut app),
             "disconnected: writing to the dongle: hidapi error: device disconnected"
@@ -1004,10 +1007,15 @@ mod tests {
         )
     }
 
+    fn catch_up(h: &mut History, mut dev: Device<Fake>) -> Result<()> {
+        let s = dev.status()?;
+        h.refresh(&mut dev, s)
+    }
+
     #[test]
     fn fetches_all_held_minutes_page_by_page() {
         let mut h = History::default();
-        h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000, 130, 0)).unwrap();
         assert_eq!(h.minutes.len(), 130);
         assert_eq!(h.minutes.first().map(|m| m.0), Some(0));
         assert_eq!(h.minutes.last().map(|m| m.0), Some(129));
@@ -1016,28 +1024,27 @@ mod tests {
     #[test]
     fn a_clear_drops_minutes_before_the_new_oldest() {
         let mut h = History::default();
-        h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
-        h.refresh(&mut dongle(1, 201 * 60_000, 131, 130)).unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        catch_up(&mut h, dongle(1, 201 * 60_000, 131, 130)).unwrap();
         assert_eq!(h.minutes.iter().map(|m| m.0).collect::<Vec<_>>(), vec![130]);
     }
 
     #[test]
     fn the_boot_time_holds_across_refreshes() {
         let mut h = History::default();
-        h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000, 130, 0)).unwrap();
         let boot = h.boot;
         assert!(boot.is_some());
-        h.refresh(&mut dongle(1, 200 * 60_000 + 5_000, 130, 0))
-            .unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000 + 5_000, 130, 0)).unwrap();
         assert_eq!(h.boot, boot);
     }
 
     #[test]
     fn a_reboot_replaces_the_boot_time() {
         let mut h = History::default();
-        h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000, 130, 0)).unwrap();
         let boot = h.boot;
-        h.refresh(&mut dongle(2, 3 * 60_000, 2, 0)).unwrap();
+        catch_up(&mut h, dongle(2, 3 * 60_000, 2, 0)).unwrap();
         assert!(h.boot.is_some());
         assert_ne!(h.boot, boot);
     }
@@ -1045,9 +1052,9 @@ mod tests {
     #[test]
     fn a_reboot_starts_the_history_over() {
         let mut h = History::default();
-        h.refresh(&mut dongle(1, 200 * 60_000, 130, 0)).unwrap();
+        catch_up(&mut h, dongle(1, 200 * 60_000, 130, 0)).unwrap();
         h.events_top = Some(0);
-        h.refresh(&mut dongle(2, 3 * 60_000, 2, 0)).unwrap();
+        catch_up(&mut h, dongle(2, 3 * 60_000, 2, 0)).unwrap();
         assert_eq!(h.events_top, None);
         assert_eq!(
             h.minutes
