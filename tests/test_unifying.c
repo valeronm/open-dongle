@@ -657,6 +657,17 @@ static bool receive_keystroke(struct unifying_link *l, uint32_t counter,
 	return receive_keystroke_at(l, counter, plain, 0, r);
 }
 
+static const uint8_t release[REPORT_KEYBOARD_LEN] = {0x00, 0x00, 0x00, 0x00,
+						     0x00, 0x00, 0x00, 0xc9};
+
+static void sync_at(struct unifying_link *l, uint32_t next_counter)
+{
+	struct report r;
+
+	CHECK(receive_keystroke(l, next_counter - 1, release, &r));
+	CHECK_EQ(l->next_counter, next_counter);
+}
+
 static void test_keystroke_passes_the_key_and_the_counter_block_to_aes(void)
 {
 	static const uint8_t expected[UNIFYING_AES_BLOCK_LEN] = {
@@ -665,7 +676,7 @@ static void test_keystroke_passes_the_key_and_the_counter_block_to_aes(void)
 	struct report r;
 
 	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 0x5f66f459);
+	sync_at(&l, 0x5f66f459);
 	aes_calls = 0;
 	CHECK(receive_keystroke(&l, 0x5f66f459, press_a, &r));
 	CHECK_EQ(aes_calls, 1);
@@ -693,7 +704,7 @@ static void test_keystroke_report_is_the_decrypted_modifier_and_keys(void)
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		unifying_link_reset(&l);
-		unifying_link_set_floor(&l, 1);
+		sync_at(&l, 1);
 		CHECK(receive_keystroke(&l, 1, cases[i].plain, &r));
 		CHECK_EQ(r.kind, REPORT_KEYBOARD);
 		CHECK_MEM(r.keyboard, cases[i].want, REPORT_KEYBOARD_LEN);
@@ -707,7 +718,7 @@ static void test_a_counter_below_the_next_expected_one_is_refused(void)
 	struct report r;
 
 	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 1000);
+	sync_at(&l, 1000);
 	CHECK(receive_keystroke(&l, 1000, press_a, &r));
 	aes_calls = 0;
 	CHECK(!receive_keystroke(&l, 1000, press_a, &r));
@@ -728,7 +739,7 @@ static void accept_counter_1000(struct unifying_link *l)
 	struct report r;
 
 	unifying_link_reset(l);
-	unifying_link_set_floor(l, 1000);
+	sync_at(l, 1000);
 	CHECK(receive_keystroke(l, 1000, press_a, &r));
 }
 
@@ -906,26 +917,6 @@ static void test_a_forged_frame_after_a_marker_failure_does_not_raise_the_counte
 	CHECK_EQ(l.next_counter, 1001);
 }
 
-static void test_keep_alives_make_a_save_due_only_after_a_typed_keystroke(void)
-{
-	struct unifying_link l;
-	struct report r;
-	struct report out[UNIFYING_KEYSTROKE_REPORTS];
-
-	unifying_link_reset(&l);
-	CHECK(!receive_keystroke_at(&l, 4, forged, 10000, &r));
-	CHECK(!receive_keystroke_at(&l, 5, press_a, 10010, &r));
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 10020));
-	CHECK(!receive_keystroke_at(&l, 6, press_a, 10000 + UNIFYING_ATTACK_MS, &r));
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15010));
-	CHECK_EQ(receive_keystrokes_at(&l, 7, press_a, 15020, out), 2);
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15030));
-	CHECK_EQ(l.next_counter, 8);
-}
-
-static const uint8_t release[REPORT_KEYBOARD_LEN] = {0x00, 0x00, 0x00, 0x00,
-						     0x00, 0x00, 0x00, 0xc9};
-
 static void test_under_attack_a_press_confirmed_by_its_release_types_both(void)
 {
 	static const uint8_t no_keys[REPORT_KEYBOARD_LEN] = {0};
@@ -1002,7 +993,8 @@ static void test_counters_near_the_top_are_refused_before_aes(void)
 	CHECK(!receive_keystroke(&l, 0xffffffff - (1 << 20) + 1, release, &r));
 	CHECK_EQ(aes_calls, 0);
 	CHECK_EQ(l.next_counter, 0);
-	unifying_link_set_floor(&l, 0xfff00000 - UNIFYING_COUNTER_WINDOW);
+	sync_at(&l, 0xfff00000 - UNIFYING_COUNTER_WINDOW);
+	aes_calls = 0;
 	CHECK(!receive_keystroke(&l, 0xfff00000, release, &r));
 	CHECK_EQ(aes_calls, 0);
 	CHECK(receive_keystroke(&l, 0xfff00000 - 1, press_a, &r));
@@ -1037,6 +1029,106 @@ static void test_with_no_counter_an_attack_still_types_a_release(void)
 	CHECK_EQ(l.next_counter, 801);
 }
 
+static const uint8_t connect_22[UNIFYING_FRAME_MAX] = {
+	0x07, 0x51, 0x07, 0x04, 0x00, 0x01, 0x01, 0x01, [21] = 0x9a};
+static const uint8_t connect_10[] = {0x07, 0x4f, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xa3};
+
+static void test_after_a_reconnect_a_counter_below_the_old_one_is_confirmed_by_the_next(void)
+{
+	struct unifying_link l;
+	struct report out[UNIFYING_KEYSTROKE_REPORTS];
+
+	unifying_link_reset(&l);
+	sync_at(&l, 3703468736u);
+	unifying_link_reconnect(&l, 0x07, connect_22, sizeof(connect_22));
+	CHECK(!l.synced);
+	CHECK_EQ(receive_keystrokes_at(&l, 0x69c4de07, press_a, 0, out), 0);
+	CHECK_EQ(receive_keystrokes_at(&l, 0x69c4de08, release, 0, out), 2);
+	CHECK_EQ(out[0].keyboard[2], 0x04);
+	CHECK_EQ(l.next_counter, 0x69c4de09);
+}
+
+static void test_a_lone_press_after_a_reconnect_is_held(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	accept_counter_1000(&l);
+	unifying_link_reconnect(&l, 0x07, connect_10, sizeof(connect_10));
+	CHECK(!l.synced);
+	CHECK(!receive_keystroke(&l, 1001, press_a, &r));
+	CHECK(!l.synced);
+}
+
+static void test_a_reconnect_drops_a_held_jump(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	accept_counter_1000(&l);
+	CHECK(!receive_keystroke(&l, 6000, press_a, &r));
+	unifying_link_reconnect(&l, 0x07, connect_22, sizeof(connect_22));
+	CHECK(!l.synced);
+	CHECK(!l.has_candidate);
+	CHECK(!receive_keystroke(&l, 6001, press_a, &r));
+}
+
+static void test_a_reconnect_releases_held_keys(void)
+{
+	struct unifying_link l;
+	struct report r;
+
+	accept_counter_1000(&l);
+	CHECK(l.keyboard_down);
+	CHECK(unifying_link_reconnect(&l, 0x07, connect_22, sizeof(connect_22)));
+	CHECK(!l.keyboard_down);
+	CHECK(!unifying_link_reconnect(&l, 0x07, connect_10, sizeof(connect_10)));
+	unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r);
+	CHECK(unifying_link_reconnect(&l, 0x07, connect_10, sizeof(connect_10)));
+	CHECK(!l.media_down);
+}
+
+static void test_a_reconnect_with_no_key_held_releases_nothing(void)
+{
+	struct unifying_link l;
+
+	unifying_link_reset(&l);
+	sync_at(&l, 1000);
+	CHECK(!unifying_link_reconnect(&l, 0x07, connect_22, sizeof(connect_22)));
+	CHECK(!l.synced);
+}
+
+static void test_other_receiver_frames_leave_the_counter(void)
+{
+	uint8_t bad[sizeof(connect_10)];
+	struct unifying_link l;
+	struct report r;
+
+	accept_counter_1000(&l);
+	memcpy(bad, connect_10, sizeof(bad));
+	bad[sizeof(bad) - 1] ^= 0x10;
+	CHECK(!unifying_link_reconnect(&l, 0x07, bad, sizeof(bad)));
+	CHECK(!unifying_link_reconnect(&l, 0x07, keep_alive_1100, sizeof(keep_alive_1100)));
+	CHECK(!unifying_link_reconnect(&l, 0x07, pairing_complete, sizeof(pairing_complete)));
+	CHECK(!unifying_link_reconnect(&l, 0x06, connect_22, sizeof(connect_22)));
+	CHECK(!unifying_link_reconnect(&l, 0x06, connect_10, sizeof(connect_10)));
+	CHECK(receive_keystroke(&l, 1001, press_a, &r));
+}
+
+static void test_an_attack_after_a_reconnect_refuses_every_press(void)
+{
+	struct unifying_link l;
+	struct report out[UNIFYING_KEYSTROKE_REPORTS];
+
+	accept_counter_1000(&l);
+	unifying_link_reconnect(&l, 0x07, connect_22, sizeof(connect_22));
+	CHECK(!l.synced);
+	CHECK_EQ(receive_keystrokes_at(&l, 50, forged, ATTACK_START, out), 0);
+	CHECK_EQ(receive_keystrokes_at(&l, 60, press_a, ATTACK_START + 10, out), 0);
+	CHECK_EQ(receive_keystrokes_at(&l, 61, press_a, ATTACK_START + 20, out), 0);
+	CHECK(!l.synced);
+}
+
 static void test_the_first_counter_may_be_zero(void)
 {
 	struct unifying_link l;
@@ -1055,7 +1147,7 @@ static void test_a_plaintext_without_the_marker_byte_is_rejected_and_keeps_the_c
 	struct report r = {.kind = REPORT_SYSTEM};
 
 	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 1000);
+	sync_at(&l, 1000);
 	CHECK(!receive_keystroke(&l, 1000, forged, &r));
 	CHECK_EQ(r.kind, REPORT_SYSTEM);
 	CHECK(!l.keyboard_down);
@@ -1132,7 +1224,7 @@ static void hold_a_key(struct unifying_link *l)
 {
 	struct report r;
 
-	unifying_link_set_floor(l, 1);
+	sync_at(l, 1);
 	receive_keystroke(l, 1, press_a, &r);
 }
 
@@ -1220,123 +1312,42 @@ static void test_a_release_report_clears_the_held_state(void)
 	CHECK(!unifying_link_silent(&l, 200000));
 }
 
-static void test_the_counter_is_not_saved_before_a_keystroke(void)
-{
-	struct unifying_link l;
-
-	unifying_link_reset(&l);
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 0));
-}
-
-static void test_the_counter_is_saved_once_when_the_keyboard_goes_idle(void)
-{
-	struct unifying_link l;
-	struct report r;
-
-	accept_counter_1000(&l);
-	CHECK(!unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 10));
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 20));
-	CHECK_EQ(l.next_counter, 1001);
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 1120));
-	CHECK(receive_keystroke(&l, 1001, press_a, &r));
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 2220));
-	CHECK_EQ(l.next_counter, 1002);
-}
-
-static void test_a_floor_refuses_counters_below_it_and_bounds_the_window(void)
+static void test_a_known_counter_refuses_counters_below_it_and_bounds_the_window(void)
 {
 	struct unifying_link l;
 	struct report r;
 
 	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 5000);
+	sync_at(&l, 5000);
 	CHECK(!receive_keystroke(&l, 4999, press_a, &r));
 	CHECK(!receive_keystroke(&l, 5000 + UNIFYING_COUNTER_WINDOW, press_a, &r));
 	CHECK(receive_keystroke(&l, 5000, press_a, &r));
 }
 
-static void test_a_floor_of_zero_leaves_the_counter_unknown(void)
-{
-	struct unifying_link l;
-	struct report out[UNIFYING_KEYSTROKE_REPORTS];
-
-	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 0);
-	CHECK_EQ(receive_keystrokes_at(&l, 500, press_a, 0, out), 0);
-	CHECK_EQ(receive_keystrokes_at(&l, 501, release, 0, out), 2);
-}
-
-static void test_the_record_holds_the_device_then_the_floor_little_endian(void)
+static void test_the_record_is_the_wpid_then_the_key(void)
 {
 	struct unifying_pairing p;
 	struct unifying_device d;
-	struct unifying_link l;
 	uint8_t rec[UNIFYING_RECORD_LEN];
-	static const uint8_t floor[8] = {0x01, 0x23, 0x45, 0x67, 0x00, 0x00, 0x00, 0x00};
 
+	CHECK_EQ(UNIFYING_RECORD_LEN, 18);
 	restore_paired(&p, &d);
-	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 0x67452301);
-	unifying_record_of(&p, &l, rec);
+	unifying_record_of(&p, rec);
 	CHECK_MEM(&rec[0], d.wpid, 2);
 	CHECK_MEM(&rec[2], d.key, UNIFYING_KEY_LEN);
-	CHECK_MEM(&rec[18], floor, sizeof(floor));
 }
 
-static void test_a_restored_record_pairs_the_device_and_seeds_the_floor(void)
-{
-	struct unifying_pairing p, q;
-	struct unifying_device d;
-	struct unifying_link l;
-	struct report r;
-	uint8_t rec[UNIFYING_RECORD_LEN];
-
-	restore_paired(&p, &d);
-	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 5000);
-	unifying_record_of(&p, &l, rec);
-	unifying_link_reset(&l);
-	unifying_record_restore(&q, &l, rec);
-	CHECK(unifying_has_device(&q));
-	CHECK_MEM(&q.device, &d, sizeof(d));
-	CHECK_EQ(q.attempt.state, UNIFYING_IDLE);
-	CHECK(!receive_keystroke(&l, 4999, press_a, &r));
-	CHECK(receive_keystroke(&l, 5000, press_a, &r));
-}
-
-static void test_a_record_after_a_new_pairing_leaves_the_counter_unknown(void)
+static void test_a_restored_record_pairs_the_device(void)
 {
 	struct unifying_pairing p = {0}, q;
-	struct unifying_link l;
-	struct report out[UNIFYING_KEYSTROKE_REPORTS];
 	uint8_t rec[UNIFYING_RECORD_LEN];
 
 	pair_fully(&p);
-	unifying_link_reset(&l);
-	unifying_record_of(&p, &l, rec);
-	unifying_record_restore(&q, &l, rec);
+	unifying_record_of(&p, rec);
+	unifying_record_restore(&q, rec);
 	CHECK(unifying_has_device(&q));
 	CHECK_MEM(&q.device, &p.device, sizeof(p.device));
-	CHECK_EQ(receive_keystrokes_at(&l, 500, press_a, 0, out), 0);
-	CHECK_EQ(receive_keystrokes_at(&l, 501, press_a, 0, out), 2);
-}
-
-static void test_a_new_pairing_records_floor_0_and_resets_the_link(void)
-{
-	static const uint8_t zero[8] = {0};
-	struct unifying_pairing p = {0};
-	struct unifying_link l;
-	uint8_t rec[UNIFYING_RECORD_LEN];
-
-	pair_fully(&p);
-	unifying_link_reset(&l);
-	unifying_link_set_floor(&l, 5000);
-	unifying_record_of_new_pairing(&p, &l, rec);
-	CHECK_MEM(&rec[0], p.device.wpid, 2);
-	CHECK_MEM(&rec[2], p.device.key, UNIFYING_KEY_LEN);
-	CHECK_MEM(&rec[18], zero, sizeof(zero));
-	CHECK_EQ(l.next_counter, 0);
-	CHECK(!l.synced);
+	CHECK_EQ(q.attempt.state, UNIFYING_IDLE);
 }
 
 static void check_due(struct unifying_led *led, uint32_t taken, uint8_t want)
@@ -1510,7 +1521,6 @@ int main(void)
 	RUN(test_a_marker_failure_drops_the_pending_frame);
 	RUN(test_a_frame_pending_when_the_attack_ends_is_dropped);
 	RUN(test_a_forged_frame_after_a_marker_failure_does_not_raise_the_counter);
-	RUN(test_keep_alives_make_a_save_due_only_after_a_typed_keystroke);
 	RUN(test_under_attack_a_press_confirmed_by_its_release_types_both);
 	RUN(test_under_attack_a_lone_release_is_typed_at_once);
 	RUN(test_a_first_lone_press_after_reset_types_nothing);
@@ -1519,6 +1529,13 @@ int main(void)
 	RUN(test_counters_near_the_top_are_refused_before_aes);
 	RUN(test_with_no_counter_an_attack_refuses_every_press);
 	RUN(test_with_no_counter_an_attack_still_types_a_release);
+	RUN(test_after_a_reconnect_a_counter_below_the_old_one_is_confirmed_by_the_next);
+	RUN(test_a_lone_press_after_a_reconnect_is_held);
+	RUN(test_a_reconnect_drops_a_held_jump);
+	RUN(test_a_reconnect_releases_held_keys);
+	RUN(test_a_reconnect_with_no_key_held_releases_nothing);
+	RUN(test_other_receiver_frames_leave_the_counter);
+	RUN(test_an_attack_after_a_reconnect_refuses_every_press);
 	RUN(test_the_first_counter_may_be_zero);
 	RUN(test_a_plaintext_without_the_marker_byte_is_rejected_and_keeps_the_counter);
 	RUN(test_an_unencrypted_keyboard_frame_is_refused);
@@ -1531,14 +1548,9 @@ int main(void)
 	RUN(test_a_frame_heard_in_time_postpones_the_stuck_key);
 	RUN(test_nothing_held_is_never_silent);
 	RUN(test_a_release_report_clears_the_held_state);
-	RUN(test_the_counter_is_not_saved_before_a_keystroke);
-	RUN(test_the_counter_is_saved_once_when_the_keyboard_goes_idle);
-	RUN(test_a_floor_refuses_counters_below_it_and_bounds_the_window);
-	RUN(test_a_floor_of_zero_leaves_the_counter_unknown);
-	RUN(test_the_record_holds_the_device_then_the_floor_little_endian);
-	RUN(test_a_restored_record_pairs_the_device_and_seeds_the_floor);
-	RUN(test_a_record_after_a_new_pairing_leaves_the_counter_unknown);
-	RUN(test_a_new_pairing_records_floor_0_and_resets_the_link);
+	RUN(test_a_known_counter_refuses_counters_below_it_and_bounds_the_window);
+	RUN(test_the_record_is_the_wpid_then_the_key);
+	RUN(test_a_restored_record_pairs_the_device);
 	RUN(test_no_led_frame_is_due_before_a_change_or_resend);
 	RUN(test_an_led_change_is_sent_at_once);
 	RUN(test_the_first_led_state_is_sent_even_when_it_is_zero);

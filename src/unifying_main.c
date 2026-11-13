@@ -102,19 +102,12 @@ static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rs
 	}
 }
 
-static int save_record(void)
-{
-	uint8_t record[UNIFYING_RECORD_LEN];
-
-	unifying_record_of(&pairing, &link, record);
-	return store_save_unifying(record, sizeof(record));
-}
-
 static void on_paired(void)
 {
 	uint8_t record[UNIFYING_RECORD_LEN];
 
-	unifying_record_of_new_pairing(&pairing, &link, record);
+	unifying_link_reset(&link);
+	unifying_record_of(&pairing, record);
 	printk("pairing saved: %d\n", store_save_unifying(record, sizeof(record)));
 	indicator_set(IND_CONNECTED);
 }
@@ -198,14 +191,8 @@ static void handle_keyboard(const struct rx_item *item, uint64_t now)
 {
 	struct report typed[UNIFYING_KEYSTROKE_REPORTS];
 	size_t n;
-	int err;
 
-	if (unifying_link_heard(&link, item->data, item->len, now)) {
-		err = save_record();
-		if (err) {
-			printk("saving pairing record failed: %d\n", err);
-		}
-	}
+	unifying_link_heard(&link, item->data, item->len, now);
 	if (!unifying_has_device(&pairing)) {
 		return;
 	}
@@ -320,7 +307,7 @@ int main(void)
 	}
 	unifying_link_reset(&link);
 	if (err == 0 && store_load_unifying(record, sizeof(record))) {
-		unifying_record_restore(&pairing, &link, record);
+		unifying_record_restore(&pairing, record);
 		printk("restored paired keyboard\n");
 	}
 	watchdog_start();
@@ -354,6 +341,12 @@ int main(void)
 			if (item.pipe == PIPE_DEVICE) {
 				handle_keyboard(&item, now);
 			} else if (item.pipe == PIPE_RECEIVER) {
+				if (unifying_link_reconnect(&link, receiver.device_octet, item.data,
+							    item.len)) {
+					lock_reports();
+					reports_release_all(&reports);
+					unlock_reports(true);
+				}
 				unifying_led_resend(&led);
 			}
 		}

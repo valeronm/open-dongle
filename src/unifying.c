@@ -17,6 +17,7 @@
 #define REPORT_SET_KEEPALIVE 0x0f
 #define KEEPALIVE_LEN 5
 #define SET_KEEPALIVE_LEN 10
+#define CONNECT_SHORT_LEN 10
 
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
 const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
@@ -240,10 +241,29 @@ void unifying_link_reset(struct unifying_link *l)
 	*l = (struct unifying_link){.keepalive_ms = UNIFYING_KEEPALIVE_DEFAULT_MS};
 }
 
-void unifying_link_set_floor(struct unifying_link *l, uint64_t next_counter)
+static bool is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_octet)
 {
-	l->synced = next_counter != 0;
-	l->next_counter = next_counter;
+	bool shape = (len == UNIFYING_FRAME_MAX && frame[1] == 0x51 && frame[3] == 0x04) ||
+		     (len == CONNECT_SHORT_LEN && frame[1] == 0x4f && frame[3] == 0x00);
+
+	return shape && frame[2] == 0x07 && frame[0] == device_octet &&
+	       unifying_checksum_ok(frame, len);
+}
+
+bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, const uint8_t *frame,
+			     size_t len)
+{
+	bool held = l->keyboard_down || l->media_down;
+
+	if (!is_connect_frame(frame, len, device_octet)) {
+		return false;
+	}
+	l->synced = false;
+	l->next_counter = 0;
+	l->has_candidate = false;
+	l->keyboard_down = false;
+	l->media_down = false;
+	return held;
 }
 
 static void counter_block(const uint8_t *frame, uint8_t block[UNIFYING_AES_BLOCK_LEN])
@@ -306,7 +326,6 @@ static void type(struct unifying_link *l, const struct report *r, uint64_t next_
 {
 	l->synced = true;
 	l->next_counter = next_counter;
-	l->unsaved = true;
 	l->keyboard_down = !is_release(r);
 	*out = *r;
 }
@@ -438,7 +457,7 @@ static uint16_t keepalive_timeout(const uint8_t *frame, size_t len)
 	return 0;
 }
 
-bool unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t len,
+void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t len,
 			 uint64_t now_ms)
 {
 	uint16_t timeout = keepalive_timeout(frame, len);
@@ -447,11 +466,6 @@ bool unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t l
 	if (timeout != 0) {
 		l->keepalive_ms = timeout;
 	}
-	if (timeout < UNIFYING_IDLE_KEEPALIVE_MS || !l->unsaved) {
-		return false;
-	}
-	l->unsaved = false;
-	return true;
 }
 
 bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms)
@@ -467,42 +481,21 @@ bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms)
 }
 
 #define RECORD_KEY_OFFSET UNIFYING_WPID_LEN
-#define RECORD_FLOOR_OFFSET (RECORD_KEY_OFFSET + UNIFYING_KEY_LEN)
 
 _Static_assert(sizeof(((struct unifying_device *)0)->wpid) == UNIFYING_WPID_LEN, "record wpid");
 _Static_assert(sizeof(((struct unifying_device *)0)->key) == UNIFYING_KEY_LEN, "record key");
-_Static_assert(sizeof(((struct unifying_link *)0)->next_counter) == UNIFYING_FLOOR_LEN,
-	       "record floor");
 
-void unifying_record_of(const struct unifying_pairing *p, const struct unifying_link *l,
-			uint8_t out[UNIFYING_RECORD_LEN])
+void unifying_record_of(const struct unifying_pairing *p, uint8_t out[UNIFYING_RECORD_LEN])
 {
 	memcpy(out, p->device.wpid, UNIFYING_WPID_LEN);
 	memcpy(&out[RECORD_KEY_OFFSET], p->device.key, UNIFYING_KEY_LEN);
-	for (size_t i = 0; i < UNIFYING_FLOOR_LEN; i++) {
-		out[RECORD_FLOOR_OFFSET + i] = (uint8_t)(l->next_counter >> (8 * i));
-	}
 }
 
-void unifying_record_of_new_pairing(const struct unifying_pairing *p, struct unifying_link *l,
-				    uint8_t out[UNIFYING_RECORD_LEN])
-{
-	unifying_link_reset(l);
-	unifying_record_of(p, l, out);
-}
-
-void unifying_record_restore(struct unifying_pairing *p, struct unifying_link *l,
-			     const uint8_t in[UNIFYING_RECORD_LEN])
+void unifying_record_restore(struct unifying_pairing *p, const uint8_t in[UNIFYING_RECORD_LEN])
 {
 	struct unifying_device d;
-	uint64_t floor = 0;
 
 	memcpy(d.wpid, in, UNIFYING_WPID_LEN);
 	memcpy(d.key, &in[RECORD_KEY_OFFSET], UNIFYING_KEY_LEN);
-	for (size_t i = 0; i < UNIFYING_FLOOR_LEN; i++) {
-		floor |= (uint64_t)in[RECORD_FLOOR_OFFSET + i] << (8 * i);
-	}
 	unifying_pairing_restore(p, &d);
-	unifying_link_reset(l);
-	unifying_link_set_floor(l, floor);
 }

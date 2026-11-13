@@ -511,8 +511,12 @@ keyboard report:
 Byte 7 comes out as `0xc9` only under the correct key and counter, so a receiver can use it to
 reject forged or corrupted frames.
 
-**Counter.** [VERIFIED on air] It rises by one per frame and continues across a receiver reboot
-without re-pairing. After a new pairing it starts from an unrelated value.
+**Counter.** [VERIFIED on air] It rises by one per frame. The MX Keys picks a new counter on every
+keyboard boot (power cycle), and after a new pairing it also starts from an unrelated value. While
+the keyboard stays on, the counter continues across a receiver reboot without re-pairing. The
+keyboard announces each reconnect with the connect frames on the receiver's own address (§3 "After
+the handshake"), so a receiver can forget the counter there. A receiver that keeps a rising floor
+across keyboard boots refuses every keystroke whenever the new counter lies below it.
 
 ### Media keys
 
