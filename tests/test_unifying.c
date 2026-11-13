@@ -1671,6 +1671,52 @@ static void test_a_session_types_a_keystroke_from_the_device_pipe(void)
 	CHECK_EQ(out.report[0].keyboard[2], 0x04);
 }
 
+static void session_holding_a_key(struct unifying_session *s)
+{
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_paired(s);
+	keystroke(f, 0x5f66f458, release);
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
+	keystroke(f, 0x5f66f459, press_a);
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
+	CHECK_EQ(out.reports, 1);
+}
+
+static void test_a_session_releases_a_held_key_once_after_twice_the_keep_alive(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t limit;
+
+	session_holding_a_key(&s);
+	limit = 20 + 2 * (uint64_t)s.link.keepalive_ms;
+	unifying_session_tick(&s, limit, false, 0, 0, &out);
+	CHECK(!out.release_all);
+	unifying_session_tick(&s, limit + 1, false, 0, 0, &out);
+	CHECK(out.release_all);
+	unifying_session_tick(&s, limit + 1000, false, 0, 0, &out);
+	CHECK(!out.release_all);
+}
+
+static void test_a_session_releases_a_held_key_on_a_connect_frame_only(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t other[sizeof(connect_10)];
+
+	session_holding_a_key(&s);
+	memcpy(other, connect_10, sizeof(other));
+	other[sizeof(other) - 1] ^= 0x10;
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, other, sizeof(other), 0, 30, nonce,
+			       fake_aes, &out);
+	CHECK(!out.release_all);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 40,
+			       nonce, fake_aes, &out);
+	CHECK(out.release_all);
+}
+
 int main(void)
 {
 	RUN(test_checksum_is_the_negated_sum);
@@ -1776,5 +1822,7 @@ int main(void)
 	RUN(test_a_heard_paired_keyboard_is_connected_then_silent);
 	RUN(test_the_tick_moves_the_channel_while_pairing_is_open);
 	RUN(test_a_session_types_a_keystroke_from_the_device_pipe);
+	RUN(test_a_session_releases_a_held_key_once_after_twice_the_keep_alive);
+	RUN(test_a_session_releases_a_held_key_on_a_connect_frame_only);
 	return TEST_EXIT();
 }
