@@ -4,8 +4,4 @@ config COUNTERS
 	bool "Print link and USB counters on the console every 10 s"
 	default y
 
-config UNIFYING_POC
-	bool "Build the Logitech Unifying pairing proof of concept instead of the NuPhy receiver"
-	select ENTROPY_GENERATOR
-
 source "Kconfig.zephyr"

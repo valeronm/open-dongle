@@ -9,16 +9,11 @@ file(STRINGS ${manifest} version_line REGEX "^version = \"[0-9]+\\.[0-9]+\\.[0-9
 if(NOT version_line MATCHES "([0-9]+)\\.([0-9]+)\\.([0-9]+)")
   message(FATAL_ERROR "no version line in ${manifest}")
 endif()
-set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
+set_property(SOURCE src/core.c APPEND PROPERTY COMPILE_DEFINITIONS
   FIRMWARE_VERSION_MAJOR=${CMAKE_MATCH_1} FIRMWARE_VERSION_MINOR=${CMAKE_MATCH_2}
   FIRMWARE_VERSION_PATCH=${CMAKE_MATCH_3})
 
-target_sources(app PRIVATE src/radio.c src/noise.c src/usb.c src/indicator.c)
-if(CONFIG_UNIFYING_POC)
-  target_sources(app PRIVATE src/unifying_main.c src/unifying.c src/reports.c src/store.c
-    src/chanpick.c)
-else()
-  target_sources(app PRIVATE
-    src/main.c src/nuphy.c src/reports.c src/chanpick.c src/link.c src/store.c src/diag.c
-    src/diagproto.c src/history.c)
-endif()
+target_sources(app PRIVATE
+  src/main.c src/core.c src/nuphy_main.c src/unifying_main.c src/radio.c src/noise.c src/usb.c
+  src/indicator.c src/nuphy.c src/unifying.c src/protocol.c src/reports.c src/chanpick.c
+  src/link.c src/store.c src/diag.c src/diagproto.c src/history.c)

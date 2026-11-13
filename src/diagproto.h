@@ -30,6 +30,8 @@ enum diag_command {
 	DIAG_CLEAR,
 	DIAG_FORCE_CHANNELS,
 	DIAG_PAIR,
+	/* arg 0 reads; 1 or 2 sets. The reply is the running protocol, then 1 if the dongle
+	 * reboots to apply a changed protocol. */
 	DIAG_PROTOCOL,
 };
 
