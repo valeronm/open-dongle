@@ -17,6 +17,16 @@ pub fn action_question(action: Action) -> &'static str {
     }
 }
 
+pub fn switch_question(to: Protocol) -> String {
+    format!(
+        "Switch to {}? The dongle reboots and history starts over.",
+        to.name()
+    )
+}
+
+pub const PAIRING_OPEN: &str =
+    "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast";
+
 pub fn flash_question(state: State, serial: &str, file: &str) -> String {
     let state = match state {
         State::Dongle => "running OpenDongle",
@@ -711,5 +721,13 @@ mod tests {
     fn a_wpid_prints_its_two_bytes_or_none() {
         assert_eq!(wpid(Some([0x40, 0x8a, 0, 0])), "408a");
         assert_eq!(wpid(None), "none");
+    }
+
+    #[test]
+    fn the_switch_question_names_the_reboot_and_the_history() {
+        assert_eq!(
+            switch_question(Protocol::Unifying),
+            "Switch to Unifying? The dongle reboots and history starts over."
+        );
     }
 }

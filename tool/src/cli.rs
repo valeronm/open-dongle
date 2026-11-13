@@ -117,9 +117,7 @@ pub fn pair<T: Transport>(dev: &mut Device<T>) -> Result<()> {
         ),
         _ => err,
     })?;
-    println!(
-        "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
-    );
+    println!("{}", format::PAIRING_OPEN);
     Ok(())
 }
 

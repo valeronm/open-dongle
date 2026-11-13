@@ -18,9 +18,9 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
-    link_state_name, noise_level, noise_ruler, paired, share, unifying_state_name, uptime,
-    usb_state, wall_clock, wpid,
+    ChannelRole, NOISE_QUESTION, PAIRING_OPEN, action_question, channel_role, describe_event,
+    last_packet, link_state_name, noise_level, noise_ruler, paired, share, switch_question,
+    unifying_state_name, uptime, usb_state, wall_clock, wpid,
 };
 use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status};
 
@@ -233,11 +233,6 @@ impl History {
         }
         self.boot
             .get_or_insert_with(|| wall_clock(Local::now(), s.uptime_ms, 0));
-        if s.protocol == Protocol::Unifying {
-            self.forget_history();
-            self.status = Some(s);
-            return Ok(());
-        }
         self.minutes
             .retain(|(i, _)| *i >= s.minute_oldest && *i < s.minute_next);
         self.events
@@ -301,28 +296,45 @@ fn scrolled_top(
 enum Prompt {
     Noise,
     Action(Action),
+    Switch(Protocol),
 }
 
 impl Prompt {
     fn question(self) -> String {
         let question = match self {
-            Prompt::Noise => NOISE_QUESTION,
-            Prompt::Action(action) => action_question(action),
+            Prompt::Noise => NOISE_QUESTION.to_string(),
+            Prompt::Action(action) => action_question(action).to_string(),
+            Prompt::Switch(to) => switch_question(to),
         };
         format!("{question} y/n")
     }
 }
 
-/// Noise is refused by the dongle outside NuPhy mode.
-fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Prompt)] {
-    const NOISE: (char, &str, Prompt) = ('n', "noise", Prompt::Noise);
-    const REBOOT: (char, &str, Prompt) = ('r', "reboot", Prompt::Action(Action::Reboot));
-    const BOOTLOADER: (char, &str, Prompt) =
-        ('b', "bootloader", Prompt::Action(Action::Bootloader));
-    const CLEAR: (char, &str, Prompt) = ('c', "clear", Prompt::Action(Action::Clear));
+#[derive(Clone, Copy)]
+enum Key {
+    Ask(Prompt),
+    Pair,
+}
+
+fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Key)] {
+    const NOISE: (char, &str, Key) = ('n', "noise", Key::Ask(Prompt::Noise));
+    const PAIR: (char, &str, Key) = ('a', "pair", Key::Pair);
+    const TO_NUPHY: (char, &str, Key) = ('p', "nuphy", Key::Ask(Prompt::Switch(Protocol::Nuphy)));
+    const TO_UNIFYING: (char, &str, Key) = (
+        'p',
+        "unifying",
+        Key::Ask(Prompt::Switch(Protocol::Unifying)),
+    );
+    const REBOOT: (char, &str, Key) = ('r', "reboot", Key::Ask(Prompt::Action(Action::Reboot)));
+    const BOOTLOADER: (char, &str, Key) = (
+        'b',
+        "bootloader",
+        Key::Ask(Prompt::Action(Action::Bootloader)),
+    );
+    const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
     match protocol {
-        Protocol::Nuphy => &[NOISE, REBOOT, BOOTLOADER, CLEAR],
-        Protocol::Unifying => &[REBOOT, BOOTLOADER, CLEAR],
+        Protocol::Nuphy => &[NOISE, TO_UNIFYING, REBOOT, BOOTLOADER, CLEAR],
+        Protocol::Unifying => &[NOISE, PAIR, TO_NUPHY, REBOOT, BOOTLOADER, CLEAR],
     }
 }
 
@@ -385,9 +397,8 @@ impl App {
             }
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char(c) => self.prompt = self.key_prompt(c),
+                KeyCode::Char(c) => self.press(c),
                 KeyCode::Esc => self.noise = None,
-                _ if self.protocol() == Protocol::Unifying => {}
                 KeyCode::Left => self.scroll += 10,
                 KeyCode::Right => self.scroll = self.scroll.saturating_sub(10),
                 KeyCode::Up => self.scroll_events(EventsMove::Newer(1)),
@@ -442,11 +453,30 @@ impl<T: Transport> App<T> {
             .map_or(Protocol::Nuphy, |s| s.protocol)
     }
 
-    fn key_prompt(&self, key: char) -> Option<Prompt> {
+    fn key(&self, c: char) -> Option<Key> {
         action_keys(self.protocol())
             .iter()
-            .find(|(k, _, _)| *k == key)
-            .map(|(_, _, prompt)| *prompt)
+            .find(|(k, _, _)| *k == c)
+            .map(|(_, _, key)| *key)
+    }
+
+    fn press(&mut self, c: char) {
+        match self.key(c) {
+            Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
+            Some(Key::Pair) => self.pair(),
+            None => {}
+        }
+    }
+
+    fn pair(&mut self) {
+        let Some(dev) = self.device.as_mut() else {
+            self.message = "disconnected".into();
+            return;
+        };
+        self.message = match dev.pair() {
+            Ok(()) => PAIRING_OPEN.into(),
+            Err(e) => format!("failed: {}", error_text(&e)),
+        };
     }
 
     fn scroll_events(&mut self, step: EventsMove) {
@@ -482,30 +512,25 @@ impl<T: Transport> App<T> {
             return;
         };
         let result = match prompt {
-            Prompt::Noise => dev.noise().map(|n| self.noise = Some(n)),
-            Prompt::Action(c) => dev.action(c),
+            Prompt::Noise => dev.noise().map(|n| {
+                self.noise = Some(n);
+                "done".to_string()
+            }),
+            Prompt::Action(c) => dev.action(c).map(|()| "done".to_string()),
+            Prompt::Switch(to) => dev.protocol(Some(to)).map(|(_, rebooting)| {
+                if rebooting {
+                    format!("switching to {}; the dongle reboots", to.name())
+                } else {
+                    format!("the dongle already runs {}", to.name())
+                }
+            }),
         };
-        self.message = match result {
-            Ok(()) => "done".into(),
-            Err(e) => format!("failed: {}", error_text(&e)),
-        };
+        self.message = result.unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
     }
 
     fn draw(&mut self, f: &mut Frame) {
         let status =
             Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle"));
-        if self.protocol() == Protocol::Unifying {
-            let [top, middle, footer] = Layout::vertical([
-                Constraint::Length(4),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
-            .areas(f.area());
-            f.render_widget(status, top);
-            f.render_widget(Paragraph::new("history is kept only in NuPhy mode"), middle);
-            f.render_widget(Paragraph::new(self.help("")), footer);
-            return;
-        }
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(HISTORY_MIN_ROWS),
@@ -519,13 +544,10 @@ impl<T: Transport> App<T> {
             None => self.draw_history(f, middle),
         }
         self.draw_events(f, bottom);
-        f.render_widget(
-            Paragraph::new(self.help("  ←/→ history  ↑/↓ events")),
-            footer,
-        );
+        f.render_widget(Paragraph::new(self.help()), footer);
     }
 
-    fn help(&self, navigation: &str) -> String {
+    fn help(&self) -> String {
         match self.prompt {
             Some(p) => p.question(),
             None if !self.message.is_empty() => self.message.clone(),
@@ -534,7 +556,10 @@ impl<T: Transport> App<T> {
                     .iter()
                     .map(|(key, label, _)| format!("{key} {label}"))
                     .collect();
-                format!("{}{navigation}  esc back  q quit", actions.join("  "))
+                format!(
+                    "{}  ←/→ history  ↑/↓ events  esc back  q quit",
+                    actions.join("  ")
+                )
             }),
         }
     }
@@ -918,26 +943,17 @@ mod tests {
     }
 
     #[test]
-    fn a_unifying_dongle_fetches_no_history() {
-        let payload = unifying_payload();
-        let dev = Device::new(
-            Fake::new(move |req| {
-                assert_eq!(req[0], Command::Status as u8, "only status is asked");
-                parts(req[0], req[1], &payload)
-            }),
-            0,
-        );
-        let mut h = History {
-            minutes: vec![(0, quiet())],
-            ..History::default()
-        };
-        catch_up(&mut h, dev).unwrap();
-        assert!(h.minutes.is_empty() && h.events.is_empty());
-        assert!(h.status.is_some());
+    fn a_unifying_dongle_fetches_its_history() {
+        let mut dev = dongle(1, 200 * 60_000, 130, 0);
+        let mut s = dev.status().unwrap();
+        s.protocol = Protocol::Unifying;
+        let mut h = History::default();
+        h.refresh(&mut dev, s).unwrap();
+        assert_eq!(h.minutes.len(), 130);
     }
 
     #[test]
-    fn a_unifying_dongle_shows_its_state_and_no_history() {
+    fn a_unifying_dongle_draws_the_full_layout_and_its_keys() {
         let mut app: App = App::new(None);
         app.history.status = Some(unifying_status());
         app.history.boot = Some(boot());
@@ -945,55 +961,80 @@ mod tests {
         terminal.draw(|f| app.draw(f)).unwrap();
         let rows = screen(&terminal);
         let text = rows.join("\n");
+        assert!(text.contains("events"), "{text}");
         assert!(
-            text.contains("connected on 26, keyboard 7015   signal -71 dBm, last packet 12 ms ago"),
+            !text.contains("history is kept only in NuPhy mode"),
             "{text}"
         );
-        assert!(text.contains("Unifying"), "{text}");
-        assert!(
-            text.contains("history is kept only in NuPhy mode"),
-            "{text}"
-        );
-        assert!(!text.contains("noise peak"), "{text}");
-        let footer = rows[23].trim_end();
-        assert!(
-            footer.contains("r reboot") && footer.contains("c clear") && footer.contains("q quit"),
-            "{footer}"
-        );
-        assert!(!footer.contains("n noise"), "{footer}");
-    }
-
-    #[test]
-    fn a_unifying_dongle_draws_no_events_and_offers_no_history_keys() {
-        let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
-        app.history.boot = Some(boot());
-        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        terminal.draw(|f| app.draw(f)).unwrap();
-        let rows = screen(&terminal);
-        let text = rows.join("\n");
-        assert!(!text.contains("events"), "{text}");
         assert_eq!(
             rows[23].trim_end(),
-            "r reboot  b bootloader  c clear  esc back  q quit"
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit"
         );
     }
 
     #[test]
-    fn the_noise_key_is_offered_only_in_nuphy_mode_and_clear_in_both() {
+    fn each_mode_offers_switching_to_the_other() {
         let mut app: App = App::new(None);
         app.history.status = Some(unifying_status());
-        assert!(app.key_prompt('n').is_none());
         assert!(matches!(
-            app.key_prompt('c'),
-            Some(Prompt::Action(Action::Clear))
+            app.key('p'),
+            Some(Key::Ask(Prompt::Switch(Protocol::Nuphy)))
         ));
+        assert!(matches!(app.key('a'), Some(Key::Pair)));
         app.history.status.as_mut().unwrap().protocol = Protocol::Nuphy;
-        assert!(matches!(app.key_prompt('n'), Some(Prompt::Noise)));
         assert!(matches!(
-            app.key_prompt('c'),
-            Some(Prompt::Action(Action::Clear))
+            app.key('p'),
+            Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
         ));
+        assert!(app.key('a').is_none());
+        assert!(matches!(app.key('n'), Some(Key::Ask(Prompt::Noise))));
+    }
+
+    #[test]
+    fn switching_asks_the_dongle_for_the_other_protocol() {
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = sent.clone();
+        let mut app = App::new(None);
+        app.device = Some(Device::new(
+            Fake::new(move |req| {
+                seen.set(Some((
+                    req[0],
+                    u32::from_le_bytes(req[2..6].try_into().unwrap()),
+                )));
+                parts(req[0], req[1], &[2, 1])
+            }),
+            0,
+        ));
+        app.answer(Prompt::Switch(Protocol::Unifying));
+        assert_eq!(sent.get(), Some((Command::Protocol as u8, 2)));
+        assert_eq!(
+            footer(&mut app),
+            "switching to Unifying; the dongle reboots"
+        );
+    }
+
+    #[test]
+    fn the_pair_key_opens_pairing_without_asking() {
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = sent.clone();
+        let mut app = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.device = Some(Device::new(
+            Fake::new(move |req| {
+                seen.set(Some(req[0]));
+                parts(req[0], req[1], &[])
+            }),
+            0,
+        ));
+        app.press('a');
+        assert!(app.prompt.is_none());
+        assert_eq!(sent.get(), Some(Command::Pair as u8));
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert_eq!(
+            screen(&terminal)[23].trim_end(),
+            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
+        );
     }
 
     struct Unplugged;
