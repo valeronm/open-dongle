@@ -44,7 +44,7 @@ void core_fill_status(struct diag_status *st);
  * itself; returns true with the next request it does not answer. */
 bool core_take_request(struct diag_request *out);
 
-void nuphy_run(int store_err);
-void unifying_run(int store_err);
+FUNC_NORETURN void nuphy_run(int store_err);
+FUNC_NORETURN void unifying_run(int store_err);
 
 #endif

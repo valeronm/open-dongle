@@ -258,6 +258,10 @@ static void serve_protocol(const struct diag_request *req)
 		diag_reply(req, reply, sizeof(reply), DIAG_AFTER_NONE);
 		return;
 	}
+	/* A protocol saved without its rebooting reply takes effect at an unrelated later reboot. */
+	if (!diag_reply_fits(sizeof(reply))) {
+		return;
+	}
 	err = store_save_protocol(want);
 	if (err) {
 		printk("saving the protocol failed: %d\n", err);

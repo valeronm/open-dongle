@@ -22,6 +22,7 @@ bool diag_take_request(struct diag_request *out);
  */
 void diag_reply(const struct diag_request *req, const uint8_t *payload, size_t len,
 		enum diag_after after);
+bool diag_reply_fits(size_t len);
 void diag_reply_error(const struct diag_request *req, enum diag_error code, uint8_t detail);
 
 #endif

@@ -317,7 +317,7 @@ static void serve_diag(const struct diag_request *req)
 	}
 }
 
-void nuphy_run(int store_err)
+FUNC_NORETURN void nuphy_run(int store_err)
 {
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;

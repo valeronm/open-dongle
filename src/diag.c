@@ -29,12 +29,17 @@ bool diag_take_request(struct diag_request *out)
 	return k_msgq_get(&diag_requests, out, K_NO_WAIT) == 0;
 }
 
+bool diag_reply_fits(size_t len)
+{
+	return k_msgq_num_free_get(&diag_parts) >= diag_part_count(len);
+}
+
 void diag_reply(const struct diag_request *req, const uint8_t *payload, size_t len,
 		enum diag_after after)
 {
 	size_t count = diag_part_count(len);
 
-	if (k_msgq_num_free_get(&diag_parts) < count) {
+	if (!diag_reply_fits(len)) {
 		return;
 	}
 	for (size_t i = 0; i < count; i++) {

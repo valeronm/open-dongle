@@ -202,7 +202,7 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	}
 }
 
-void unifying_run(int store_err)
+FUNC_NORETURN void unifying_run(int store_err)
 {
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	struct radio_config rc;
