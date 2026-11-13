@@ -5,6 +5,6 @@
   standard library and each other.
   Their tests build them with the host compiler, where no Zephyr, nrfx or ESB header exists.
 - Radio, USB, flash and the clock reach those modules only through `src/core.c`,
-  `src/nuphy_main.c`, `src/unifying_main.c` and `src/main.c`.
+  `src/nuphy_main.c`, `src/unifying_main.c`, `src/main.c`, `src/diag.c` and `src/store.c`.
 - `src/radio.c` is the only file that uses the ESB library, and `src/radio.h` must not change if
   it is replaced by a receiver that checks the NuPhy checksum before acknowledging.
