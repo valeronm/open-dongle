@@ -153,9 +153,13 @@ struct unifying_link {
 	uint64_t last_ms;
 	bool keyboard_down;
 	bool media_down;
+	uint32_t refused;
 };
 
 void unifying_link_reset(struct unifying_link *l);
+
+/* A connect frame is what a keyboard sends on the receiver's own address after it boots. */
+bool unifying_is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_octet);
 
 /*
  * The keyboard picks a new counter on every boot, so a connect frame from the keyboard with
@@ -258,6 +262,20 @@ struct unifying_session {
 	bool heard;
 	uint64_t heard_ms;
 	int8_t rssi;
+	uint64_t started_ms;
+	bool silent;
+	uint64_t silent_since_ms;
+	bool connect_in_silence;
+	bool window_was_open;
+	uint64_t deaf_until_ms;
+};
+
+enum unifying_heard {
+	UNIFYING_HEARD_NONE,
+	UNIFYING_HEARD_FIRST,
+	UNIFYING_HEARD_AGAIN,
+	/* Heard again after a connect frame arrived during the silence. */
+	UNIFYING_HEARD_WOKE,
 };
 
 /* What the caller must do after a session call; zeroed by the call. */
@@ -274,6 +292,20 @@ struct unifying_out {
 	bool attempt_expired;
 	bool set_channel;
 	uint8_t channel;
+	bool went_silent;
+	/* Time since the last frame when the silence was noticed. */
+	uint32_t silent_ms;
+	enum unifying_heard heard;
+	/* For UNIFYING_HEARD_FIRST, time since the session started; otherwise since the silence was
+	 * noticed. */
+	uint32_t down_ms;
+	bool reconnected;
+	bool attack_started;
+	/* A device-address frame that fails its checksum or a refused keystroke. */
+	bool invalid;
+	bool window_closed;
+	/* The handshake step an expired attempt had answered, 1 or 2. */
+	uint8_t expired_step;
 };
 
 /* record is NULL when no keyboard is stored. */
@@ -295,6 +327,9 @@ void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint3
 void unifying_session_channel_moved(struct unifying_session *s);
 
 void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms);
+
+/* The receiver was off until now_ms, so silence before it is not the keyboard's. */
+void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms);
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms);
 

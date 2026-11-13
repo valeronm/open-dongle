@@ -248,7 +248,7 @@ void unifying_link_reset(struct unifying_link *l)
 	*l = (struct unifying_link){.keepalive_ms = UNIFYING_KEEPALIVE_DEFAULT_MS};
 }
 
-static bool is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_octet)
+bool unifying_is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_octet)
 {
 	bool shape = (len == UNIFYING_FRAME_MAX && frame[1] == 0x51 && frame[3] == 0x04) ||
 		     (len == CONNECT_SHORT_LEN && frame[1] == 0x4f && frame[3] == 0x00);
@@ -262,7 +262,7 @@ bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, cons
 {
 	bool held = l->keyboard_down || l->media_down;
 
-	if (!is_connect_frame(frame, len, device_octet)) {
+	if (!unifying_is_connect_frame(frame, len, device_octet)) {
 		return false;
 	}
 	l->synced = false;
@@ -362,6 +362,7 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 		if (!l->synced || attack) {
 			l->has_candidate = false;
 		}
+		l->refused++;
 		return 0;
 	}
 	counter_block(frame, block);
@@ -372,11 +373,15 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 	if (p[7] != PLAINTEXT_MARKER) {
 		l->has_candidate = false;
 		l->attack_until_ms = now_ms + UNIFYING_ATTACK_MS;
+		l->refused++;
 		return 0;
 	}
 	r.keyboard[0] = p[0];
 	memcpy(&r.keyboard[2], &p[1], sizeof(p) - 2);
 	c = classify(l, counter, is_release(&r), attack);
+	if (c.verdict == REFUSE) {
+		l->refused++;
+	}
 	if (c.types_candidate) {
 		type(l, &l->candidate.report, counter, &out[n++]);
 	}
@@ -507,11 +512,23 @@ void unifying_record_restore(struct unifying_pairing *p, const uint8_t in[UNIFYI
 	unifying_pairing_restore(p, &d);
 }
 
+static bool quiet_too_long(const struct unifying_session *s, uint64_t now_ms)
+{
+	uint64_t since = s->heard_ms > s->deaf_until_ms ? s->heard_ms : s->deaf_until_ms;
+
+	/* deaf_until_ms can be later than a caller's earlier clock reading. */
+	if (now_ms <= since) {
+		return false;
+	}
+	return now_ms - since >= 2 * (uint64_t)s->link.keepalive_ms;
+}
+
 void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
 			   const uint8_t *record, uint64_t now_ms)
 {
 	memset(s, 0, sizeof(*s));
 	s->receiver = *r;
+	s->started_ms = now_ms;
 	unifying_link_reset(&s->link);
 	if (record != NULL) {
 		unifying_record_restore(&s->pairing, record);
@@ -530,8 +547,21 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
+		s->window_was_open = false;
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
+		uint32_t refused = s->link.refused;
+		bool attack = now_ms < s->link.attack_until_ms;
+
+		if (!s->heard) {
+			out->heard = UNIFYING_HEARD_FIRST;
+			out->down_ms = (uint32_t)(now_ms - s->started_ms);
+		} else if (s->silent) {
+			out->heard = s->connect_in_silence ? UNIFYING_HEARD_WOKE : UNIFYING_HEARD_AGAIN;
+			out->down_ms = (uint32_t)(now_ms - s->silent_since_ms);
+		}
+		s->silent = false;
+		s->connect_in_silence = false;
 		s->heard = true;
 		s->heard_ms = now_ms;
 		s->rssi = rssi;
@@ -544,7 +574,11 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 				out->reports = 1;
 			}
 		}
+		out->invalid = !unifying_checksum_ok(frame, len) || s->link.refused != refused;
+		out->attack_started = !attack && now_ms < s->link.attack_until_ms;
 	} else if (pipe == UNIFYING_PIPE_RECEIVER) {
+		out->reconnected = unifying_is_connect_frame(frame, len, s->receiver.device_octet);
+		s->connect_in_silence |= out->reconnected && s->silent;
 		out->release_all = unifying_link_reconnect(&s->link, s->receiver.device_octet, frame,
 							   len);
 		unifying_led_resend(&s->led);
@@ -555,8 +589,18 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out)
 {
 	uint8_t next;
+	uint8_t step = (uint8_t)s->pairing.attempt.state;
+	bool open = unifying_pairing_window_open(&s->pairing, now_ms);
+	bool pending;
 
 	*out = (struct unifying_out){0};
+	if (s->heard && !s->silent && unifying_has_device(&s->pairing) &&
+	    quiet_too_long(s, now_ms)) {
+		s->silent = true;
+		s->silent_since_ms = now_ms;
+		out->went_silent = true;
+		out->silent_ms = (uint32_t)(now_ms - s->heard_ms);
+	}
 	out->release_all = unifying_link_silent(&s->link, now_ms);
 	if (leds_changed) {
 		unifying_led_want(&s->led, host_leds);
@@ -564,6 +608,14 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	out->send_led = unifying_led_due(&s->led, unifying_has_device(&s->pairing), taken_count,
 					 &out->leds);
 	out->attempt_expired = unifying_pairing_expired(&s->pairing, now_ms);
+	if (out->attempt_expired) {
+		_Static_assert(UNIFYING_ANSWERED_1 == 1 && UNIFYING_ANSWERED_2 == 2,
+			       "expired_step is the state");
+		out->expired_step = step;
+	}
+	pending = step != UNIFYING_IDLE && !out->attempt_expired;
+	out->window_closed = s->window_was_open && !open && !pending;
+	s->window_was_open = open || pending;
 	next = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
 	if (next != s->channel) {
 		out->set_channel = true;
@@ -585,6 +637,7 @@ void unifying_session_channel_moved(struct unifying_session *s)
 void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms)
 {
 	unifying_pairing_open(&s->pairing, now_ms);
+	s->window_was_open = true;
 }
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms)
@@ -595,8 +648,15 @@ enum unifying_status unifying_session_status(const struct unifying_session *s, u
 	if (!unifying_has_device(&s->pairing)) {
 		return UNIFYING_NOT_PAIRED;
 	}
-	if (s->heard && now_ms - s->heard_ms < 2 * (uint64_t)s->link.keepalive_ms) {
+	if (s->heard && !quiet_too_long(s, now_ms)) {
 		return UNIFYING_CONNECTED;
 	}
 	return UNIFYING_SILENT;
+}
+
+void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
+{
+	if (!s->silent) {
+		s->deaf_until_ms = now_ms;
+	}
 }

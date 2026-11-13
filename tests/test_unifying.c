@@ -1717,6 +1717,275 @@ static void test_a_session_releases_a_held_key_on_a_connect_frame_only(void)
 	CHECK(out.release_all);
 }
 
+static void hear(struct unifying_session *s, uint64_t now, struct unifying_out *out)
+{
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
+			       -60, now, nonce, fake_aes, out);
+}
+
+static uint64_t silence_after(const struct unifying_session *s, uint64_t heard)
+{
+	return heard + 2 * (uint64_t)s->link.keepalive_ms;
+}
+
+static void test_the_first_frame_is_first_contact_counted_from_the_start(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	hear(&s, 700, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_FIRST);
+	CHECK_EQ(out.down_ms, 700);
+	hear(&s, 800, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_NONE);
+}
+
+static void test_silence_is_reported_once_and_the_next_frame_ends_it(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t silent;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	silent = silence_after(&s, 1000);
+	unifying_session_tick(&s, silent - 1, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	CHECK(out.went_silent);
+	CHECK_EQ(out.silent_ms, silent - 1000);
+	unifying_session_tick(&s, silent + 10, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	hear(&s, silent + 5000, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_AGAIN);
+	CHECK_EQ(out.down_ms, 5000);
+}
+
+static void test_a_connect_frame_during_the_silence_makes_it_a_wake(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t silent;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	silent = silence_after(&s, 1000);
+	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
+			       silent + 100, nonce, fake_aes, &out);
+	CHECK(out.reconnected);
+	hear(&s, silent + 120, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_WOKE);
+	unifying_session_tick(&s, silence_after(&s, silent + 120), false, 0, 0, &out);
+	hear(&s, silence_after(&s, silent + 120) + 50, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_AGAIN);
+}
+
+static void test_a_connect_frame_while_connected_is_a_reconnect_not_a_wake(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t other[sizeof(connect_10)];
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	memcpy(other, connect_10, sizeof(other));
+	other[sizeof(other) - 1] ^= 0x10;
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, other, sizeof(other), 0, 1010, nonce,
+			       fake_aes, &out);
+	CHECK(!out.reconnected);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 1020,
+			       nonce, fake_aes, &out);
+	CHECK(out.reconnected);
+	hear(&s, 1030, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_NONE);
+}
+
+static void test_an_unpaired_session_never_goes_silent(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	hear(&s, 1000, &out);
+	unifying_session_tick(&s, 100000, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+}
+
+static void test_a_radio_pause_postpones_the_silence(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	unifying_session_radio_resumed(&s, 2500);
+	unifying_session_tick(&s, silence_after(&s, 2500) - 1, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	CHECK_EQ(unifying_session_status(&s, silence_after(&s, 2500) - 1), UNIFYING_CONNECTED);
+	unifying_session_tick(&s, silence_after(&s, 2500), false, 0, 0, &out);
+	CHECK(out.went_silent);
+}
+
+static void test_a_refused_keystroke_and_a_bad_checksum_are_invalid(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+	uint8_t bad[sizeof(keep_alive_1100)];
+
+	session_holding_a_key(&s);
+	keystroke(f, 0x5f66f400, press_a);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 30, nonce, fake_aes, &out);
+	CHECK(out.invalid);
+	hear(&s, 40, &out);
+	CHECK(!out.invalid);
+	memcpy(bad, keep_alive_1100, sizeof(bad));
+	bad[sizeof(bad) - 1] ^= 0x10;
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, bad, sizeof(bad), 0, 50, nonce, fake_aes,
+			       &out);
+	CHECK(out.invalid);
+}
+
+static void test_a_forged_keystroke_starts_the_attack_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_holding_a_key(&s);
+	keystroke(f, 0x5f66f45a, forged);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 30, nonce, fake_aes, &out);
+	CHECK(out.attack_started);
+	CHECK(out.invalid);
+	keystroke(f, 0x5f66f45b, forged);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 40, nonce, fake_aes, &out);
+	CHECK(!out.attack_started);
+	keystroke(f, 0x5f66f45c, forged);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 40 + UNIFYING_ATTACK_MS,
+			       nonce, fake_aes, &out);
+	CHECK(out.attack_started);
+}
+
+static void test_a_window_that_runs_out_is_reported_closed_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	unifying_session_tick(&s, UNIFYING_PAIRING_WINDOW_MS - 1, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+	unifying_session_tick(&s, UNIFYING_PAIRING_WINDOW_MS, false, 0, 0, &out);
+	CHECK(out.window_closed);
+	unifying_session_tick(&s, UNIFYING_PAIRING_WINDOW_MS + 10, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+}
+
+static void test_a_window_closed_by_pairing_is_not_reported(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
+	request_2(f, 0xe1);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
+	request_3(f, 0x00);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
+	unifying_session_tick(&s, 30, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+}
+
+static void test_an_expired_attempt_reports_the_step_it_reached(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
+	unifying_session_tick(&s, UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
+	CHECK(out.attempt_expired);
+	CHECK_EQ(out.expired_step, 1);
+}
+
+static void test_a_window_is_not_reported_closed_while_an_attempt_finishes(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+	uint64_t end = UNIFYING_PAIRING_WINDOW_MS;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, end - 1, nonce, NULL, &out);
+	unifying_session_tick(&s, end, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+	request_2(f, 0xe1);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, end + 10, nonce, fake_aes,
+			       &out);
+	request_3(f, 0x00);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, end + 20, nonce, fake_aes,
+			       &out);
+	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
+	unifying_session_tick(&s, end + 30, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+}
+
+static void test_a_window_is_reported_closed_when_the_attempt_it_outlasted_expires(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+	uint64_t last = UNIFYING_PAIRING_WINDOW_MS - 1;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, last, nonce, NULL, &out);
+	unifying_session_tick(&s, UNIFYING_PAIRING_WINDOW_MS, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
+	CHECK(out.attempt_expired);
+	CHECK(out.window_closed);
+	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 2, false, 0, 0, &out);
+	CHECK(!out.window_closed);
+}
+
+static void test_a_radio_pause_during_a_silence_leaves_the_keyboard_silent(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t silent;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	silent = silence_after(&s, 1000);
+	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_radio_resumed(&s, silent + 500);
+	CHECK_EQ(unifying_session_status(&s, silent + 600), UNIFYING_SILENT);
+}
+
+static void test_a_status_read_before_the_radio_resumed_is_not_silent(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	unifying_session_radio_resumed(&s, 2000);
+	CHECK_EQ(unifying_session_status(&s, 1990), UNIFYING_CONNECTED);
+}
+
 int main(void)
 {
 	RUN(test_checksum_is_the_negated_sum);
@@ -1824,5 +2093,20 @@ int main(void)
 	RUN(test_a_session_types_a_keystroke_from_the_device_pipe);
 	RUN(test_a_session_releases_a_held_key_once_after_twice_the_keep_alive);
 	RUN(test_a_session_releases_a_held_key_on_a_connect_frame_only);
+	RUN(test_the_first_frame_is_first_contact_counted_from_the_start);
+	RUN(test_silence_is_reported_once_and_the_next_frame_ends_it);
+	RUN(test_a_connect_frame_during_the_silence_makes_it_a_wake);
+	RUN(test_a_connect_frame_while_connected_is_a_reconnect_not_a_wake);
+	RUN(test_an_unpaired_session_never_goes_silent);
+	RUN(test_a_radio_pause_postpones_the_silence);
+	RUN(test_a_refused_keystroke_and_a_bad_checksum_are_invalid);
+	RUN(test_a_forged_keystroke_starts_the_attack_once);
+	RUN(test_a_window_that_runs_out_is_reported_closed_once);
+	RUN(test_a_window_closed_by_pairing_is_not_reported);
+	RUN(test_an_expired_attempt_reports_the_step_it_reached);
+	RUN(test_a_window_is_not_reported_closed_while_an_attempt_finishes);
+	RUN(test_a_window_is_reported_closed_when_the_attempt_it_outlasted_expires);
+	RUN(test_a_radio_pause_during_a_silence_leaves_the_keyboard_silent);
+	RUN(test_a_status_read_before_the_radio_resumed_is_not_silent);
 	return TEST_EXIT();
 }
