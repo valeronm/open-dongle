@@ -15,11 +15,16 @@ static struct noise_tally noise;
 static volatile bool listening;
 static volatile uint32_t listen_generation;
 static volatile uint32_t payloads_seen;
+static atomic_t replies_taken;
 
 static void on_esb_event(const struct esb_evt *evt)
 {
 	struct esb_payload rx;
 
+	if (evt->evt_id == ESB_EVENT_TX_SUCCESS) {
+		atomic_inc(&replies_taken);
+		return;
+	}
 	if (evt->evt_id != ESB_EVENT_RX_RECEIVED) {
 		return;
 	}
@@ -198,6 +203,11 @@ uint8_t radio_noise_take(struct noise_tally *t)
 	noise = (struct noise_tally){0};
 	irq_unlock(key);
 	return channel;
+}
+
+uint32_t radio_replies_taken(void)
+{
+	return (uint32_t)atomic_get(&replies_taken);
 }
 
 int radio_reply(uint8_t pipe, const uint8_t *frame, size_t len)

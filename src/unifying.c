@@ -383,20 +383,47 @@ size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN])
 	return seal(out, UNIFYING_LED_FRAME_LEN);
 }
 
-void unifying_led_request(struct unifying_led *led)
+void unifying_led_want(struct unifying_led *led, uint8_t leds)
 {
-	led->pending = true;
+	led->wanted = leds;
+	if (!led->has_sent) {
+		led->resend = true;
+	}
 }
 
-bool unifying_led_due(const struct unifying_led *led, bool has_device, uint64_t now_ms)
+void unifying_led_resend(struct unifying_led *led)
 {
-	return has_device && led->pending &&
-	       (!led->sent || now_ms - led->last_ms >= UNIFYING_LED_INTERVAL_MS);
+	led->resend = true;
 }
 
-void unifying_led_sent(struct unifying_led *led, uint64_t now_ms)
+bool unifying_led_due(struct unifying_led *led, bool has_device, uint32_t taken_count,
+		      uint8_t *leds)
 {
-	*led = (struct unifying_led){.sent = true, .last_ms = now_ms};
+	if (taken_count != led->taken_count) {
+		led->outstanding = false;
+	}
+	if (!has_device || led->outstanding || !(led->resend || led->wanted != led->sent)) {
+		return false;
+	}
+	*leds = led->wanted;
+	return true;
+}
+
+void unifying_led_sent(struct unifying_led *led, uint8_t leds, uint32_t taken_count)
+{
+	led->taken_count = taken_count;
+	led->sent = leds;
+	led->has_sent = true;
+	led->resend = false;
+	led->outstanding = true;
+}
+
+void unifying_led_dropped(struct unifying_led *led)
+{
+	if (led->outstanding) {
+		led->outstanding = false;
+		led->resend = true;
+	}
 }
 
 static uint16_t keepalive_timeout(const uint8_t *frame, size_t len)

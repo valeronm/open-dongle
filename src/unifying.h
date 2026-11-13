@@ -21,7 +21,6 @@
 #define UNIFYING_COUNTER_WINDOW 16
 #define UNIFYING_ATTACK_MS 5000
 #define UNIFYING_IDLE_KEEPALIVE_MS 1000
-#define UNIFYING_LED_INTERVAL_MS 1000
 #define UNIFYING_KEYSTROKE_REPORTS 2
 #define UNIFYING_WPID_LEN 2
 #define UNIFYING_FLOOR_LEN 8
@@ -181,22 +180,36 @@ bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t
 
 size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN]);
 
+/* At most one LED frame waits in the ESB payload queue, which pairing replies share. */
 struct unifying_led {
-	bool pending;
-	bool sent;
-	uint64_t last_ms;
+	uint8_t wanted;
+	uint8_t sent;
+	bool has_sent;
+	bool resend;
+	bool outstanding;
+	uint32_t taken_count;
 };
 
-void unifying_led_request(struct unifying_led *led);
+void unifying_led_want(struct unifying_led *led, uint8_t leds);
+
+void unifying_led_resend(struct unifying_led *led);
 
 /*
- * Returns true while a device is paired, a requested LED frame waits and none was sent in the last
- * UNIFYING_LED_INTERVAL_MS, since each frame takes a slot in the ESB payload pool that pairing
- * replies share. A request stays due until unifying_led_sent records the frame as queued.
+ * Returns true, with *leds to send, while a device is paired, no LED frame is outstanding, and
+ * either a resend is requested or the wanted state differs from the last one sent. An outstanding
+ * frame counts as taken once taken_count differs from the count given to unifying_led_sent.
  */
-bool unifying_led_due(const struct unifying_led *led, bool has_device, uint64_t now_ms);
+bool unifying_led_due(struct unifying_led *led, bool has_device, uint32_t taken_count,
+		      uint8_t *leds);
 
-void unifying_led_sent(struct unifying_led *led, uint64_t now_ms);
+/*
+ * Records leds as queued; taken_count is sampled before queueing, as the frame can be taken at
+ * once.
+ */
+void unifying_led_sent(struct unifying_led *led, uint8_t leds, uint32_t taken_count);
+
+/* An outstanding frame that left the queue untaken is sent again. */
+void unifying_led_dropped(struct unifying_led *led);
 
 /* The record is the wpid, the key, then next_counter as the floor in 8 little-endian bytes. */
 void unifying_record_of(const struct unifying_pairing *p, const struct unifying_link *l,

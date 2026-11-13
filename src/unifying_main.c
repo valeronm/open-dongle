@@ -22,7 +22,7 @@ static struct unifying_pairing pairing;
 static struct unifying_link link;
 static struct reports reports;
 static atomic_t host_leds;
-static atomic_t led_requested;
+static atomic_t led_changed;
 static struct unifying_led led;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
 static atomic_t rx_dropped;
@@ -258,23 +258,27 @@ static void on_live(void)
 static void on_leds(uint8_t leds)
 {
 	atomic_set(&host_leds, leds);
-	atomic_set(&led_requested, 1);
+	atomic_set(&led_changed, 1);
 }
 
-static void send_leds(uint64_t now)
+static void send_leds(void)
 {
 	uint8_t frame[UNIFYING_LED_FRAME_LEN];
+	uint8_t leds;
+	uint32_t taken;
 	size_t n;
 
-	if (atomic_clear(&led_requested) != 0) {
-		unifying_led_request(&led);
+	if (atomic_clear(&led_changed) != 0) {
+		unifying_led_want(&led, (uint8_t)atomic_get(&host_leds));
 	}
-	if (!unifying_led_due(&led, unifying_has_device(&pairing), now)) {
+	if (!unifying_led_due(&led, unifying_has_device(&pairing), radio_replies_taken(),
+			      &leds)) {
 		return;
 	}
-	n = unifying_led_frame((uint8_t)atomic_get(&host_leds), frame);
+	n = unifying_led_frame(leds, frame);
+	taken = radio_replies_taken();
 	if (radio_reply(PIPE_DEVICE, frame, n) == 0) {
-		unifying_led_sent(&led, now);
+		unifying_led_sent(&led, leds, taken);
 	}
 }
 
@@ -350,7 +354,7 @@ int main(void)
 			if (item.pipe == PIPE_DEVICE) {
 				handle_keyboard(&item, now);
 			} else if (item.pipe == PIPE_RECEIVER) {
-				unifying_led_request(&led);
+				unifying_led_resend(&led);
 			}
 		}
 		if (unifying_link_silent(&link, now)) {
@@ -358,13 +362,15 @@ int main(void)
 			reports_release_all(&reports);
 			unlock_reports(true);
 		}
-		send_leds(now);
+		send_leds();
 		if (unifying_pairing_expired(&pairing, now)) {
 			printk("pairing timed out\n");
 		}
 		next = unifying_sweep_channel(&sweep, &pairing, now);
 		if (next != channel) {
-			radio_set_channel(next);
+			if (radio_set_channel(next) == 0) {
+				unifying_led_dropped(&led);
+			}
 			channel = next;
 		}
 		if (atomic_get(&rx_dropped) != 0) {

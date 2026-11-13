@@ -28,6 +28,13 @@ uint8_t radio_noise_take(struct noise_tally *t);
 /* Replies on a pipe go out in order, one per ACK; changing channel drops any still queued. */
 int radio_reply(uint8_t pipe, const uint8_t *frame, size_t len);
 
+/*
+ * Changes each time the transmitter takes queued replies, which is when it sends a new packet on
+ * the pipe after the ACK that carried one; replies taken together may change it once. A reply whose
+ * ACK the transmitter never received counts as taken too.
+ */
+uint32_t radio_replies_taken(void);
+
 /* Blocks for about 1.5 s with the receiver off, and returns with it listening on the current
  * channel again. */
 int radio_survey(struct chan_survey *s);

@@ -865,7 +865,8 @@ static void test_under_attack_a_pair_ending_at_the_window_edge_types_the_first(v
 	struct report r;
 
 	start_attack(&l);
-	CHECK(!receive_keystroke_at(&l, 1001 + UNIFYING_COUNTER_WINDOW - 1, press_a, ATTACK_START + 10, &r));
+	CHECK(!receive_keystroke_at(&l, 1001 + UNIFYING_COUNTER_WINDOW - 1, press_a,
+				    ATTACK_START + 10, &r));
 	CHECK(receive_keystroke_at(&l, 1001 + UNIFYING_COUNTER_WINDOW, press_b, ATTACK_START + 20, &r));
 	CHECK_EQ(r.keyboard[2], 0x04);
 	CHECK_EQ(l.next_counter, 1001 + UNIFYING_COUNTER_WINDOW);
@@ -950,7 +951,8 @@ static void test_under_attack_a_lone_release_is_typed_at_once(void)
 	start_attack(&l);
 	CHECK_EQ(receive_keystrokes_at(&l, 1001, release, ATTACK_START + 10, out), 1);
 	CHECK_EQ(l.next_counter, 1002);
-	CHECK_EQ(receive_keystrokes_at(&l, 1001 + 1 + UNIFYING_COUNTER_WINDOW, release, ATTACK_START + 20, out),
+	CHECK_EQ(receive_keystrokes_at(&l, 1001 + 1 + UNIFYING_COUNTER_WINDOW, release,
+				       ATTACK_START + 20, out),
 		 0);
 }
 
@@ -1337,61 +1339,124 @@ static void test_a_new_pairing_records_floor_0_and_resets_the_link(void)
 	CHECK(!l.synced);
 }
 
-static void test_no_led_frame_is_due_without_a_request(void)
+static void check_due(struct unifying_led *led, uint32_t taken, uint8_t want)
+{
+	uint8_t leds = 0xff;
+
+	CHECK(unifying_led_due(led, true, taken, &leds));
+	CHECK_EQ(leds, want);
+}
+
+static void test_no_led_frame_is_due_before_a_change_or_resend(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	CHECK(!unifying_led_due(&led, true, 0, &leds));
+}
+
+static void test_an_led_change_is_sent_at_once(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	unifying_led_want(&led, 0x02);
+	check_due(&led, 7, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	CHECK(!unifying_led_due(&led, true, 7, &leds));
+	CHECK(!unifying_led_due(&led, true, 8, &leds));
+}
+
+static void test_the_first_led_state_is_sent_even_when_it_is_zero(void)
 {
 	struct unifying_led led = {0};
 
-	CHECK(!unifying_led_due(&led, true, 0));
-	CHECK(!unifying_led_due(&led, true, 100000));
+	unifying_led_want(&led, 0x00);
+	check_due(&led, 0, 0x00);
+}
+
+static void test_an_led_change_while_one_is_outstanding_waits_until_it_is_taken(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	unifying_led_want(&led, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	unifying_led_want(&led, 0x00);
+	unifying_led_want(&led, 0x03);
+	CHECK(!unifying_led_due(&led, true, 7, &leds));
+	check_due(&led, 8, 0x03);
+	unifying_led_sent(&led, 0x03, 8);
+	CHECK(!unifying_led_due(&led, true, 9, &leds));
+}
+
+static void test_changes_back_to_the_outstanding_state_send_nothing_more(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	unifying_led_want(&led, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	unifying_led_want(&led, 0x00);
+	unifying_led_want(&led, 0x02);
+	CHECK(!unifying_led_due(&led, true, 8, &leds));
+}
+
+static void test_resends_while_outstanding_are_sent_once_after_it_is_taken(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	unifying_led_want(&led, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	unifying_led_resend(&led);
+	unifying_led_resend(&led);
+	CHECK(!unifying_led_due(&led, true, 7, &leds));
+	check_due(&led, 8, 0x02);
+	unifying_led_sent(&led, 0x02, 8);
+	CHECK(!unifying_led_due(&led, true, 9, &leds));
+}
+
+static void test_a_resend_sends_the_wanted_state(void)
+{
+	struct unifying_led led = {0};
+
+	unifying_led_resend(&led);
+	check_due(&led, 0, 0x00);
+}
+
+static void test_an_led_frame_not_queued_stays_due(void)
+{
+	struct unifying_led led = {0};
+
+	unifying_led_want(&led, 0x02);
+	check_due(&led, 0, 0x02);
+	check_due(&led, 0, 0x02);
+}
+
+static void test_a_dropped_led_frame_is_sent_again(void)
+{
+	struct unifying_led led = {0};
+	uint8_t leds;
+
+	unifying_led_want(&led, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	unifying_led_dropped(&led);
+	check_due(&led, 7, 0x02);
+	unifying_led_sent(&led, 0x02, 7);
+	CHECK(!unifying_led_due(&led, true, 8, &leds));
+	unifying_led_dropped(&led);
+	CHECK(!unifying_led_due(&led, true, 8, &leds));
 }
 
 static void test_no_led_frame_is_due_without_a_paired_device(void)
 {
 	struct unifying_led led = {0};
+	uint8_t leds;
 
-	unifying_led_request(&led);
-	CHECK(!unifying_led_due(&led, false, 0));
-	CHECK(unifying_led_due(&led, true, 0));
-}
-
-static void test_led_requests_within_the_interval_send_once_now_and_once_after_it(void)
-{
-	struct unifying_led led = {0};
-	uint64_t t = 20000;
-
-	unifying_led_request(&led);
-	CHECK(unifying_led_due(&led, true, t));
-	unifying_led_sent(&led, t);
-	CHECK(!unifying_led_due(&led, true, t));
-	unifying_led_request(&led);
-	CHECK(!unifying_led_due(&led, true, t + 500));
-	unifying_led_request(&led);
-	CHECK(!unifying_led_due(&led, true, t + UNIFYING_LED_INTERVAL_MS - 1));
-	CHECK(unifying_led_due(&led, true, t + UNIFYING_LED_INTERVAL_MS));
-	unifying_led_sent(&led, t + UNIFYING_LED_INTERVAL_MS);
-	CHECK(!unifying_led_due(&led, true, t + 2 * UNIFYING_LED_INTERVAL_MS));
-}
-
-static void test_an_led_request_after_the_interval_sends_at_once(void)
-{
-	struct unifying_led led = {0};
-
-	unifying_led_request(&led);
-	CHECK(unifying_led_due(&led, true, 0));
-	unifying_led_sent(&led, 0);
-	unifying_led_request(&led);
-	CHECK(unifying_led_due(&led, true, 1500));
-}
-
-static void test_an_led_frame_not_sent_stays_due(void)
-{
-	struct unifying_led led = {0};
-
-	unifying_led_request(&led);
-	CHECK(unifying_led_due(&led, true, 20000));
-	CHECK(unifying_led_due(&led, true, 20010));
-	unifying_led_sent(&led, 20010);
-	CHECK(!unifying_led_due(&led, true, 20020));
+	unifying_led_want(&led, 0x02);
+	CHECK(!unifying_led_due(&led, false, 0, &leds));
+	check_due(&led, 0, 0x02);
 }
 
 int main(void)
@@ -1474,10 +1539,15 @@ int main(void)
 	RUN(test_a_restored_record_pairs_the_device_and_seeds_the_floor);
 	RUN(test_a_record_after_a_new_pairing_leaves_the_counter_unknown);
 	RUN(test_a_new_pairing_records_floor_0_and_resets_the_link);
-	RUN(test_no_led_frame_is_due_without_a_request);
+	RUN(test_no_led_frame_is_due_before_a_change_or_resend);
+	RUN(test_an_led_change_is_sent_at_once);
+	RUN(test_the_first_led_state_is_sent_even_when_it_is_zero);
+	RUN(test_an_led_change_while_one_is_outstanding_waits_until_it_is_taken);
+	RUN(test_changes_back_to_the_outstanding_state_send_nothing_more);
+	RUN(test_resends_while_outstanding_are_sent_once_after_it_is_taken);
+	RUN(test_a_resend_sends_the_wanted_state);
+	RUN(test_an_led_frame_not_queued_stays_due);
+	RUN(test_a_dropped_led_frame_is_sent_again);
 	RUN(test_no_led_frame_is_due_without_a_paired_device);
-	RUN(test_led_requests_within_the_interval_send_once_now_and_once_after_it);
-	RUN(test_an_led_request_after_the_interval_sends_at_once);
-	RUN(test_an_led_frame_not_sent_stays_due);
 	return TEST_EXIT();
 }
