@@ -47,6 +47,10 @@ int radio_reply(uint8_t pipe, const uint8_t *frame, size_t len);
  */
 uint32_t radio_replies_taken(void);
 
+/* Reads each channel's RSSI once with the receiver off throughout, and returns with it listening on
+ * the current channel again; changing channel drops any queued replies. */
+int radio_sample(const uint8_t *channels, size_t n, int8_t *dbm);
+
 /* Blocks for about 1.5 s with the receiver off, and returns with it listening on the current
  * channel again. */
 int radio_survey(struct chan_survey *s);

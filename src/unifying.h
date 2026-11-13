@@ -17,6 +17,8 @@
 #define UNIFYING_SWEEP_DWELL_MS 20
 #define UNIFYING_AES_BLOCK_LEN 16
 #define UNIFYING_KEEPALIVE_DEFAULT_MS 1100
+/* An idle keyboard found a moved receiver within one keep-alive, at most about 1 s. */
+#define UNIFYING_MOVE_SEARCH_MS 1000
 #define UNIFYING_LED_FRAME_LEN 10
 #define UNIFYING_COUNTER_WINDOW 16
 #define UNIFYING_ATTACK_MS 5000
@@ -28,6 +30,10 @@
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
 extern const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN];
 extern const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS];
+
+#define UNIFYING_NORMAL_CHANNELS 25
+/* The channels a paired keyboard hops after an unacknowledged packet. */
+extern const uint8_t unifying_normal_channels[UNIFYING_NORMAL_CHANNELS];
 
 /* What the receiver hands out in Pairing Response 1; base and wpid also enter the key. */
 struct unifying_receiver {
@@ -265,6 +271,9 @@ struct unifying_session {
 	uint64_t silent_since_ms;
 	bool connect_in_silence;
 	uint64_t deaf_until_ms;
+	/* After a noise move, silence detection and the release of held keys wait until this time or
+	 * until the keyboard is heard. */
+	uint64_t search_until_ms;
 };
 
 enum unifying_heard {
@@ -289,6 +298,9 @@ struct unifying_out {
 	bool attempt_expired;
 	bool set_channel;
 	uint8_t channel;
+	/* set_channel came from a move for less noise, away from moved_from. */
+	bool noise_move;
+	uint8_t moved_from;
 	bool went_silent;
 	/* Time since the last frame when the silence was noticed. */
 	uint32_t silent_ms;
@@ -314,8 +326,11 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
 			    struct unifying_out *out);
 
+/* move_to is a channel chosen for less noise, or -1; it is taken only while
+ * unifying_session_movable allows. */
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
-			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out);
+			   uint8_t host_leds, uint32_t taken_count, int move_to,
+			   struct unifying_out *out);
 
 /* taken_count is sampled before the LED frame was queued. */
 void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count);
@@ -330,5 +345,11 @@ void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_caus
 void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms);
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms);
+
+/* The channel whose noise counts as home's; -1 while pairing is open or no keyboard is paired. */
+int unifying_session_home(const struct unifying_session *s, uint64_t now_ms);
+
+/* The home channel while a noise move may leave it; -1 also while a handshake runs. */
+int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms);
 
 #endif

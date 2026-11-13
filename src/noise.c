@@ -8,6 +8,7 @@ void noise_add(struct noise_tally *t, int8_t dbm)
 	t->readings++;
 	t->busy += dbm >= NOISE_BUSY_DBM;
 	t->strong += dbm >= NOISE_STRONG_DBM;
+	t->buckets[noise_bucket(dbm)]++;
 }
 
 void noise_merge(struct noise_tally *into, const struct noise_tally *from)
@@ -21,6 +22,9 @@ void noise_merge(struct noise_tally *into, const struct noise_tally *from)
 	into->readings += from->readings;
 	into->busy += from->busy;
 	into->strong += from->strong;
+	for (int b = 0; b < NOISE_BUCKETS; b++) {
+		into->buckets[b] += from->buckets[b];
+	}
 }
 
 static uint16_t share(uint32_t count, uint32_t readings)
@@ -36,4 +40,15 @@ struct noise_record noise_record(const struct noise_tally *t)
 	return (struct noise_record){.peak = t->peak,
 				     .busy = share(t->busy, t->readings),
 				     .strong = share(t->strong, t->readings)};
+}
+
+uint8_t noise_bucket(int8_t dbm)
+{
+	int b;
+
+	if (dbm < NOISE_BUSY_DBM) {
+		return 0;
+	}
+	b = 1 + (dbm - NOISE_BUSY_DBM) / 10;
+	return b < NOISE_BUCKETS ? (uint8_t)b : NOISE_BUCKETS - 1;
 }

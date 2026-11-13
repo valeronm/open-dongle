@@ -16,4 +16,4 @@ set_property(SOURCE src/core.c APPEND PROPERTY COMPILE_DEFINITIONS
 target_sources(app PRIVATE
   src/main.c src/core.c src/nuphy_main.c src/unifying_main.c src/radio.c src/noise.c src/usb.c
   src/indicator.c src/nuphy.c src/unifying.c src/protocol.c src/reports.c src/chanpick.c
-  src/link.c src/store.c src/diag.c src/diagproto.c src/history.c src/pairwin.c)
+  src/link.c src/store.c src/diag.c src/diagproto.c src/history.c src/pairwin.c src/chanwatch.c)

@@ -16,6 +16,7 @@ suite(nuphy ../src/nuphy.c)
 suite(reports ../src/reports.c)
 suite(chanpick ../src/chanpick.c)
 suite(noise ../src/noise.c)
+suite(chanwatch ../src/chanwatch.c ../src/noise.c)
 suite(link ../src/link.c ../src/nuphy.c ../src/pairwin.c)
 suite(diagproto ../src/diagproto.c)
 target_compile_definitions(test_diagproto PRIVATE

@@ -82,7 +82,8 @@ static void apply(const struct link_out *out)
 			 k_uptime_get_32() - link_down_ms);
 	}
 	if (out->moved) {
-		core_log(HISTORY_LINK_MOVED, out->moved_from, out->channel, 0, 0);
+		core_log(HISTORY_LINK_MOVED, out->moved_from, out->channel, HISTORY_MOVED_TO_HOME,
+			 0);
 	}
 	if (out->pairing_expired) {
 		core_log(HISTORY_PAIRING_TIMEOUT, 0, 0, 0, 0);

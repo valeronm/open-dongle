@@ -45,6 +45,13 @@ enum history_link_up {
 	HISTORY_UP_WOKE,
 };
 
+/* Byte c of HISTORY_LINK_MOVED; a noise move's value holds the home share in its high 16 bits and
+ * the new channel's in its low 16, in hundredths of a percent. */
+enum history_link_moved {
+	HISTORY_MOVED_TO_HOME,
+	HISTORY_MOVED_FOR_NOISE,
+};
+
 struct history_event {
 	uint64_t time_ms;
 	uint8_t type, a, b, c;
@@ -79,6 +86,10 @@ void history_tick(struct history *h, uint64_t now_ms, const struct history_total
 
 /* A gap's event is logged before the keyboard packet that ended the gap comes here. */
 void history_rssi(struct history *h, int8_t dbm);
+
+/* The weakest keyboard packet over the current and the previous minute; false when neither had
+ * one. */
+bool history_weakest(const struct history *h, int8_t *out);
 
 /* A gap or loss event records the readings since the last history_rssi in place of e's noise. */
 void history_event(struct history *h, const struct history_event *e);

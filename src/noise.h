@@ -6,6 +6,7 @@
 #define NOISE_BUSY_DBM -85
 #define NOISE_STRONG_DBM -60
 #define NOISE_SHARE_FULL 10000
+#define NOISE_BUCKETS 6
 
 /* peak is meaningful only once readings > 0. */
 struct noise_tally {
@@ -13,6 +14,7 @@ struct noise_tally {
 	uint32_t busy;
 	uint32_t strong;
 	int8_t peak;
+	uint32_t buckets[NOISE_BUCKETS];
 };
 
 /* busy and strong are shares of the readings in hundredths of a percent; all 0 without readings. */
@@ -25,5 +27,9 @@ struct noise_record {
 void noise_add(struct noise_tally *t, int8_t dbm);
 void noise_merge(struct noise_tally *into, const struct noise_tally *from);
 struct noise_record noise_record(const struct noise_tally *t);
+
+/* Bucket 0 holds readings below NOISE_BUSY_DBM; each later bucket starts 10 dB above the one
+ * before, and the last has no upper edge. */
+uint8_t noise_bucket(int8_t dbm);
 
 #endif

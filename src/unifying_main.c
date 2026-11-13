@@ -145,7 +145,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 	}
 }
 
-static void apply_tick(const struct unifying_out *out)
+static void apply_tick(const struct unifying_out *out, const struct chanwatch_move *move)
 {
 	if (out->release_all) {
 		core_release_keys();
@@ -166,6 +166,11 @@ static void apply_tick(const struct unifying_out *out)
 	}
 	if (out->set_channel && core_set_channel(out->channel) == 0) {
 		unifying_session_channel_moved(&session);
+		if (out->noise_move) {
+			core_log(HISTORY_LINK_MOVED, out->moved_from, out->channel,
+				 HISTORY_MOVED_FOR_NOISE,
+				 (uint32_t)move->home_share << 16 | move->to_share);
+		}
 	}
 }
 
@@ -189,18 +194,27 @@ static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_
 
 static int home(void)
 {
-	return unifying_has_device(&session.pairing) &&
-			       !unifying_pairing_window_open(&session.pairing,
-							     (uint64_t)k_uptime_get())
-		       ? session.channel
-		       : CORE_NO_HOME;
+	int channel = unifying_session_home(&session, (uint64_t)k_uptime_get());
+
+	return channel < 0 ? CORE_NO_HOME : channel;
+}
+
+static int movable(void)
+{
+	int channel = unifying_session_movable(&session, (uint64_t)k_uptime_get());
+
+	return channel < 0 ? CORE_NO_HOME : channel;
+}
+
+static void replies_dropped(void)
+{
+	unifying_session_channel_moved(&session);
 }
 
 static void radio_resumed(void)
 {
 	unifying_session_radio_resumed(&session, (uint64_t)k_uptime_get());
-	/* The survey's channel set flushed any ACK payload queued before it. */
-	unifying_session_channel_moved(&session);
+	replies_dropped();
 }
 
 static void show_state(uint64_t now)
@@ -250,6 +264,10 @@ static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
 	.fill_status = fill_status,
+	.candidates = unifying_normal_channels,
+	.candidates_len = UNIFYING_NORMAL_CHANNELS,
+	.movable = movable,
+	.replies_dropped = replies_dropped,
 };
 
 FUNC_NORETURN void unifying_run(int store_err)
@@ -281,6 +299,7 @@ FUNC_NORETURN void unifying_run(int store_err)
 
 	for (;;) {
 		struct unifying_out out;
+		struct chanwatch_move move;
 		struct diag_request req;
 		struct rx_item item;
 		uint32_t dropped;
@@ -298,8 +317,9 @@ FUNC_NORETURN void unifying_run(int store_err)
 		}
 		changed = core_take_leds(&leds);
 		core_poll();
-		unifying_session_tick(&session, now, changed, leds, radio_replies_taken(), &out);
-		apply_tick(&out);
+		unifying_session_tick(&session, now, changed, leds, radio_replies_taken(),
+				      core_take_move(&move) ? move.to : -1, &out);
+		apply_tick(&out, &move);
 		while (core_take_request(&req)) {
 			serve_diag(&req, now);
 		}

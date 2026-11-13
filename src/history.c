@@ -136,3 +136,22 @@ size_t history_events(const struct history *h, uint32_t from, uint32_t *first,
 	}
 	return n;
 }
+
+bool history_weakest(const struct history *h, int8_t *out)
+{
+	bool found = h->rssi_count > 0;
+
+	if (found) {
+		*out = h->rssi_min;
+	}
+	if (h->minute_next > h->minute_oldest) {
+		const struct history_minute *m =
+			&h->minutes[(h->minute_next - 1) % HISTORY_MINUTES];
+
+		if (m->rssi_min != 0 && (!found || m->rssi_min < *out)) {
+			*out = m->rssi_min;
+			found = true;
+		}
+	}
+	return found;
+}

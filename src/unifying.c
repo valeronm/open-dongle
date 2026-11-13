@@ -22,6 +22,9 @@
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
 const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
 								      44, 62, 65, 71, 74};
+const uint8_t unifying_normal_channels[UNIFYING_NORMAL_CHANNELS] = {
+	5,  8,  11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41,
+	44, 47, 50, 53, 56, 59, 62, 65, 68, 71, 74, 77};
 
 void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIFYING_ADDRESS_LEN])
 {
@@ -516,7 +519,11 @@ static bool quiet_too_long(const struct unifying_session *s, uint64_t now_ms)
 {
 	uint64_t since = s->heard_ms > s->deaf_until_ms ? s->heard_ms : s->deaf_until_ms;
 
-	/* deaf_until_ms can be later than a caller's earlier clock reading. */
+	if (s->search_until_ms > since) {
+		since = s->search_until_ms;
+	}
+
+	/* deaf_until_ms and search_until_ms can lie after now_ms. */
 	if (now_ms <= since) {
 		return false;
 	}
@@ -565,6 +572,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		}
 		s->silent = false;
 		s->connect_in_silence = false;
+		s->search_until_ms = 0;
 		s->heard = true;
 		s->heard_ms = now_ms;
 		s->rssi = rssi;
@@ -593,9 +601,9 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
-			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out)
+			   uint8_t host_leds, uint32_t taken_count, int move_to,
+			   struct unifying_out *out)
 {
-	uint8_t next;
 	uint8_t step = (uint8_t)s->pairing.attempt.state;
 	bool open = unifying_pairing_window_open(&s->pairing, now_ms);
 	bool pending;
@@ -612,7 +620,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 		out->went_silent = true;
 		out->silent_ms = (uint32_t)(now_ms - s->heard_ms);
 	}
-	out->release_all = unifying_link_silent(&s->link, now_ms);
+	out->release_all = now_ms >= s->search_until_ms && unifying_link_silent(&s->link, now_ms);
 	if (leds_changed) {
 		unifying_led_want(&s->led, host_leds);
 	}
@@ -626,11 +634,22 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	}
 	pending = step != UNIFYING_IDLE && !out->attempt_expired;
 	out->window_closed = !pending && pairwin_ran_out(&s->pairing.window, (uint32_t)now_ms);
-	next = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
-	if (next != s->channel) {
+	if (open) {
+		uint8_t next = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
+
+		if (next != s->channel) {
+			out->set_channel = true;
+			out->channel = next;
+			s->channel = next;
+		}
+	} else if (move_to >= 0 && unifying_session_movable(s, now_ms) >= 0 &&
+		   move_to != s->channel) {
 		out->set_channel = true;
-		out->channel = next;
-		s->channel = next;
+		out->channel = (uint8_t)move_to;
+		out->noise_move = true;
+		out->moved_from = s->channel;
+		s->channel = (uint8_t)move_to;
+		s->search_until_ms = now_ms + UNIFYING_MOVE_SEARCH_MS;
 	}
 }
 
@@ -666,4 +685,17 @@ void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
 	if (!s->silent) {
 		s->deaf_until_ms = now_ms;
 	}
+}
+
+int unifying_session_home(const struct unifying_session *s, uint64_t now_ms)
+{
+	bool home = unifying_has_device(&s->pairing) &&
+		    !unifying_pairing_window_open(&s->pairing, now_ms);
+
+	return home ? s->channel : -1;
+}
+
+int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms)
+{
+	return attempting(&s->pairing) ? -1 : unifying_session_home(s, now_ms);
 }

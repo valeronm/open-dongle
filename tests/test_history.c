@@ -237,8 +237,38 @@ static void test_other_events_leave_the_readings_for_the_next_gap(void)
 	CHECK_EQ(last_event().noise.peak, -70);
 }
 
+static void test_weakest_is_absent_without_packets(void)
+{
+	struct history_totals t = {0};
+	int8_t weakest;
+
+	history_init(&h, 0, &t);
+	CHECK(!history_weakest(&h, &weakest));
+}
+
+static void test_weakest_spans_the_current_and_the_previous_minute(void)
+{
+	struct history_totals t = {0};
+	int8_t weakest = 0;
+
+	history_init(&h, 0, &t);
+	history_rssi(&h, -60);
+	history_rssi(&h, -80);
+	history_tick(&h, MINUTE, &t);
+	history_rssi(&h, -70);
+	CHECK(history_weakest(&h, &weakest));
+	CHECK_EQ(weakest, -80);
+	history_tick(&h, 2 * MINUTE, &t);
+	CHECK(history_weakest(&h, &weakest));
+	CHECK_EQ(weakest, -70);
+	history_tick(&h, 3 * MINUTE, &t);
+	CHECK(!history_weakest(&h, &weakest));
+}
+
 int main(void)
 {
+	RUN(test_weakest_is_absent_without_packets);
+	RUN(test_weakest_spans_the_current_and_the_previous_minute);
 	RUN(test_a_closed_minute_holds_its_counter_changes_and_signal);
 	RUN(test_a_minute_without_packets_has_zero_signal);
 	RUN(test_a_closed_minute_holds_its_noise);

@@ -7,6 +7,8 @@
   in; a NuPhy dongle used to accept pairing whenever it had no link.
 - The history, events and noise map work in Unifying mode as well as NuPhy mode. A silence there is
   logged but not counted as a link loss, because an idle MX Keys sleeps after a few minutes.
+- In Unifying mode the dongle moves to a quieter channel on its own, judging noise at the
+  keyboard's signal level, and logs each move with the noise on both channels.
 - The event that starts a silence records the minutes since the last key, and the event that ends it
   records whether the keyboard woke.
 - The live view's `p` key switches the protocol after asking, which restarts the history, and `a`

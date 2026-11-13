@@ -328,6 +328,15 @@ pub fn describe_event(e: &Event, protocol: Protocol) -> String {
             e.a,
             e.b as i8
         ),
+        EventKind::LinkMoved if e.c == 1 => format!(
+            "moved from channel {} to channel {} for less noise: {} on {}, {} on {}",
+            e.a,
+            e.b,
+            share((e.value >> 16) as u16),
+            e.a,
+            share(e.value as u16),
+            e.b
+        ),
         EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
         EventKind::LinkGap => format!(
             "gap of {} on channel {}, signal {} dBm before, {} dBm after, {}",
@@ -448,6 +457,24 @@ mod tests {
         assert_eq!(
             describe_event(&moved, Protocol::Nuphy),
             "moved from channel 2 to channel 70"
+        );
+    }
+
+    #[test]
+    fn a_noise_move_prints_both_shares() {
+        use crate::protocol::{Event, EventKind};
+        let moved = Event {
+            time_ms: 0,
+            kind: EventKind::LinkMoved,
+            a: 5,
+            b: 41,
+            c: 1,
+            value: 4600 << 16 | 210,
+            noise: None,
+        };
+        assert_eq!(
+            describe_event(&moved, Protocol::Unifying),
+            "moved from channel 5 to channel 41 for less noise: 46.00% on 5, 2.10% on 41"
         );
     }
 

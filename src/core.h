@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <zephyr/kernel.h>
 #include "chanpick.h"
+#include "chanwatch.h"
 #include "diagproto.h"
 #include "history.h"
 #include "indicator.h"
@@ -32,6 +33,16 @@ struct core_loop {
 	/* Runs after each survey that answers a noise request, which keeps the receiver off. */
 	void (*radio_resumed)(void);
 	void (*fill_status)(struct diag_status *st);
+	/* Channels the dongle may move to for less noise; empty for a protocol that does not
+	 * move. */
+	const uint8_t *candidates;
+	size_t candidates_len;
+	/* The home channel while a noise move is allowed, or CORE_NO_HOME; required with
+	 * candidates. */
+	int (*movable)(void);
+	/* Runs after each scan round, which drops the replies queued on the radio; required with
+	 * candidates. */
+	void (*replies_dropped)(void);
 };
 
 struct rx_item {
@@ -58,6 +69,8 @@ uint32_t core_usb_retries(void);
 uint32_t core_merges(void);
 /* Returns true once after each host LED change; *leds always receives the current LEDs. */
 bool core_take_leds(uint8_t *leds);
+/* Returns true once with each move chanwatch decided. */
+bool core_take_move(struct chanwatch_move *out);
 void core_watchdog_feed(void);
 /* A suspended host shows IND_SLEEP whatever the mode. */
 void core_show_state(enum indicator_mode mode);

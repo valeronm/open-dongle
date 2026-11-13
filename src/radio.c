@@ -213,21 +213,49 @@ static int8_t sample_dbm(uint8_t channel)
 	return dbm;
 }
 
-int radio_survey(struct chan_survey *s)
+/* sample_dbm drives the radio by hand. */
+static int receiver_off(void)
 {
 	int err = stop_rx();
+
+	if (!err) {
+		irq_disable(RADIO_IRQn);
+	}
+	return err;
+}
+
+static int receiver_on(void)
+{
+	NVIC_ClearPendingIRQ(RADIO_IRQn);
+	irq_enable(RADIO_IRQn);
+	return radio_set_channel(current_channel);
+}
+
+int radio_sample(const uint8_t *channels, size_t n, int8_t *dbm)
+{
+	int err = receiver_off();
 
 	if (err) {
 		return err;
 	}
-	irq_disable(RADIO_IRQn);
+	for (size_t i = 0; i < n; i++) {
+		dbm[i] = sample_dbm(channels[i]);
+	}
+	return receiver_on();
+}
+
+int radio_survey(struct chan_survey *s)
+{
+	int err = receiver_off();
+
+	if (err) {
+		return err;
+	}
 	for (int round = 0; round < CHAN_SAMPLES; round++) {
 		for (int i = 0; i < CHAN_COUNT; i++) {
 			s->dbm[i][round] = sample_dbm(CHAN_FIRST + i);
 		}
 		k_msleep(SURVEY_ROUND_GAP_MS);
 	}
-	NVIC_ClearPendingIRQ(RADIO_IRQn);
-	irq_enable(RADIO_IRQn);
-	return radio_set_channel(current_channel);
+	return receiver_on();
 }

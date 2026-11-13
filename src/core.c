@@ -9,6 +9,7 @@
 #include "usb.h"
 
 #define USB_RETRY_MS 2
+#define SCAN_PERIOD_MS 250
 
 /* Must outlast one radio_survey call, which blocks for about 1.5 s. */
 #define WATCHDOG_TIMEOUT_MS 3000
@@ -33,6 +34,10 @@ static const struct core_loop *loop;
 static int64_t last_key_ms = -1;
 static bool usb_was_suspended;
 static bool usb_seen_live;
+static struct chanwatch watch;
+static int64_t last_scan_ms;
+static bool move_pending;
+static struct chanwatch_move pending_move;
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 static int wdt_channel = -1;
@@ -171,13 +176,18 @@ static void take_noise(void)
 	struct noise_tally t;
 	uint8_t channel = radio_noise_take(&t);
 	int home = loop->home();
+	bool on_home = home != CORE_NO_HOME && channel == home;
 
-	history_noise(&history, &t, home != CORE_NO_HOME && channel == home);
+	history_noise(&history, &t, on_home);
+	if (on_home) {
+		chanwatch_home(&watch, channel, &t);
+	}
 }
 
 void core_start_history(const struct core_loop *l)
 {
 	loop = l;
+	chanwatch_init(&watch, l->candidates, l->candidates_len, k_uptime_get());
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
 	log_event(HISTORY_BOOT, 0, 0, 0, boot_reset_cause);
 }
@@ -215,6 +225,45 @@ uint8_t core_minutes_since_key(void)
 	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
 }
 
+static void scan(void)
+{
+	int64_t now = k_uptime_get();
+	size_t n = MIN(loop->candidates_len, CHANWATCH_MAX);
+	int8_t dbm[CHANWATCH_MAX];
+	int8_t weakest;
+	int home;
+
+	if (n == 0 || now - last_scan_ms < SCAN_PERIOD_MS) {
+		return;
+	}
+	home = loop->movable();
+	if (home == CORE_NO_HOME) {
+		return;
+	}
+	last_scan_ms = now;
+	/* Stopping the receiver drops the noise readings not yet taken. */
+	take_noise();
+	if (radio_sample(loop->candidates, n, dbm) != 0) {
+		return;
+	}
+	loop->replies_dropped();
+	chanwatch_round(&watch, dbm, (uint8_t)home, (uint64_t)now);
+	if (history_weakest(&history, &weakest) &&
+	    chanwatch_decide(&watch, (uint8_t)home, weakest, (uint64_t)now, &pending_move)) {
+		move_pending = true;
+	}
+}
+
+bool core_take_move(struct chanwatch_move *out)
+{
+	if (!move_pending) {
+		return false;
+	}
+	move_pending = false;
+	*out = pending_move;
+	return true;
+}
+
 void core_poll(void)
 {
 	bool suspended = usb_suspended();
@@ -228,6 +277,7 @@ void core_poll(void)
 		usb_was_suspended = suspended;
 	}
 	take_noise();
+	scan();
 	t = totals();
 	history_tick(&history, k_uptime_get(), &t);
 }

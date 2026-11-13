@@ -660,7 +660,7 @@ static void test_a_window_that_ran_out_stays_closed_past_32_bits_of_uptime(void)
 
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
-	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, -1, &out);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, (1ULL << 32) + 10, nonce,
 			       NULL, &out);
@@ -1629,14 +1629,14 @@ static void test_a_connect_frame_on_the_receiver_pipe_resends_the_leds(void)
 	struct unifying_out out;
 
 	session_paired(&s);
-	unifying_session_tick(&s, 0, true, 0x02, 0, &out);
+	unifying_session_tick(&s, 0, true, 0x02, 0, -1, &out);
 	CHECK(out.send_led);
 	unifying_session_led_queued(&s, out.leds, 0);
-	unifying_session_tick(&s, 10, false, 0x02, 1, &out);
+	unifying_session_tick(&s, 10, false, 0x02, 1, -1, &out);
 	CHECK(!out.send_led);
 	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 20,
 			       nonce, fake_aes, &out);
-	unifying_session_tick(&s, 30, false, 0x02, 1, &out);
+	unifying_session_tick(&s, 30, false, 0x02, 1, -1, &out);
 	CHECK(out.send_led);
 	CHECK_EQ(out.leds, 0x02);
 }
@@ -1663,11 +1663,157 @@ static void test_the_tick_moves_the_channel_while_pairing_is_open(void)
 
 	unifying_session_init(&s, &receiver, NULL, 0);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
-	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS, false, 0, 0, -1, &out);
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, s.channel);
-	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS + 1, false, 0, 0, &out);
+	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS + 1, false, 0, 0, -1, &out);
 	CHECK(!out.set_channel);
+}
+
+static bool contains(const uint8_t *set, int n, uint8_t ch)
+{
+	for (int i = 0; i < n; i++) {
+		if (set[i] == ch) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void test_every_pairing_channel_is_a_normal_channel(void)
+{
+	for (int i = 0; i < UNIFYING_PAIRING_CHANNELS; i++) {
+		CHECK(contains(unifying_normal_channels, UNIFYING_NORMAL_CHANNELS,
+			       unifying_pairing_channels[i]));
+	}
+	CHECK_EQ(unifying_normal_channels[0], 5);
+	CHECK_EQ(unifying_normal_channels[UNIFYING_NORMAL_CHANNELS - 1], 77);
+}
+
+static void test_a_noise_move_sets_the_channel_and_holds_while_pairing_is_closed(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t from;
+
+	session_paired(&s);
+	from = s.channel;
+	unifying_session_tick(&s, 1000, false, 0, 0, 38, &out);
+	CHECK(out.set_channel);
+	CHECK_EQ(out.channel, 38);
+	CHECK(out.noise_move);
+	CHECK_EQ(out.moved_from, from);
+	unifying_session_tick(&s, 1001, false, 0, 0, -1, &out);
+	CHECK(!out.set_channel);
+	CHECK_EQ(s.channel, 38);
+}
+
+static void test_pairing_opened_after_a_move_sweeps_again(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_tick(&s, 1000, false, 0, 0, 38, &out);
+	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 1000);
+	unifying_session_tick(&s, 1000, false, 0, 0, -1, &out);
+	CHECK(out.set_channel);
+	CHECK(contains(unifying_pairing_channels, UNIFYING_PAIRING_CHANNELS, out.channel));
+}
+
+static void test_a_noise_move_is_refused_while_pairing_is_open(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 1000);
+	unifying_session_tick(&s, 1000, false, 0, 0, 38, &out);
+	CHECK(!out.noise_move);
+	CHECK(s.channel != 38);
+}
+
+static void test_a_noise_move_is_refused_while_an_attempt_outlasts_the_window(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_paired(&s);
+	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), -50, PAIRWIN_MS - 10, nonce,
+			       NULL, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_1);
+	unifying_session_tick(&s, PAIRWIN_MS + 1, false, 0, 0, 38, &out);
+	CHECK(!out.noise_move);
+	CHECK(s.channel != 38);
+}
+
+static void session_holding_a_key(struct unifying_session *s);
+
+static void holding_a_key(struct unifying_session *s)
+{
+	struct unifying_out out;
+
+	session_holding_a_key(s);
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, set_keep_alive_88,
+			       sizeof(set_keep_alive_88), -60, 30, nonce, fake_aes, &out);
+}
+
+static void test_a_noise_move_holds_keys_and_silence_while_the_keyboard_searches(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t found_by = 100 + UNIFYING_MOVE_SEARCH_MS;
+
+	holding_a_key(&s);
+	unifying_session_tick(&s, 100, false, 0, 0, 38, &out);
+	CHECK(out.noise_move);
+	unifying_session_tick(&s, found_by - 1, false, 0, 0, -1, &out);
+	CHECK(!out.release_all);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, found_by, false, 0, 0, -1, &out);
+	CHECK(out.release_all);
+	unifying_session_tick(&s, found_by + 2 * s.link.keepalive_ms - 1, false, 0, 0, -1, &out);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, found_by + 2 * s.link.keepalive_ms, false, 0, 0, -1, &out);
+	CHECK(out.went_silent);
+}
+
+static void test_hearing_the_keyboard_after_a_move_ends_the_wait(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	holding_a_key(&s);
+	unifying_session_tick(&s, 100, false, 0, 0, 38, &out);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
+			       -60, 150, nonce, fake_aes, &out);
+	unifying_session_tick(&s, 150 + 2 * s.link.keepalive_ms, false, 0, 0, -1, &out);
+	CHECK(out.went_silent);
+	unifying_session_tick(&s, 150 + 2 * s.link.keepalive_ms + 1, false, 0, 0, -1, &out);
+	CHECK(out.release_all);
+}
+
+static void test_a_paired_keyboard_outside_pairing_has_a_movable_home(void)
+{
+	struct unifying_session s;
+
+	session_paired(&s);
+	CHECK_EQ(unifying_session_movable(&s, 1000), s.channel);
+	CHECK_EQ(unifying_session_home(&s, 1000), s.channel);
+}
+
+static void test_a_noise_move_is_refused_without_a_keyboard(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_tick(&s, 1000, false, 0, 0, 38, &out);
+	CHECK(!out.noise_move);
+	CHECK(s.channel != 38);
 }
 
 static void test_a_session_types_a_keystroke_from_the_device_pipe(void)
@@ -1708,11 +1854,11 @@ static void test_a_session_releases_a_held_key_once_after_twice_the_keep_alive(v
 
 	session_holding_a_key(&s);
 	limit = 20 + 2 * (uint64_t)s.link.keepalive_ms;
-	unifying_session_tick(&s, limit, false, 0, 0, &out);
+	unifying_session_tick(&s, limit, false, 0, 0, -1, &out);
 	CHECK(!out.release_all);
-	unifying_session_tick(&s, limit + 1, false, 0, 0, &out);
+	unifying_session_tick(&s, limit + 1, false, 0, 0, -1, &out);
 	CHECK(out.release_all);
-	unifying_session_tick(&s, limit + 1000, false, 0, 0, &out);
+	unifying_session_tick(&s, limit + 1000, false, 0, 0, -1, &out);
 	CHECK(!out.release_all);
 }
 
@@ -1766,12 +1912,12 @@ static void test_silence_is_reported_once_and_the_next_frame_ends_it(void)
 	session_paired(&s);
 	hear(&s, 1000, &out);
 	silent = silence_after(&s, 1000);
-	unifying_session_tick(&s, silent - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, silent - 1, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_tick(&s, silent, false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 	CHECK_EQ(out.silent_ms, silent - 1000);
-	unifying_session_tick(&s, silent + 10, false, 0, 0, &out);
+	unifying_session_tick(&s, silent + 10, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
 	hear(&s, silent + 5000, &out);
 	CHECK_EQ(out.heard, UNIFYING_HEARD_AGAIN);
@@ -1787,13 +1933,13 @@ static void test_a_connect_frame_during_the_silence_makes_it_a_wake(void)
 	session_paired(&s);
 	hear(&s, 1000, &out);
 	silent = silence_after(&s, 1000);
-	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_tick(&s, silent, false, 0, 0, -1, &out);
 	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
 			       silent + 100, nonce, fake_aes, &out);
 	CHECK(out.reconnected);
 	hear(&s, silent + 120, &out);
 	CHECK_EQ(out.heard, UNIFYING_HEARD_WOKE);
-	unifying_session_tick(&s, silence_after(&s, silent + 120), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, silent + 120), false, 0, 0, -1, &out);
 	hear(&s, silence_after(&s, silent + 120) + 50, &out);
 	CHECK_EQ(out.heard, UNIFYING_HEARD_AGAIN);
 }
@@ -1825,7 +1971,7 @@ static void test_an_unpaired_session_never_goes_silent(void)
 
 	unifying_session_init(&s, &receiver, NULL, 0);
 	hear(&s, 1000, &out);
-	unifying_session_tick(&s, 100000, false, 0, 0, &out);
+	unifying_session_tick(&s, 100000, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
 }
 
@@ -1837,10 +1983,10 @@ static void test_a_radio_pause_postpones_the_silence(void)
 	session_paired(&s);
 	hear(&s, 1000, &out);
 	unifying_session_radio_resumed(&s, 2500);
-	unifying_session_tick(&s, silence_after(&s, 2500) - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 2500) - 1, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
 	CHECK_EQ(unifying_session_status(&s, silence_after(&s, 2500) - 1), UNIFYING_CONNECTED);
-	unifying_session_tick(&s, silence_after(&s, 2500), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 2500), false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 }
 
@@ -1854,14 +2000,14 @@ static void test_an_open_pairing_window_postpones_the_silence(void)
 	hear(&s, 1000, &out);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 1500);
 	for (uint64_t t = 1500; t < closes; t += 10) {
-		unifying_session_tick(&s, t, false, 0, 0, &out);
+		unifying_session_tick(&s, t, false, 0, 0, -1, &out);
 		CHECK(!out.went_silent);
 	}
-	unifying_session_tick(&s, closes, false, 0, 0, &out);
+	unifying_session_tick(&s, closes, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silence_after(&s, closes) - 10, false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, closes) - 10, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silence_after(&s, closes), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, closes), false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 }
 
@@ -1875,15 +2021,15 @@ static void test_completing_pairing_ends_the_postponed_silence_at_once(void)
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
-	unifying_session_tick(&s, 5, false, 0, 0, &out);
+	unifying_session_tick(&s, 5, false, 0, 0, -1, &out);
 	request_2(f, 0xe1);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
 	request_3(f, 0x00);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
-	unifying_session_tick(&s, silence_after(&s, 20) - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 20) - 1, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silence_after(&s, 20), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 20), false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 }
 
@@ -1895,7 +2041,7 @@ static void test_replacing_a_keyboard_ends_the_postponed_silence_at_once(void)
 
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
-	unifying_session_tick(&s, 1, false, 0, 0, &out);
+	unifying_session_tick(&s, 1, false, 0, 0, -1, &out);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 2, nonce, NULL, &out);
 	request_2(f, 0xe1);
@@ -1903,10 +2049,10 @@ static void test_replacing_a_keyboard_ends_the_postponed_silence_at_once(void)
 	request_3(f, 0x00);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
-	unifying_session_tick(&s, 30, false, 0, 0, &out);
-	unifying_session_tick(&s, silence_after(&s, 20) - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, 30, false, 0, 0, -1, &out);
+	unifying_session_tick(&s, silence_after(&s, 20) - 1, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silence_after(&s, 20), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 20), false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 }
 
@@ -1917,12 +2063,12 @@ static void test_the_keyboard_closing_the_boot_window_ends_the_postponed_silence
 
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_BOOT, 0);
-	unifying_session_tick(&s, 1, false, 0, 0, &out);
+	unifying_session_tick(&s, 1, false, 0, 0, -1, &out);
 	hear(&s, 100, &out);
-	unifying_session_tick(&s, 110, false, 0, 0, &out);
-	unifying_session_tick(&s, silence_after(&s, 100) - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, 110, false, 0, 0, -1, &out);
+	unifying_session_tick(&s, silence_after(&s, 100) - 1, false, 0, 0, -1, &out);
 	CHECK(!out.went_silent);
-	unifying_session_tick(&s, silence_after(&s, 100), false, 0, 0, &out);
+	unifying_session_tick(&s, silence_after(&s, 100), false, 0, 0, -1, &out);
 	CHECK(out.went_silent);
 }
 
@@ -1973,11 +2119,11 @@ static void test_a_window_that_runs_out_is_reported_closed_once(void)
 
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
-	unifying_session_tick(&s, PAIRWIN_MS - 1, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS - 1, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
-	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, -1, &out);
 	CHECK(out.window_closed);
-	unifying_session_tick(&s, PAIRWIN_MS + 10, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS + 10, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 }
 
@@ -1996,7 +2142,7 @@ static void test_a_window_closed_by_pairing_is_not_reported(void)
 	request_3(f, 0x00);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
-	unifying_session_tick(&s, 30, false, 0, 0, &out);
+	unifying_session_tick(&s, 30, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 }
 
@@ -2010,7 +2156,7 @@ static void test_an_expired_attempt_reports_the_step_it_reached(void)
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
-	unifying_session_tick(&s, UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
+	unifying_session_tick(&s, UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, -1, &out);
 	CHECK(out.attempt_expired);
 	CHECK_EQ(out.expired_step, 1);
 }
@@ -2026,7 +2172,7 @@ static void test_a_window_is_not_reported_closed_while_an_attempt_finishes(void)
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, end - 1, nonce, NULL, &out);
-	unifying_session_tick(&s, end, false, 0, 0, &out);
+	unifying_session_tick(&s, end, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 	request_2(f, 0xe1);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, end + 10, nonce, fake_aes,
@@ -2035,7 +2181,7 @@ static void test_a_window_is_not_reported_closed_while_an_attempt_finishes(void)
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, end + 20, nonce, fake_aes,
 			       &out);
 	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
-	unifying_session_tick(&s, end + 30, false, 0, 0, &out);
+	unifying_session_tick(&s, end + 30, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 }
 
@@ -2050,12 +2196,12 @@ static void test_a_window_is_reported_closed_when_the_attempt_it_outlasted_expir
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, last, nonce, NULL, &out);
-	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
-	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
+	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, -1, &out);
 	CHECK(out.attempt_expired);
 	CHECK(out.window_closed);
-	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 2, false, 0, 0, &out);
+	unifying_session_tick(&s, last + UNIFYING_PAIRING_TIMEOUT_MS + 2, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 }
 
@@ -2068,7 +2214,7 @@ static void test_a_radio_pause_during_a_silence_leaves_the_keyboard_silent(void)
 	session_paired(&s);
 	hear(&s, 1000, &out);
 	silent = silence_after(&s, 1000);
-	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_tick(&s, silent, false, 0, 0, -1, &out);
 	unifying_session_radio_resumed(&s, silent + 500);
 	CHECK_EQ(unifying_session_status(&s, silent + 600), UNIFYING_SILENT);
 }
@@ -2094,7 +2240,7 @@ static void test_pairing_opened_at_boot_closes_once_the_paired_keyboard_is_heard
 	CHECK(unifying_pairing_window_open(&s.pairing, 10));
 	hear(&s, 100, &out);
 	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_CONNECTED);
-	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 }
 
@@ -2124,7 +2270,7 @@ static void test_a_pairing_attempt_is_not_the_keyboard_connecting(void)
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_2);
 	CHECK(unifying_pairing_window_open(&s.pairing, 20));
-	unifying_session_tick(&s, 10 + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
+	unifying_session_tick(&s, 10 + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, -1, &out);
 	CHECK(out.attempt_expired);
 	hear(&s, 6000, &out);
 	CHECK_EQ(unifying_session_status(&s, 6010), UNIFYING_CONNECTED);
@@ -2152,7 +2298,7 @@ static void test_a_session_with_no_keyboard_stays_in_pairing(void)
 
 	unifying_session_init(&s, &receiver, NULL, 0);
 	unifying_session_open_pairing(&s, PAIRWIN_BOOT, 0);
-	unifying_session_tick(&s, 10 * PAIRWIN_MS, false, 0, 0, &out);
+	unifying_session_tick(&s, 10 * PAIRWIN_MS, false, 0, 0, -1, &out);
 	CHECK(!out.window_closed);
 	CHECK(unifying_pairing_window_open(&s.pairing, 10 * PAIRWIN_MS));
 	CHECK_EQ(unifying_session_status(&s, 10 * PAIRWIN_MS), UNIFYING_NOT_PAIRED);
@@ -2262,6 +2408,15 @@ int main(void)
 	RUN(test_a_connect_frame_on_the_receiver_pipe_resends_the_leds);
 	RUN(test_a_heard_paired_keyboard_is_connected_then_silent);
 	RUN(test_the_tick_moves_the_channel_while_pairing_is_open);
+	RUN(test_every_pairing_channel_is_a_normal_channel);
+	RUN(test_a_noise_move_sets_the_channel_and_holds_while_pairing_is_closed);
+	RUN(test_pairing_opened_after_a_move_sweeps_again);
+	RUN(test_a_noise_move_is_refused_while_pairing_is_open);
+	RUN(test_a_noise_move_is_refused_while_an_attempt_outlasts_the_window);
+	RUN(test_a_noise_move_is_refused_without_a_keyboard);
+	RUN(test_a_paired_keyboard_outside_pairing_has_a_movable_home);
+	RUN(test_a_noise_move_holds_keys_and_silence_while_the_keyboard_searches);
+	RUN(test_hearing_the_keyboard_after_a_move_ends_the_wait);
 	RUN(test_a_session_types_a_keystroke_from_the_device_pipe);
 	RUN(test_a_session_releases_a_held_key_once_after_twice_the_keep_alive);
 	RUN(test_a_session_releases_a_held_key_on_a_connect_frame_only);

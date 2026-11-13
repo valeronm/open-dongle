@@ -78,6 +78,12 @@ A Unifying keyboard pairs when switched off and on while pairing is open. On a k
 Easy-Switch keys, such as the MX Keys, first enter pairing mode by holding an Easy-Switch key until
 it blinks fast. A new keyboard replaces the one paired before.
 
+In Unifying mode the dongle keeps checking the noise on every channel the keyboard can use, a few
+milliseconds at a time, and moves to a clearly quieter one; the keyboard finds it again within
+about a second. Only noise strong enough to matter at the keyboard's current signal counts, so a
+keyboard close to the dongle rarely causes a move, and one across the room moves away from Wi-Fi
+that would not trouble the close one. `open-dongle events` logs each move with both channels' noise.
+
 ## LED
 
 | LED | Meaning |
