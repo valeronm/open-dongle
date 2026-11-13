@@ -6,6 +6,7 @@
 #define CHANNELS_KEY "dongle/channels"
 #define FORCED_KEY "dongle/forced"
 #define UNIFYING_KEY "dongle/unifying"
+#define PROTOCOL_KEY "dongle/protocol"
 
 static bool load_exact(const char *key, void *out, size_t len)
 {
@@ -55,4 +56,14 @@ bool store_load_unifying(void *out, size_t len)
 int store_save_unifying(const void *in, size_t len)
 {
 	return settings_save_one(UNIFYING_KEY, in, len);
+}
+
+bool store_load_protocol(uint8_t *out)
+{
+	return load_exact(PROTOCOL_KEY, out, 1);
+}
+
+int store_save_protocol(uint8_t value)
+{
+	return settings_save_one(PROTOCOL_KEY, &value, 1);
 }
