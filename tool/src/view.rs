@@ -16,7 +16,7 @@ use ratatui::{
     },
 };
 
-use crate::device::{self, Device, Transport};
+use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
     link_state_name, noise_level, noise_ruler, paired, share, uptime, usb_state, wall_clock,
@@ -304,39 +304,33 @@ impl Prompt {
     }
 }
 
-struct App {
+/// Holds every cause, since the outermost context alone often omits why it failed.
+fn error_text(e: &anyhow::Error) -> String {
+    format!("{e:#}")
+}
+
+struct App<T: Transport = device::HidTransport> {
     serial: Option<String>,
-    device: Option<Device<device::HidTransport>>,
+    device: Option<Device<T>>,
     history: History,
     noise: Option<Vec<NoiseChannel>>,
     prompt: Option<Prompt>,
     message: String,
+    /// The last refresh's error, while the dongle answers but its reply failed.
+    refresh_error: Option<String>,
     scroll: usize,
     event_rows: usize,
 }
 
 pub fn run(serial: Option<String>) -> Result<()> {
     let mut terminal = ratatui::init();
-    let mut app = App::new(serial);
+    let mut app: App = App::new(serial);
     let result = app.run(&mut terminal);
     ratatui::restore();
     result
 }
 
 impl App {
-    fn new(serial: Option<String>) -> Self {
-        App {
-            serial,
-            device: None,
-            history: History::default(),
-            noise: None,
-            prompt: None,
-            message: String::new(),
-            scroll: 0,
-            event_rows: EVENT_ROWS,
-        }
-    }
-
     fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         let mut last_poll: Option<Instant> = None;
         loop {
@@ -387,6 +381,38 @@ impl App {
         }
     }
 
+    fn poll(&mut self) {
+        if self.device.is_none() {
+            match device::open(self.serial.as_deref()) {
+                Ok((d, _)) => {
+                    self.device = Some(d);
+                    self.message.clear();
+                }
+                Err(e) => {
+                    self.disconnect(&e);
+                    return;
+                }
+            }
+        }
+        self.refresh();
+    }
+}
+
+impl<T: Transport> App<T> {
+    fn new(serial: Option<String>) -> Self {
+        App {
+            serial,
+            device: None,
+            history: History::default(),
+            noise: None,
+            prompt: None,
+            message: String::new(),
+            refresh_error: None,
+            scroll: 0,
+            event_rows: EVENT_ROWS,
+        }
+    }
+
     fn scroll_events(&mut self, step: EventsMove) {
         self.history.events_top = scrolled_top(
             &self.history.events,
@@ -396,31 +422,22 @@ impl App {
         );
     }
 
-    fn poll(&mut self) {
-        if self.device.is_none() {
-            match device::open(self.serial.as_deref()) {
-                Ok((d, _)) => {
-                    self.device = Some(d);
-                    self.message.clear();
-                }
-                Err(e) => {
-                    self.disconnect(format!("disconnected: {e}"));
-                    return;
-                }
-            }
-        }
+    fn refresh(&mut self) {
         let Some(dev) = self.device.as_mut() else {
             return;
         };
-        if self.history.refresh(dev).is_err() {
-            self.disconnect("disconnected, waiting for the dongle".into());
+        match self.history.refresh(dev) {
+            Ok(()) => self.refresh_error = None,
+            Err(e) if e.is::<Lost>() => self.disconnect(&e),
+            Err(e) => self.refresh_error = Some(error_text(&e)),
         }
     }
 
-    fn disconnect(&mut self, message: String) {
+    fn disconnect(&mut self, reason: &anyhow::Error) {
         self.device = None;
         self.history = History::default();
-        self.message = message;
+        self.refresh_error = None;
+        self.message = format!("disconnected: {}", error_text(reason));
     }
 
     fn answer(&mut self, prompt: Prompt) {
@@ -434,7 +451,7 @@ impl App {
         };
         self.message = match result {
             Ok(()) => "done".into(),
-            Err(e) => format!("failed: {e}"),
+            Err(e) => format!("failed: {}", error_text(&e)),
         };
     }
 
@@ -458,7 +475,9 @@ impl App {
         let help = match self.prompt {
             Some(p) => p.question(),
             None if !self.message.is_empty() => self.message.clone(),
-            None => "n noise  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit".into(),
+            None => self.refresh_error.clone().unwrap_or_else(|| {
+                "n noise  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit".into()
+            }),
         };
         f.render_widget(Paragraph::new(help), footer);
     }
@@ -639,9 +658,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::tests::{Fake, parts};
+    use crate::device::tests::{Fake, error_part, parts};
+    use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::fixture;
-    use crate::protocol::{EventKind, Noise, Rssi};
+    use crate::protocol::{ErrorCode, EventKind, Noise, Rssi};
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -759,7 +779,7 @@ mod tests {
     }
 
     fn panel_with(marked: Minute, height: u16) -> Vec<String> {
-        let mut app = App::new(None);
+        let mut app: App = App::new(None);
         app.history.boot = Some(boot());
         app.history.minutes = (0..10).map(|i| (i, quiet())).collect();
         app.history.minutes[4].1 = marked;
@@ -779,9 +799,72 @@ mod tests {
             .collect()
     }
 
+    fn footer<T: Transport>(app: &mut App<T>) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        screen(&terminal)[23].trim_end().to_string()
+    }
+
+    #[test]
+    fn an_error_reply_keeps_the_dongle_and_its_history() {
+        let mut app = App::new(None);
+        app.device = Some(Device::new(
+            Fake::new(|req| vec![error_part(req[0], req[1], ErrorCode::Radio as u8)]),
+            0,
+        ));
+        app.history.minutes = vec![(0, quiet())];
+        app.refresh();
+        assert_eq!(
+            footer(&mut app),
+            "the dongle refused Status: the radio failed"
+        );
+        assert!(app.device.is_some());
+        assert_eq!(app.history.minutes.len(), 1);
+    }
+
+    struct Unplugged;
+
+    impl Transport for Unplugged {
+        fn write(&mut self, _: &[u8; REPORT_LEN]) -> Result<(), Lost> {
+            Err(Lost {
+                doing: "writing to the dongle",
+                cause: hidapi::HidError::HidApiError {
+                    message: "device disconnected".into(),
+                },
+            })
+        }
+
+        fn read(&mut self, _: &mut [u8; REPORT_LEN], _: Duration) -> Result<bool, Lost> {
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn a_lost_dongle_disconnects() {
+        let mut app = App::new(None);
+        app.device = Some(Device::new(Unplugged, 0));
+        app.refresh();
+        assert_eq!(
+            footer(&mut app),
+            "disconnected: writing to the dongle: hidapi error: device disconnected"
+        );
+        assert!(app.device.is_none());
+    }
+
+    #[test]
+    fn a_failed_action_shows_its_cause() {
+        let mut app = App::new(None);
+        app.device = Some(Device::new(Unplugged, 0));
+        app.answer(Prompt::Action(Action::Reboot));
+        assert_eq!(
+            footer(&mut app),
+            "failed: writing to the dongle: hidapi error: device disconnected"
+        );
+    }
+
     #[test]
     fn the_noise_legend_fits_an_80_column_terminal() {
-        let app = App::new(None);
+        let app: App = App::new(None);
         let noise: Vec<NoiseChannel> = (2..=80)
             .map(|channel| NoiseChannel {
                 channel,

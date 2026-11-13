@@ -35,10 +35,29 @@ impl std::fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// The HID device failed, which is how an unplugged dongle shows.
+#[derive(Debug)]
+pub struct Lost {
+    pub doing: &'static str,
+    pub cause: hidapi::HidError,
+}
+
+impl std::fmt::Display for Lost {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(self.doing)
+    }
+}
+
+impl std::error::Error for Lost {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
 pub trait Transport {
-    fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<()>;
+    fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<(), Lost>;
     /// Returns false when nothing arrived within the timeout.
-    fn read(&mut self, buf: &mut [u8; REPORT_LEN], timeout: Duration) -> Result<bool>;
+    fn read(&mut self, buf: &mut [u8; REPORT_LEN], timeout: Duration) -> Result<bool, Lost>;
 }
 
 pub struct Device<T: Transport> {
@@ -167,19 +186,22 @@ fn collect_pages<T>(
 pub struct HidTransport(hidapi::HidDevice);
 
 impl Transport for HidTransport {
-    fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<()> {
+    fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<(), Lost> {
         let mut out = [0u8; REPORT_LEN + 1];
         out[1..].copy_from_slice(report);
-        self.0.write(&out).context("writing to the dongle")?;
+        self.0.write(&out).map_err(|cause| Lost {
+            doing: "writing to the dongle",
+            cause,
+        })?;
         Ok(())
     }
 
-    fn read(&mut self, buf: &mut [u8; REPORT_LEN], timeout: Duration) -> Result<bool> {
+    fn read(&mut self, buf: &mut [u8; REPORT_LEN], timeout: Duration) -> Result<bool, Lost> {
         let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-        let n = self
-            .0
-            .read_timeout(buf, ms)
-            .context("reading from the dongle")?;
+        let n = self.0.read_timeout(buf, ms).map_err(|cause| Lost {
+            doing: "reading from the dongle",
+            cause,
+        })?;
         Ok(n == REPORT_LEN)
     }
 }
@@ -246,13 +268,13 @@ pub(crate) mod tests {
     }
 
     impl Transport for Fake {
-        fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<()> {
+        fn write(&mut self, report: &[u8; REPORT_LEN]) -> Result<(), Lost> {
             let replies = (self.respond)(report);
             self.pending.extend(replies);
             Ok(())
         }
 
-        fn read(&mut self, buf: &mut [u8; REPORT_LEN], _timeout: Duration) -> Result<bool> {
+        fn read(&mut self, buf: &mut [u8; REPORT_LEN], _timeout: Duration) -> Result<bool, Lost> {
             match self.pending.pop_front() {
                 Some(report) => {
                     *buf = report;

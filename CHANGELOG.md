@@ -14,6 +14,8 @@
 - The live view labels its signal chart in dBm and wall-clock time, and draws link losses, gaps,
   dropped packets and the noise share under it as bars that each carry their own scale, in one panel
   that fits a 24-row terminal.
+- The live view shows why it lost the dongle or why a reply failed, and keeps its history through
+  a failed reply.
 - The live view's noise map fits its legend in 80 columns.
 - `status` prints a keyboard ID the dongle has not received since it booted as "not seen since
   boot".
