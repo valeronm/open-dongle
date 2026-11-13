@@ -133,6 +133,12 @@ pub fn paired(own: Option<[u8; 3]>) -> String {
     })
 }
 
+pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
+    id.map_or("not seen since boot".into(), |id| {
+        id.iter().map(|b| format!("{b:02x}")).collect()
+    })
+}
+
 pub fn duration(ms: u32) -> String {
     let s = ms / 1000;
     match ms {
@@ -493,6 +499,12 @@ mod tests {
     fn names_each_reset_cause_bit() {
         assert_eq!(reset_causes(0x11), "pin, watchdog");
         assert_eq!(reset_causes(0), "none");
+    }
+
+    #[test]
+    fn a_keyboard_id_prints_in_hex_or_as_not_seen() {
+        assert_eq!(keyboard_id(Some([0x70, 0x15, 0xa3, 0x29])), "7015a329");
+        assert_eq!(keyboard_id(None), "not seen since boot");
     }
 
     #[test]

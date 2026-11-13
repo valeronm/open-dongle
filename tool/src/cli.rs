@@ -10,25 +10,21 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    last_packet, link_state_name, noise_level, paired, pairing_offer, reset_causes, uptime,
-    usb_state, version, wall_clock,
+    keyboard_id, last_packet, link_state_name, noise_level, paired, pairing_offer, reset_causes,
+    uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{Action, ErrorCode, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
-    let id = s
-        .keyboard_id
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
     let c = s.counters;
     println!("firmware  {}", version(s.firmware_version));
     println!(
-        "link      {} on channel {} ({}), keyboard {id}",
+        "link      {} on channel {} ({}), keyboard {}",
         link_state_name(s.link_state),
         s.channel,
-        paired(s.own)
+        paired(s.own),
+        keyboard_id(s.keyboard_id)
     );
     println!(
         "signal    {} dBm, {}",

@@ -211,7 +211,8 @@ pub struct Status {
     pub own: Option<[u8; 3]>,
     /// The channels every pairing offers; `None` while pairing surveys.
     pub forced: Option<[u8; 3]>,
-    pub keyboard_id: [u8; 4],
+    /// Set only from a pairing request since the dongle booted.
+    pub keyboard_id: Option<[u8; 4]>,
     pub last_rssi: i8,
     pub last_rx_age_ms: Option<u32>,
     pub usb_live: bool,
@@ -260,7 +261,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         channel,
         own: (own != [0; 3]).then_some(own),
         forced: (forced != [0; 3]).then_some(forced),
-        keyboard_id,
+        keyboard_id: (keyboard_id != [0; 4]).then_some(keyboard_id),
         last_rssi,
         last_rx_age_ms: (age != u32::MAX).then_some(age),
         usb_live: usb & 1 != 0,
@@ -465,6 +466,14 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_all_zero_keyboard_id_reads_as_none() {
+        let mut payload = fixture("status.hex");
+        payload[24..28].fill(0);
+        let s = read_status(&payload).unwrap().unwrap();
+        assert_eq!(s.keyboard_id, None);
+    }
+
+    #[test]
     fn request_carries_command_seq_and_arg() {
         let r = request(Command::History, 9, 0x1234_5678);
         assert_eq!(&r[..6], &[2, 9, 0x78, 0x56, 0x34, 0x12]);
@@ -481,7 +490,7 @@ pub(crate) mod tests {
         assert_eq!(s.channel, 26);
         assert_eq!(s.own, Some([26, 30, 34]));
         assert_eq!(s.forced, Some([62, 52, 44]));
-        assert_eq!(s.keyboard_id, [0x70, 0x15, 0xa3, 0x29]);
+        assert_eq!(s.keyboard_id, Some([0x70, 0x15, 0xa3, 0x29]));
         assert_eq!(s.last_rssi, -71);
         assert_eq!(s.last_rx_age_ms, Some(12));
         assert!(s.usb_live && !s.usb_suspended);

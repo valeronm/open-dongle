@@ -14,6 +14,8 @@
 - The live view labels its signal chart in dBm and wall-clock time, and draws link losses, gaps,
   dropped packets and the noise share under it as bars that each carry their own scale, in one panel
   that fits a 24-row terminal.
+- `status` prints a keyboard ID the dongle has not received since it booted as "not seen since
+  boot".
 - The diagnostic protocol is now 2, so the 0.1.0 tool reads only `flash` from new firmware.
 
 ## [0.1.0] - 2026-11-11
