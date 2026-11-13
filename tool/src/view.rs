@@ -338,6 +338,28 @@ fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Key)] {
     }
 }
 
+/// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
+fn flow<'a>(
+    pieces: impl IntoIterator<Item = &'a str>,
+    separator: &str,
+    width: usize,
+) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for piece in pieces {
+        match lines.last_mut() {
+            Some(line)
+                if line.chars().count() + separator.chars().count() + piece.chars().count()
+                    <= width =>
+            {
+                line.push_str(separator);
+                line.push_str(piece);
+            }
+            _ => lines.push(piece.to_string()),
+        }
+    }
+    lines
+}
+
 /// Holds every cause, since the outermost context alone often omits why it failed.
 fn error_text(e: &anyhow::Error) -> String {
     format!("{e:#}")
@@ -531,11 +553,12 @@ impl<T: Transport> App<T> {
     fn draw(&mut self, f: &mut Frame) {
         let status =
             Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle"));
+        let help = self.help(f.area().width as usize);
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(HISTORY_MIN_ROWS),
             Constraint::Max(EVENT_ROWS as u16 + 2),
-            Constraint::Length(1),
+            Constraint::Length(help.len().max(1) as u16),
         ])
         .areas(f.area());
         f.render_widget(status, top);
@@ -544,23 +567,27 @@ impl<T: Transport> App<T> {
             None => self.draw_history(f, middle),
         }
         self.draw_events(f, bottom);
-        f.render_widget(Paragraph::new(self.help()), footer);
+        f.render_widget(Paragraph::new(help.join("\n")), footer);
     }
 
-    fn help(&self) -> String {
+    fn help(&self, width: usize) -> Vec<String> {
         match self.prompt {
-            Some(p) => p.question(),
-            None if !self.message.is_empty() => self.message.clone(),
-            None => self.refresh_error.clone().unwrap_or_else(|| {
-                let actions: Vec<_> = action_keys(self.protocol())
-                    .iter()
-                    .map(|(key, label, _)| format!("{key} {label}"))
-                    .collect();
-                format!(
-                    "{}  ←/→ history  ↑/↓ events  esc back  q quit",
-                    actions.join("  ")
-                )
-            }),
+            Some(p) => flow(p.question().split(' '), " ", width),
+            None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
+            None => match &self.refresh_error {
+                Some(e) => flow(e.split(' '), " ", width),
+                None => {
+                    let actions = action_keys(self.protocol())
+                        .iter()
+                        .map(|(key, label, _)| format!("{key} {label}"));
+                    let hints: Vec<_> = actions
+                        .chain(
+                            ["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from),
+                        )
+                        .collect();
+                    flow(hints.iter().map(String::as_str), "  ", width)
+                }
+            },
         }
     }
 
@@ -907,7 +934,86 @@ mod tests {
     fn footer<T: Transport>(app: &mut App<T>) -> String {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        screen(&terminal)[23].trim_end().to_string()
+        let rows = screen(&terminal);
+        rows[24 - app.help(80).len()..]
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    const UNIFYING_HINTS: [&str; 10] = [
+        "n noise",
+        "a pair",
+        "p nuphy",
+        "r reboot",
+        "b bootloader",
+        "c clear",
+        "←/→ history",
+        "↑/↓ events",
+        "esc back",
+        "q quit",
+    ];
+
+    #[test]
+    fn hints_break_only_between_hints() {
+        let lines = flow(UNIFYING_HINTS, "  ", 80);
+        assert_eq!(
+            lines,
+            [
+                "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history",
+                "↑/↓ events  esc back  q quit",
+            ]
+        );
+        assert!(lines.iter().all(|l| l.chars().count() <= 80));
+    }
+
+    #[test]
+    fn text_that_fits_stays_on_one_line() {
+        let nuphy = [
+            "n noise",
+            "p unifying",
+            "r reboot",
+            "b bootloader",
+            "c clear",
+            "←/→ history",
+            "↑/↓ events",
+            "esc back",
+            "q quit",
+        ];
+        assert_eq!(flow(nuphy, "  ", 100), [nuphy.join("  ")]);
+    }
+
+    #[test]
+    fn a_message_breaks_between_words() {
+        let lines = flow(PAIRING_OPEN.split(' '), " ", 80);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines.iter().all(|l| l.chars().count() <= 80), "{lines:?}");
+        assert_eq!(lines.join(" "), PAIRING_OPEN);
+    }
+
+    #[test]
+    fn a_piece_wider_than_the_line_gets_a_line_of_its_own() {
+        assert_eq!(flow(["a", "bbbbbb", "c"], " ", 4), ["a", "bbbbbb", "c"]);
+    }
+
+    #[test]
+    fn the_unifying_footer_flows_onto_the_last_rows_of_an_80_column_screen() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.history.boot = Some(boot());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let rows = screen(&terminal);
+        assert_eq!(
+            rows[22].trim_end(),
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history"
+        );
+        assert_eq!(rows[23].trim_end(), "↑/↓ events  esc back  q quit");
+        let text = rows.join("\n");
+        for part in ["OpenDongle", "signal dBm", "events"] {
+            assert!(text.contains(part), "{part} missing from {text}");
+        }
     }
 
     #[test]
@@ -1029,11 +1135,9 @@ mod tests {
         app.press('a');
         assert!(app.prompt.is_none());
         assert_eq!(sent.get(), Some(Command::Pair as u8));
-        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
-        terminal.draw(|f| app.draw(f)).unwrap();
         assert_eq!(
-            screen(&terminal)[23].trim_end(),
-            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
+            footer(&mut app),
+            "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it\nblinks fast"
         );
     }
 
