@@ -21,6 +21,7 @@ static K_MUTEX_DEFINE(reports_lock);
 static struct k_sem reports_ready[REPORT_IFACES];
 
 static enum protocol active;
+static uint32_t boot_reset_cause;
 static struct reports reports;
 static atomic_t host_leds;
 static atomic_t leds_changed;
@@ -198,7 +199,7 @@ static void on_usb_leds(uint8_t leds)
 	atomic_set(&leds_changed, 1);
 }
 
-void core_start(enum protocol protocol)
+void core_start(enum protocol protocol, uint32_t reset_cause)
 {
 	static const struct usb_callbacks usb_cb = {
 		.on_live = on_usb_live,
@@ -208,6 +209,7 @@ void core_start(enum protocol protocol)
 	int err;
 
 	active = protocol;
+	boot_reset_cause = reset_cause;
 	reports_init(&reports);
 	for (int iface = 0; iface < REPORT_IFACES; iface++) {
 		k_sem_init(&reports_ready[iface], 0, 1);
@@ -219,6 +221,23 @@ void core_start(enum protocol protocol)
 	k_thread_start(keyboard_tid);
 	k_thread_start(extra_tid);
 	watchdog_start();
+}
+
+uint32_t core_reset_cause(void)
+{
+	return boot_reset_cause;
+}
+
+void core_fill_status(struct diag_status *st)
+{
+	*st = (struct diag_status){
+		.uptime_ms = (uint64_t)k_uptime_get(),
+		.reset_cause = boot_reset_cause,
+		.protocol = active,
+		.usb_live = usb_live(),
+		.usb_suspended = usb_suspended(),
+	};
+	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
 }
 
 static void serve_protocol(const struct diag_request *req)
@@ -252,6 +271,12 @@ static void serve_protocol(const struct diag_request *req)
 bool core_take_request(struct diag_request *out)
 {
 	while (diag_take_request(out)) {
+		uint8_t owner = diag_command_protocol(out->command);
+
+		if (owner != 0 && owner != active) {
+			diag_reply_error(out, DIAG_ERR_WRONG_PROTOCOL, active);
+			continue;
+		}
 		switch (out->command) {
 		case DIAG_PROTOCOL:
 			serve_protocol(out);

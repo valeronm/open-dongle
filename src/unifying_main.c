@@ -158,7 +158,41 @@ static void show_state(uint64_t now)
 	core_show_state(by_status[unifying_session_status(&session, now)]);
 }
 
-void unifying_run(int store_err, uint32_t reset_cause)
+static void fill_status(struct diag_status *st, uint64_t now)
+{
+	core_fill_status(st);
+	st->link_state = unifying_session_status(&session, now);
+	st->channel = session.channel;
+	st->last_rssi = session.rssi;
+	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)
+					   : UINT32_MAX;
+	if (unifying_has_device(&session.pairing)) {
+		memcpy(st->keyboard_id, session.pairing.device.wpid, UNIFYING_WPID_LEN);
+	}
+}
+
+static void serve_diag(const struct diag_request *req, uint64_t now)
+{
+	static uint8_t payload[DIAG_PAYLOAD_MAX];
+	struct diag_status st;
+
+	switch (req->command) {
+	case DIAG_STATUS:
+		fill_status(&st, now);
+		diag_reply(req, payload, diag_encode_status(payload, &st), DIAG_AFTER_NONE);
+		break;
+	case DIAG_PAIR:
+		unifying_session_open_pairing(&session, now);
+		printk("pairing open for %u s\n", UNIFYING_PAIRING_WINDOW_MS / 1000);
+		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+		break;
+	default:
+		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
+		break;
+	}
+}
+
+void unifying_run(int store_err)
 {
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	struct radio_config rc;
@@ -168,7 +202,6 @@ void unifying_run(int store_err, uint32_t reset_cause)
 	uint32_t reported_drops = 0;
 	bool stored;
 
-	ARG_UNUSED(reset_cause);
 	memcpy(receiver.base, &raw, sizeof(receiver.base));
 	unifying_device_address(&receiver, device_address);
 	stored = store_err == 0 && store_load_unifying(record, sizeof(record));
@@ -204,7 +237,7 @@ void unifying_run(int store_err, uint32_t reset_cause)
 		unifying_session_tick(&session, now, changed, leds, radio_replies_taken(), &out);
 		apply_tick(&out);
 		while (core_take_request(&req)) {
-			diag_reply_error(&req, DIAG_ERR_WRONG_PROTOCOL, PROTOCOL_UNIFYING);
+			serve_diag(&req, now);
 		}
 		dropped = core_rx_dropped();
 		if (dropped != reported_drops) {

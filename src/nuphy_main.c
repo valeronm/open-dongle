@@ -25,7 +25,6 @@ static struct chan_survey survey;
 static int8_t keyboard_rssi;
 static uint32_t link_down_ms;
 static bool link_was_lost;
-static uint32_t reset_cause;
 static bool heard;
 static uint32_t last_packet_ms;
 
@@ -200,21 +199,14 @@ static void fill_status(struct diag_status *s)
 {
 	const uint8_t *forced;
 
-	*s = (struct diag_status){
-		.uptime_ms = k_uptime_get(),
-		.reset_cause = reset_cause,
-		.link_state = link.state,
-		.channel = link.channel,
-		.last_rssi = keyboard_rssi,
-		.last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX,
-		.usb_live = usb_live(),
-		.usb_suspended = usb_suspended(),
-		.totals = totals(),
-		.merges = core_merges(),
-		.surveys = counters.surveys,
-		.protocol = PROTOCOL_NUPHY,
-	};
-	memcpy(s->firmware_version, core_firmware_version, sizeof(s->firmware_version));
+	core_fill_status(s);
+	s->link_state = link.state;
+	s->channel = link.channel;
+	s->last_rssi = keyboard_rssi;
+	s->last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX;
+	s->totals = totals();
+	s->merges = core_merges();
+	s->surveys = counters.surveys;
 	if (link.own_known) {
 		memcpy(s->own, link.own, sizeof(s->own));
 	}
@@ -319,16 +311,13 @@ static void serve_diag(const struct diag_request *req)
 	case DIAG_FORCE_CHANNELS:
 		force_channels(req);
 		break;
-	case DIAG_PAIR:
-		diag_reply_error(req, DIAG_ERR_WRONG_PROTOCOL, PROTOCOL_NUPHY);
-		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		break;
 	}
 }
 
-void nuphy_run(int store_err, uint32_t reset_cause_at_boot)
+void nuphy_run(int store_err)
 {
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
@@ -340,9 +329,8 @@ void nuphy_run(int store_err, uint32_t reset_cause_at_boot)
 	struct link_out out = {0};
 	bool paired;
 
-	reset_cause = reset_cause_at_boot;
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_BOOT, 0, 0, 0, reset_cause);
+	log_event(HISTORY_BOOT, 0, 0, 0, core_reset_cause());
 	memcpy(id, &raw, sizeof(id));
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
@@ -363,7 +351,7 @@ void nuphy_run(int store_err, uint32_t reset_cause_at_boot)
 	memcpy(rc.base1, id, sizeof(rc.base1));
 	core_start_radio(&rc);
 	printk("open-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
-	       id[2], id[3], paired ? "paired" : "never paired", store_err, reset_cause);
+	       id[2], id[3], paired ? "paired" : "never paired", store_err, core_reset_cause());
 
 	for (;;) {
 		struct rx_item item;

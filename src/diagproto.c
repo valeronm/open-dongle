@@ -9,6 +9,22 @@ static uint8_t *put_le(uint8_t *p, uint64_t v, size_t bytes)
 	return p;
 }
 
+uint8_t diag_command_protocol(uint8_t command)
+{
+	switch (command) {
+	case DIAG_HISTORY:
+	case DIAG_EVENTS:
+	case DIAG_NOISE:
+	case DIAG_CLEAR:
+	case DIAG_FORCE_CHANNELS:
+		return PROTOCOL_NUPHY;
+	case DIAG_PAIR:
+		return PROTOCOL_UNIFYING;
+	default:
+		return 0;
+	}
+}
+
 bool diag_parse_request(const uint8_t *buf, size_t len, struct diag_request *out)
 {
 	if (len < DIAG_REQUEST_LEN) {

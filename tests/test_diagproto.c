@@ -243,6 +243,22 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 	CHECK(!diag_channels_arg(0, channels));
 }
 
+static void test_a_command_belongs_to_one_protocol_or_to_all(void)
+{
+	CHECK_EQ(diag_command_protocol(DIAG_HISTORY), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_NOISE), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_FORCE_CHANNELS), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_PAIR), PROTOCOL_UNIFYING);
+	CHECK_EQ(diag_command_protocol(DIAG_STATUS), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_REBOOT), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_BOOTLOADER), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_PROTOCOL), 0);
+	CHECK_EQ(diag_command_protocol(0), 0);
+	CHECK_EQ(diag_command_protocol(200), 0);
+}
+
 int main(void)
 {
 	RUN(test_request_carries_command_seq_and_arg);
@@ -259,5 +275,6 @@ int main(void)
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);
+	RUN(test_a_command_belongs_to_one_protocol_or_to_all);
 	return TEST_EXIT();
 }

@@ -83,6 +83,8 @@ void diag_part(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 /* detail is the active protocol for DIAG_ERR_WRONG_PROTOCOL and 0 otherwise. */
 void diag_error_report(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 		       enum diag_error code, uint8_t detail);
+/* Returns 0 for a command every protocol answers. */
+uint8_t diag_command_protocol(uint8_t command);
 size_t diag_encode_status(uint8_t *out, const struct diag_status *s);
 size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m,
 			  size_t n);

@@ -20,10 +20,10 @@ int main(void)
 		loaded = store_load_protocol(&stored);
 	}
 	active = protocol_from_stored(loaded, stored);
-	core_start(active);
+	core_start(active, reset_cause);
 	if (active == PROTOCOL_UNIFYING) {
-		unifying_run(store_err, reset_cause);
+		unifying_run(store_err);
 	}
-	nuphy_run(store_err, reset_cause);
+	nuphy_run(store_err);
 	return 0;
 }
