@@ -10,6 +10,7 @@ static const uint8_t surveyed[3] = {30, 40, 60};
 
 static struct link l;
 static struct link_out out;
+static uint32_t last_ms;
 
 static struct nuphy_msg pairing(enum nuphy_kind kind, const uint8_t *dongle)
 {
@@ -23,12 +24,15 @@ static struct nuphy_msg pairing(enum nuphy_kind kind, const uint8_t *dongle)
 static void init(const uint8_t *own)
 {
 	out = (struct link_out){0};
+	last_ms = 0;
 	link_init(&l, dongle_id, own, 0, &out);
+	link_open_pairing(&l, PAIRWIN_BOOT, 0);
 }
 
 static void deliver(const struct nuphy_msg *m, uint8_t pipe, uint32_t now)
 {
 	out = (struct link_out){0};
+	last_ms = now;
 	link_on_message(&l, m, pipe, now, &out);
 }
 
@@ -42,19 +46,33 @@ static void message(enum nuphy_kind kind, uint8_t pipe, uint32_t now)
 static void survey(const uint8_t channels[3], uint32_t now)
 {
 	out = (struct link_out){0};
+	last_ms = now;
 	link_on_survey(&l, channels, now, &out);
 }
 
 static void survey_failed(uint32_t now)
 {
 	out = (struct link_out){0};
+	last_ms = now;
 	link_survey_failed(&l, now, &out);
 }
 
 static void tick(uint32_t now)
 {
 	out = (struct link_out){0};
+	last_ms = now;
 	link_tick(&l, now, &out);
+}
+
+static void open_pairing(uint32_t now)
+{
+	last_ms = now;
+	link_open_pairing(&l, PAIRWIN_REQUEST, now);
+}
+
+static enum link_led led(void)
+{
+	return link_led(&l, last_ms);
 }
 
 static void expect_status(uint8_t seq, uint8_t leds)
@@ -115,7 +133,6 @@ static void test_never_paired_idle_alternates_fixed_channels_with_channel_2(void
 	CHECK(!out.set_channel);
 	tick(800);
 	CHECK_EQ(out.channel, 22);
-	CHECK_EQ(link_led(&l), LINK_LED_IDLE);
 }
 
 static void test_paired_idle_alternates_home_with_channel_2(void)
@@ -139,7 +156,7 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 	tick(400);
 	deliver(&request, 0, 450);
 	CHECK(out.start_survey);
-	CHECK_EQ(link_led(&l), LINK_LED_PAIRING);
+	CHECK_EQ(led(), LINK_LED_PAIRING);
 
 	survey(surveyed, 2000);
 	CHECK(out.set_channel);
@@ -157,7 +174,7 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 	message(NUPHY_KEEPALIVE, 1, 2120);
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, 30);
-	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	CHECK_EQ(led(), LINK_LED_CONNECTED);
 }
 
 static void test_confirm_for_another_dongle_is_ignored(void)
@@ -217,7 +234,6 @@ static void test_failed_survey_returns_to_idle(void)
 	init(NULL);
 	deliver(&request, 0, 10);
 	survey_failed(1600);
-	CHECK_EQ(link_led(&l), LINK_LED_IDLE);
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, 16);
 }
@@ -282,7 +298,7 @@ static void test_silence_for_1_s_loses_the_link(void)
 	tick(1010);
 	CHECK(out.lost);
 	CHECK_EQ(out.channel, 26);
-	CHECK_EQ(link_led(&l), LINK_LED_IDLE);
+	CHECK_EQ(led(), LINK_LED_IDLE);
 }
 
 static void test_invalid_message_does_not_keep_the_link(void)
@@ -356,7 +372,7 @@ static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
 	message(NUPHY_KEEPALIVE, 1, 40);
 	CHECK(!out.up);
 	CHECK(!out.moved);
-	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	CHECK_EQ(led(), LINK_LED_CONNECTED);
 }
 
 static void hear_keyboard_on_the_pairing_channel(const uint8_t *own)
@@ -373,7 +389,7 @@ static void test_a_keyboard_heard_on_the_pairing_channel_is_moved_home(void)
 	CHECK(out.up);
 	CHECK(!out.set_channel);
 	expect_status(1, 0);
-	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	CHECK_EQ(led(), LINK_LED_CONNECTED);
 	message(NUPHY_KEEPALIVE, 1, 450);
 	CHECK(!out.moved);
 	CHECK(!out.set_channel);
@@ -387,7 +403,7 @@ static void test_a_keyboard_heard_on_the_pairing_channel_is_moved_home(void)
 	CHECK(out.set_channel);
 	CHECK_EQ(out.channel, home[0]);
 	expect_status(3, 0);
-	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	CHECK_EQ(led(), LINK_LED_CONNECTED);
 }
 
 static void test_silence_after_the_move_home_starts_loses_the_link(void)
@@ -402,7 +418,19 @@ static void test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongl
 	hear_keyboard_on_the_pairing_channel(NULL);
 	CHECK(out.up);
 	CHECK(!out.set_channel);
-	CHECK_EQ(link_led(&l), LINK_LED_CONNECTED);
+	CHECK_EQ(led(), LINK_LED_PAIRING);
+}
+
+static void test_a_keyboard_connecting_to_a_never_paired_dongle_leaves_pairing_open(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(NULL);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK(out.up);
+	tick(1010);
+	deliver(&request, 0, 100000);
+	CHECK(out.start_survey);
 }
 
 static void test_a_250_ms_silence_while_connected_is_a_gap(void)
@@ -572,6 +600,153 @@ static void test_a_dongle_with_nothing_forced_reports_no_forced_channels(void)
 	CHECK(link_forced_channels(&l) == NULL);
 }
 
+static void test_a_paired_dongle_answers_a_request_in_its_first_30_s(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	deliver(&request, 0, 29999);
+	CHECK(out.start_survey);
+}
+
+static void test_a_paired_dongle_ignores_a_request_after_its_first_30_s(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	tick(30000);
+	CHECK_EQ(out.channel, 2);
+	deliver(&request, 0, 30010);
+	CHECK(!out.start_survey);
+	CHECK(!out.reply);
+}
+
+static void test_the_keyboard_connecting_closes_pairing_opened_at_boot(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	tick(1010);
+	deliver(&request, 0, 1100);
+	CHECK(!out.start_survey);
+	tick(30000);
+	CHECK(!out.window_closed);
+}
+
+static void test_opening_pairing_lets_a_paired_dongle_answer_for_30_s(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	tick(40000);
+	open_pairing(50000);
+	deliver(&request, 0, 50000 + 29999);
+	CHECK(out.start_survey);
+}
+
+static void test_pairing_opened_on_request_ignores_the_keyboard_connecting(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	tick(40000);
+	open_pairing(50000);
+	message(NUPHY_KEEPALIVE, 1, 50010);
+	tick(51010);
+	deliver(&request, 0, 51100);
+	CHECK(out.start_survey);
+}
+
+static void test_a_never_paired_dongle_answers_a_request_at_any_time(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(NULL);
+	tick(100000);
+	deliver(&request, 0, 100010);
+	CHECK(out.start_survey);
+}
+
+static void test_a_confirmed_pairing_closes_pairing(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	deliver(&confirm, 0, 1640);
+	message(NUPHY_KEEPALIVE, 1, 1680);
+	tick(2680);
+	deliver(&request, 0, 2700);
+	CHECK(!out.start_survey);
+	CHECK(!out.reply);
+}
+
+static void test_a_confirmed_pairing_is_not_reported_as_running_out(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(home);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	deliver(&confirm, 0, 1640);
+	tick(1650);
+	CHECK(!out.window_closed);
+	message(NUPHY_KEEPALIVE, 1, 1680);
+	tick(1690);
+	CHECK(!out.window_closed);
+	tick(40000);
+	CHECK(!out.window_closed);
+}
+
+static void test_the_led_shows_pairing_while_it_is_open(void)
+{
+	init(home);
+	CHECK_EQ(led(), LINK_LED_PAIRING);
+	tick(30000);
+	CHECK_EQ(led(), LINK_LED_IDLE);
+	open_pairing(40000);
+	CHECK_EQ(led(), LINK_LED_PAIRING);
+	message(NUPHY_KEEPALIVE, 1, 40010);
+	CHECK_EQ(led(), LINK_LED_PAIRING);
+}
+
+static void test_pairing_running_out_is_reported_once(void)
+{
+	init(home);
+	tick(29999);
+	CHECK(!out.window_closed);
+	tick(30000);
+	CHECK(out.window_closed);
+	tick(30001);
+	CHECK(!out.window_closed);
+}
+
+static void test_pairing_running_out_mid_attempt_is_reported_when_the_attempt_ends(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	deliver(&request, 0, 29000);
+	survey(surveyed, 29500);
+	tick(30000);
+	CHECK(!out.window_closed);
+	tick(30500);
+	CHECK(out.window_closed);
+	CHECK(out.pairing_expired);
+}
+
+static void test_a_pairing_with_no_confirm_expires(void)
+{
+	pairing_times_out_after_a_survey();
+	CHECK(out.pairing_expired);
+	tick(2700);
+	CHECK(!out.pairing_expired);
+}
+
 int main(void)
 {
 	RUN(test_never_paired_idle_alternates_fixed_channels_with_channel_2);
@@ -609,5 +784,18 @@ int main(void)
 	RUN(test_forcing_during_a_forced_pairing_does_not_change_what_it_saves);
 	RUN(test_pairing_channels_repeats_and_out_of_range_channels_are_refused);
 	RUN(test_a_dongle_with_nothing_forced_reports_no_forced_channels);
+	RUN(test_a_keyboard_connecting_to_a_never_paired_dongle_leaves_pairing_open);
+	RUN(test_a_paired_dongle_answers_a_request_in_its_first_30_s);
+	RUN(test_a_paired_dongle_ignores_a_request_after_its_first_30_s);
+	RUN(test_the_keyboard_connecting_closes_pairing_opened_at_boot);
+	RUN(test_opening_pairing_lets_a_paired_dongle_answer_for_30_s);
+	RUN(test_pairing_opened_on_request_ignores_the_keyboard_connecting);
+	RUN(test_a_never_paired_dongle_answers_a_request_at_any_time);
+	RUN(test_a_confirmed_pairing_closes_pairing);
+	RUN(test_a_confirmed_pairing_is_not_reported_as_running_out);
+	RUN(test_the_led_shows_pairing_while_it_is_open);
+	RUN(test_pairing_running_out_is_reported_once);
+	RUN(test_pairing_running_out_mid_attempt_is_reported_when_the_attempt_ends);
+	RUN(test_a_pairing_with_no_confirm_expires);
 	return TEST_EXIT();
 }

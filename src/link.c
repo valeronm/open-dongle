@@ -91,18 +91,20 @@ static void offer(struct link *l, struct link_out *out)
 	reply_pairing(l, out);
 }
 
+static bool attempting(const struct link *l)
+{
+	return l->state == LINK_SURVEY || l->state == LINK_PAIRING || l->state == LINK_CONFIRMED;
+}
+
 static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32_t now_ms,
 			       struct link_out *out)
 {
 	bool same_keyboard = memcmp(m->ids.keyboard, l->keyboard_id, NUPHY_ID_LEN) == 0;
-	bool pairing = l->state == LINK_SURVEY || l->state == LINK_PAIRING ||
-		       l->state == LINK_CONFIRMED;
-
-	if (pairing && same_keyboard) {
+	if (attempting(l) && same_keyboard) {
 		l->last_rx_ms = now_ms;
 	}
 	if (m->kind == NUPHY_PAIR_REQUEST) {
-		if (l->state == LINK_IDLE) {
+		if (l->state == LINK_IDLE && link_pairing_open(l, now_ms)) {
 			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
 			if (next_offer_ready(l, now_ms)) {
@@ -120,6 +122,7 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		memcpy(l->own, l->offered, sizeof(l->own));
 		l->own_known = true;
+		pairwin_paired(&l->window);
 		out->save_channels = true;
 		l->state = LINK_CONFIRMED;
 		/* The keyboard addresses pipe 1 once this confirm is acknowledged. */
@@ -185,6 +188,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 								   : LINK_CONNECTED;
 		out->up = true;
 		out->woke = m->kind == NUPHY_HELLO;
+		pairwin_link_up(&l->window);
 		reply_status(l, now_ms, out);
 		break;
 	case LINK_CONNECTED:
@@ -226,6 +230,7 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	case LINK_PAIRING:
 		if (now_ms - l->last_rx_ms >= IDLE_AFTER_MS) {
 			out->lost = connected(l);
+			out->pairing_expired = l->state == LINK_PAIRING;
 			go_idle(l, now_ms, out);
 		}
 		break;
@@ -242,6 +247,7 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	case LINK_SURVEY:
 		break;
 	}
+	out->window_closed = !attempting(l) && pairwin_ran_out(&l->window, now_ms);
 }
 
 void link_radio_resumed(struct link *l, uint32_t now_ms)
@@ -262,8 +268,21 @@ void link_set_host_suspended(struct link *l, bool suspended)
 	}
 }
 
-enum link_led link_led(const struct link *l)
+void link_open_pairing(struct link *l, enum pairwin_cause cause, uint32_t now_ms)
 {
+	pairwin_open(&l->window, cause, l->own_known, now_ms);
+}
+
+bool link_pairing_open(const struct link *l, uint32_t now_ms)
+{
+	return pairwin_is_open(&l->window, now_ms);
+}
+
+enum link_led link_led(const struct link *l, uint32_t now_ms)
+{
+	if (link_pairing_open(l, now_ms)) {
+		return LINK_LED_PAIRING;
+	}
 	if (l->state == LINK_IDLE) {
 		return LINK_LED_IDLE;
 	}

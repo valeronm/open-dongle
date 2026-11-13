@@ -44,7 +44,7 @@ static void show_state(void)
 		[LINK_LED_CONNECTED] = IND_CONNECTED,
 	};
 
-	core_show_state(by_link[link_led(&link)]);
+	core_show_state(by_link[link_led(&link, k_uptime_get_32())]);
 }
 
 static void apply(const struct link_out *out)
@@ -84,6 +84,18 @@ static void apply(const struct link_out *out)
 	if (out->moved) {
 		core_log(HISTORY_LINK_MOVED, out->moved_from, out->channel, 0, 0);
 	}
+	if (out->pairing_expired) {
+		core_log(HISTORY_PAIRING_TIMEOUT, 0, 0, 0, 0);
+	}
+	if (out->window_closed) {
+		printk("pairing closed\n");
+		core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
+	}
+}
+
+static void log_pairing_opened(void)
+{
+	core_log(HISTORY_PAIRING_OPENED, link.window.cause, link.window.until_paired, 0, 0);
 }
 
 static void run_survey(void)
@@ -211,6 +223,12 @@ static void serve_diag(const struct diag_request *req)
 	case DIAG_FORCE_CHANNELS:
 		force_channels(req);
 		break;
+	case DIAG_PAIR:
+		link_open_pairing(&link, PAIRWIN_REQUEST, k_uptime_get_32());
+		printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
+		log_pairing_opened();
+		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		break;
@@ -237,6 +255,8 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	memcpy(id, &raw, sizeof(id));
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
+	link_open_pairing(&link, PAIRWIN_BOOT, k_uptime_get_32());
+	log_pairing_opened();
 	if (store_err == 0 && store_load_forced(forced) && !link_force_channels(&link, forced)) {
 		printk("stored forced channels refused\n");
 	}

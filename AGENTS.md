@@ -1,8 +1,8 @@
 # AGENTS.md
 
 - `src/nuphy.*`, `src/reports.*`, `src/chanpick.*`, `src/noise.*`, `src/link.*`,
-  `src/diagproto.*`, `src/history.*`, `src/protocol.*` and `src/unifying.*` include only the C
-  standard library and each other.
+  `src/diagproto.*`, `src/history.*`, `src/protocol.*`, `src/pairwin.*` and `src/unifying.*`
+  include only the C standard library and each other.
   Their tests build them with the host compiler, where no Zephyr, nrfx or ESB header exists.
 - Radio, USB, flash and the clock reach those modules only through `src/core.c`,
   `src/nuphy_main.c`, `src/unifying_main.c`, `src/main.c`, `src/diag.c` and `src/store.c`.

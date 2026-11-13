@@ -252,7 +252,7 @@ static void test_a_command_belongs_to_one_protocol_or_to_all(void)
 	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_NOISE), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_FORCE_CHANNELS), PROTOCOL_NUPHY);
-	CHECK_EQ(diag_command_protocol(DIAG_PAIR), PROTOCOL_UNIFYING);
+	CHECK_EQ(diag_command_protocol(DIAG_PAIR), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_STATUS), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_REBOOT), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_BOOTLOADER), 0);

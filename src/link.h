@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "nuphy.h"
+#include "pairwin.h"
 
 enum link_state {
 	LINK_IDLE,
@@ -39,6 +40,10 @@ struct link_out {
 	/* Nonzero when this packet ended a gap. */
 	uint32_t gap_ms;
 	uint8_t gap_channel;
+	/* Pairing ran out with nothing paired, once any attempt in progress had ended. */
+	bool window_closed;
+	/* A pair reply went unconfirmed. */
+	bool pairing_expired;
 };
 
 enum offer_kind {
@@ -68,6 +73,7 @@ struct link {
 	uint8_t host_leds;
 	bool host_suspended;
 	bool suspend_sent;
+	struct pairwin window;
 };
 
 /* own is the three channels from the last pairing, or NULL for a dongle that never paired. */
@@ -93,6 +99,9 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out);
 void link_radio_resumed(struct link *l, uint32_t now_ms);
 void link_set_host_leds(struct link *l, uint8_t leds);
 void link_set_host_suspended(struct link *l, bool suspended);
-enum link_led link_led(const struct link *l);
+void link_open_pairing(struct link *l, enum pairwin_cause cause, uint32_t now_ms);
+/* A pair request starts a pairing only while this is true. */
+bool link_pairing_open(const struct link *l, uint32_t now_ms);
+enum link_led link_led(const struct link *l, uint32_t now_ms);
 
 #endif

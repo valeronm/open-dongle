@@ -14,8 +14,6 @@ uint8_t diag_command_protocol(uint8_t command)
 	switch (command) {
 	case DIAG_FORCE_CHANNELS:
 		return PROTOCOL_NUPHY;
-	case DIAG_PAIR:
-		return PROTOCOL_UNIFYING;
 	default:
 		return 0;
 	}
