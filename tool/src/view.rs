@@ -387,6 +387,7 @@ impl App {
                 KeyCode::Char('q') => return Ok(()),
                 KeyCode::Char(c) => self.prompt = self.key_prompt(c),
                 KeyCode::Esc => self.noise = None,
+                _ if self.protocol() == Protocol::Unifying => {}
                 KeyCode::Left => self.scroll += 10,
                 KeyCode::Right => self.scroll = self.scroll.saturating_sub(10),
                 KeyCode::Up => self.scroll_events(EventsMove::Newer(1)),
@@ -491,6 +492,20 @@ impl<T: Transport> App<T> {
     }
 
     fn draw(&mut self, f: &mut Frame) {
+        let status =
+            Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle"));
+        if self.protocol() == Protocol::Unifying {
+            let [top, middle, footer] = Layout::vertical([
+                Constraint::Length(4),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .areas(f.area());
+            f.render_widget(status, top);
+            f.render_widget(Paragraph::new("history is kept only in NuPhy mode"), middle);
+            f.render_widget(Paragraph::new(self.help("")), footer);
+            return;
+        }
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(HISTORY_MIN_ROWS),
@@ -498,20 +513,20 @@ impl<T: Transport> App<T> {
             Constraint::Length(1),
         ])
         .areas(f.area());
-        f.render_widget(
-            Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle")),
-            top,
-        );
+        f.render_widget(status, top);
         match &self.noise {
             Some(noise) => self.draw_noise(f, middle, noise),
-            None if self.protocol() == Protocol::Unifying => f.render_widget(
-                Paragraph::new("history is kept only in NuPhy mode").block(Block::bordered()),
-                middle,
-            ),
             None => self.draw_history(f, middle),
         }
         self.draw_events(f, bottom);
-        let help = match self.prompt {
+        f.render_widget(
+            Paragraph::new(self.help("  ←/→ history  ↑/↓ events")),
+            footer,
+        );
+    }
+
+    fn help(&self, navigation: &str) -> String {
+        match self.prompt {
             Some(p) => p.question(),
             None if !self.message.is_empty() => self.message.clone(),
             None => self.refresh_error.clone().unwrap_or_else(|| {
@@ -519,13 +534,9 @@ impl<T: Transport> App<T> {
                     .iter()
                     .map(|(key, label, _)| format!("{key} {label}"))
                     .collect();
-                format!(
-                    "{}  ←/→ history  ↑/↓ events  esc back  q quit",
-                    actions.join("  ")
-                )
+                format!("{}{navigation}  esc back  q quit", actions.join("  "))
             }),
-        };
-        f.render_widget(Paragraph::new(help), footer);
+        }
     }
 
     fn status_lines(&self) -> Vec<Line<'static>> {
@@ -945,6 +956,22 @@ mod tests {
             "{footer}"
         );
         assert!(!footer.contains("n noise"), "{footer}");
+    }
+
+    #[test]
+    fn a_unifying_dongle_draws_no_events_and_offers_no_history_keys() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.history.boot = Some(boot());
+        let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        let rows = screen(&terminal);
+        let text = rows.join("\n");
+        assert!(!text.contains("events"), "{text}");
+        assert_eq!(
+            rows[23].trim_end(),
+            "r reboot  b bootloader  c clear  esc back  q quit"
+        );
     }
 
     #[test]
