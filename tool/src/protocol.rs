@@ -15,11 +15,7 @@ pub struct VersionMismatch {
 impl std::fmt::Display for VersionMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let fix = if self.dongle < VERSION {
-            concat!(
-                "flash the firmware of release ",
-                env!("CARGO_PKG_VERSION"),
-                " with `open-dongle flash`"
-            )
+            "flash the firmware from this tool's release with `open-dongle flash`"
         } else {
             "install the open-dongle tool from the firmware's release"
         };
@@ -553,11 +549,8 @@ pub(crate) mod tests {
     fn an_older_dongle_is_told_to_take_this_tools_firmware() {
         assert_eq!(
             refusal(1),
-            format!(
-                "the dongle speaks diagnostic protocol 1, this tool 2; flash the firmware of \
-                 release {} with `open-dongle flash`",
-                env!("CARGO_PKG_VERSION")
-            )
+            "the dongle speaks diagnostic protocol 1, this tool 2; flash the firmware from this \
+             tool's release with `open-dongle flash`"
         );
     }
 
