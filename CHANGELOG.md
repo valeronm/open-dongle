@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 - One firmware runs the NuPhy Air75 V2 or a Logitech Unifying keyboard (tested with the MX Keys): `open-dongle protocol` switches between them, keeping each one's pairing, and `open-dongle pair` opens Unifying pairing for 30 s.
+- The history, events and noise map work in Unifying mode as well as NuPhy mode. A silence there is
+  logged but not counted as a link loss, because an idle MX Keys sleeps after a few minutes.
+- The event that starts a silence records the minutes since the last key, and the event that ends it
+  records whether the keyboard woke.
+- The live view's `p` key switches the protocol after asking, which restarts the history, and `a`
+  opens Unifying pairing for 30 s.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.

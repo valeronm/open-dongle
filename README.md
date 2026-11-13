@@ -56,8 +56,9 @@ dongle keeps in flash. A new dongle runs NuPhy. `open-dongle protocol unifying` 
 `open-dongle protocol nuphy` switches it, and the dongle reboots into the new protocol. Each
 protocol keeps its own pairing, so switching back needs no new pairing.
 
-The history, events, noise map and forced channels under [Diagnostics](#diagnostics) exist only
-in NuPhy mode; in Unifying mode the dongle reports its link, signal and counter totals.
+Forced channels under [Diagnostics](#diagnostics) exist only in NuPhy mode. In Unifying mode a
+silence is logged but not counted as a link loss, because an idle MX Keys sleeps after a few
+minutes.
 
 ## Pairing
 
@@ -84,13 +85,16 @@ the one paired before.
 ## Diagnostics
 
 `open-dongle` reads the dongle over a vendor HID interface: link state and signal, counter totals,
-and in NuPhy mode per-minute counters for the last day, recent events and a radio noise map. With no
-arguments it shows a live view; `--help` lists the subcommands. The history lives in the dongle's
-RAM, so it covers only the time since the dongle was last plugged in or reset. A noise map takes the
+per-minute counters for the last day, recent events and a radio noise map. With no arguments it
+shows a live view, where `p` switches the protocol after asking and `a` opens Unifying pairing;
+`--help` lists the subcommands. The history lives in the dongle's RAM, so it covers only the time
+since the dongle was last plugged in, reset or switched to the other protocol. A noise map takes the
 same measurement as NuPhy [pairing](#pairing) and stops the keyboard meanwhile, because the radio
 cannot listen while it measures. Each minute of history also records the noise on the home channel,
-the first of the three the keyboard is paired on, and each gap or loss event the noise on the
-channel the link was on, both read between keyboard packets.
+the one the dongle listens on, and each gap or loss event the noise on the channel the link was on,
+both read between keyboard packets. A NuPhy keyboard's home channel is the first of its three. In
+Unifying mode the minute's noise is recorded only while pairing is closed, because the pairing
+sweep moves the dongle across channels.
 
 ## Building from source
 
