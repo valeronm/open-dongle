@@ -497,7 +497,19 @@ int main(void)
 		printk("stored forced channels refused\n");
 	}
 	watchdog_start();
-	while ((err = radio_start(id, out.channel, on_radio_rx)) != 0) {
+	struct radio_config rc = {
+		.rate = RADIO_1MBPS,
+		.crc = RADIO_CRC_8,
+		.base0 = {0x56, 0x56, 0x56, 0x56},
+		.prefixes = {0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58},
+		.pipes = 8,
+		.channel = out.channel,
+		.noise = true,
+	};
+
+	/* The keyboard addresses pipe 1 with the dongle ID it was given at pairing. */
+	memcpy(rc.base1, id, sizeof(rc.base1));
+	while ((err = radio_start(&rc, on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);
 		printk("radio start failed: %d\n", err);
 		k_sleep(K_SECONDS(1));

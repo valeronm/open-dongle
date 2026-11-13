@@ -275,6 +275,23 @@ static void no_diag(const uint8_t *buf, size_t len)
 	ARG_UNUSED(len);
 }
 
+static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_LEN],
+					  uint8_t channel)
+{
+	const uint8_t *pairing = unifying_pairing_address;
+
+	/* The last octet of an address is its prefix. */
+	return (struct radio_config){
+		.rate = RADIO_2MBPS,
+		.crc = RADIO_CRC_16,
+		.base0 = {pairing[3], pairing[2], pairing[1], pairing[0]},
+		.base1 = {device[3], device[2], device[1], device[0]},
+		.prefixes = {pairing[4], device[4], 0x00},
+		.pipes = 3,
+		.channel = channel,
+	};
+}
+
 int main(void)
 {
 	static const struct usb_callbacks usb_cb = {
@@ -283,6 +300,7 @@ int main(void)
 		.on_diag_request = no_diag,
 	};
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
+	struct radio_config rc;
 	struct unifying_sweep sweep = {0};
 	uint8_t device_address[UNIFYING_ADDRESS_LEN];
 	uint8_t record[UNIFYING_RECORD_LEN];
@@ -314,8 +332,8 @@ int main(void)
 	sys_rand_get(next_nonce, sizeof(next_nonce));
 
 	channel = unifying_sweep_channel(&sweep, &pairing, (uint64_t)k_uptime_get());
-	while ((err = radio_start_unifying(unifying_pairing_address, device_address, channel,
-					   on_radio_rx)) != 0) {
+	rc = unifying_radio(device_address, channel);
+	while ((err = radio_start(&rc, on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);
 		printk("radio start failed: %d\n", err);
 		k_sleep(K_SECONDS(1));
