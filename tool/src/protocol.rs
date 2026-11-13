@@ -40,6 +40,10 @@ pub enum Command {
     Bootloader,
     Clear,
     ForceChannels,
+    #[cfg_attr(not(test), expect(dead_code))]
+    Pair,
+    #[cfg_attr(not(test), expect(dead_code))]
+    Protocol,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +53,7 @@ pub enum ErrorCode {
     Radio,
     BadChannels,
     Store,
+    WrongProtocol,
 }
 
 impl ErrorCode {
@@ -58,6 +63,7 @@ impl ErrorCode {
             2 => Some(Self::Radio),
             3 => Some(Self::BadChannels),
             4 => Some(Self::Store),
+            5 => Some(Self::WrongProtocol),
             _ => None,
         }
     }
@@ -68,6 +74,31 @@ impl ErrorCode {
             Self::Radio => "the radio failed",
             Self::BadChannels => "channels not allowed",
             Self::Store => "saving to flash failed",
+            Self::WrongProtocol => "not available in the protocol the dongle runs",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Protocol {
+    Nuphy = 1,
+    Unifying = 2,
+}
+
+impl Protocol {
+    pub fn from_code(code: u8) -> Option<Self> {
+        match code {
+            1 => Some(Self::Nuphy),
+            2 => Some(Self::Unifying),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Nuphy => "NuPhy",
+            Self::Unifying => "Unifying",
         }
     }
 }
@@ -114,6 +145,7 @@ pub enum Part<'a> {
         command: u8,
         seq: u8,
         code: u8,
+        detail: u8,
     },
 }
 
@@ -135,6 +167,7 @@ pub fn parse_part(buf: &[u8]) -> Option<Part<'_>> {
             command: buf[0] & !ERROR_FLAG,
             seq: buf[1],
             code: buf[4],
+            detail: buf[5],
         });
     }
     Some(Part::Data {
@@ -218,9 +251,11 @@ pub struct Status {
     pub minute_oldest: u32,
     pub events_total: u32,
     pub events_oldest: u32,
+    pub protocol: Protocol,
 }
 
-/// Fails on a reply too short for its layout; a reply in another protocol is the inner `Err`.
+/// Fails on a reply too short for its layout or carrying an unknown [`Protocol`] code; a reply in
+/// another diagnostic [`VERSION`] is the inner `Err`.
 pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let mut r = Reader::new(payload);
     let version = r.u8()?;
@@ -267,6 +302,9 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         minute_oldest: r.u32()?,
         events_total: r.u32()?,
         events_oldest: r.u32()?,
+        protocol: Protocol::from_code(r.u8()?).ok_or_else(|| {
+            anyhow::anyhow!("the dongle reports a protocol this tool does not know")
+        })?,
     }))
 }
 
@@ -506,6 +544,7 @@ pub(crate) mod tests {
         );
         assert_eq!((s.minute_next, s.minute_oldest), (1500, 60));
         assert_eq!((s.events_total, s.events_oldest), (600, 88));
+        assert_eq!(s.protocol, Protocol::Nuphy);
     }
 
     #[test]
@@ -580,9 +619,32 @@ pub(crate) mod tests {
             Some(Part::Error {
                 command: 0x42,
                 seq: 5,
-                code: 1
+                code: 1,
+                detail: 0
             })
         );
+    }
+
+    #[test]
+    fn an_error_part_carries_its_detail() {
+        let mut buf = [0u8; REPORT_LEN];
+        buf[..6].copy_from_slice(&[9 | ERROR_FLAG, 4, 0, 1, 5, 2]);
+        assert_eq!(
+            parse_part(&buf),
+            Some(Part::Error {
+                command: 9,
+                seq: 4,
+                code: 5,
+                detail: 2
+            })
+        );
+    }
+
+    #[test]
+    fn an_unknown_protocol_in_status_is_refused() {
+        let mut payload = fixture("status.hex");
+        *payload.last_mut().unwrap() = 7;
+        assert!(read_status(&payload).is_err());
     }
 
     #[test]
@@ -650,6 +712,8 @@ pub(crate) mod tests {
             Command::Bootloader,
             Command::Clear,
             Command::ForceChannels,
+            Command::Pair,
+            Command::Protocol,
         ];
         assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
     }
@@ -661,6 +725,7 @@ pub(crate) mod tests {
             ErrorCode::Radio,
             ErrorCode::BadChannels,
             ErrorCode::Store,
+            ErrorCode::WrongProtocol,
         ];
         assert_eq!(fixture("error-codes.hex"), all.map(|c| c as u8));
         assert_eq!(all.map(|c| ErrorCode::from_code(c as u8)), all.map(Some));

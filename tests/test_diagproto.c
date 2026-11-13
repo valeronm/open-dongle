@@ -3,6 +3,7 @@
 #include "chanpick.h"
 #include "diagproto.h"
 #include "history.h"
+#include "protocol.h"
 
 static size_t load_fixture(const char *name, uint8_t *out, size_t max)
 {
@@ -64,6 +65,7 @@ static void test_status_matches_fixture(void)
 		.minute_oldest = 60,
 		.events_total = 600,
 		.events_oldest = 88,
+		.protocol = PROTOCOL_NUPHY,
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];
@@ -111,11 +113,22 @@ static void test_error_sets_the_flag_and_code(void)
 	const struct diag_request req = {.command = 0x42, .seq = 5};
 	uint8_t part[DIAG_REPORT_LEN];
 
-	diag_error_report(part, &req, DIAG_ERR_UNKNOWN_COMMAND);
+	diag_error_report(part, &req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 	CHECK_EQ(part[0], 0x42 | DIAG_ERROR_FLAG);
 	CHECK_EQ(part[1], 5);
 	CHECK_EQ(part[3], 1);
 	CHECK_EQ(part[DIAG_HEADER_LEN], DIAG_ERR_UNKNOWN_COMMAND);
+}
+
+static void test_a_wrong_protocol_error_carries_the_active_protocol(void)
+{
+	const struct diag_request req = {.command = DIAG_PAIR, .seq = 2};
+	uint8_t part[DIAG_REPORT_LEN];
+
+	diag_error_report(part, &req, DIAG_ERR_WRONG_PROTOCOL, PROTOCOL_NUPHY);
+	CHECK_EQ(part[0], DIAG_PAIR | DIAG_ERROR_FLAG);
+	CHECK_EQ(part[DIAG_HEADER_LEN], DIAG_ERR_WRONG_PROTOCOL);
+	CHECK_EQ(part[DIAG_HEADER_LEN + 1], PROTOCOL_NUPHY);
 }
 
 static void test_minutes_match_fixture(void)
@@ -186,7 +199,8 @@ static void test_noise_matches_fixture(void)
 static void test_command_numbers_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
-			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS};
+			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS,
+			       DIAG_PAIR, DIAG_PROTOCOL};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -210,7 +224,7 @@ static void test_event_type_numbers_match_fixture(void)
 static void test_error_codes_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
-			       DIAG_ERR_STORE};
+			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
 
@@ -236,6 +250,7 @@ int main(void)
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);
 	RUN(test_an_empty_payload_is_one_part);
 	RUN(test_error_sets_the_flag_and_code);
+	RUN(test_a_wrong_protocol_error_carries_the_active_protocol);
 	RUN(test_minutes_match_fixture);
 	RUN(test_events_match_fixture);
 	RUN(test_noise_matches_fixture);

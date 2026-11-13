@@ -45,11 +45,11 @@ void diag_reply(const struct diag_request *req, const uint8_t *payload, size_t l
 	}
 }
 
-void diag_reply_error(const struct diag_request *req, enum diag_error code)
+void diag_reply_error(const struct diag_request *req, enum diag_error code, uint8_t detail)
 {
 	struct diag_part p = {.after = DIAG_AFTER_NONE};
 
-	diag_error_report(p.report, req, code);
+	diag_error_report(p.report, req, code, detail);
 	k_msgq_put(&diag_parts, &p, K_NO_WAIT);
 }
 

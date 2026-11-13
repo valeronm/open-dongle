@@ -50,13 +50,14 @@ void diag_part(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 }
 
 void diag_error_report(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
-		       enum diag_error code)
+		       enum diag_error code, uint8_t detail)
 {
 	memset(out, 0, DIAG_REPORT_LEN);
 	out[0] = req->command | DIAG_ERROR_FLAG;
 	out[1] = req->seq;
 	out[3] = 1;
 	out[DIAG_HEADER_LEN] = code;
+	out[DIAG_HEADER_LEN + 1] = detail;
 }
 
 size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
@@ -92,6 +93,7 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->minute_oldest, 4);
 	p = put_le(p, s->events_total, 4);
 	p = put_le(p, s->events_oldest, 4);
+	*p++ = s->protocol;
 	return p - out;
 }
 

@@ -3,8 +3,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
-    Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, REPORT_LEN, Status,
-    VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise, parse_part,
+    Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
+    Status, VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise, parse_part,
     read_status, request,
 };
 
@@ -21,12 +21,19 @@ pub struct Refused {
     pub command: Command,
     /// The raw byte when this tool does not know the code.
     pub code: Result<ErrorCode, u8>,
+    /// The protocol the dongle runs, carried only by `ErrorCode::WrongProtocol`.
+    pub running: Option<Protocol>,
 }
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "the dongle refused {:?}: ", self.command)?;
         match self.code {
+            Ok(ErrorCode::WrongProtocol) => write!(
+                f,
+                "{} runs; this needs the other protocol",
+                self.running.map_or("another protocol", Protocol::name)
+            ),
             Ok(code) => f.write_str(code.name()),
             Err(code) => write!(f, "error {code}"),
         }
@@ -91,9 +98,17 @@ impl<T: Transport> Device<T> {
                 continue;
             };
             let (index, count, chunk) = match part {
-                Part::Error { code, .. } => {
+                Part::Error { code, detail, .. } => {
                     let code = ErrorCode::from_code(code).ok_or(code);
-                    return Err(Refused { command, code }.into());
+                    let running = (code == Ok(ErrorCode::WrongProtocol))
+                        .then(|| Protocol::from_code(detail))
+                        .flatten();
+                    return Err(Refused {
+                        command,
+                        code,
+                        running,
+                    }
+                    .into());
                 }
                 Part::Data {
                     index,

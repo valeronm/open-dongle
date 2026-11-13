@@ -7,6 +7,7 @@
 
 #include "chanpick.h"
 #include "history.h"
+#include "protocol.h"
 
 /* Bumped only when a layout that a release has shipped changes. */
 #define DIAG_VERSION 2
@@ -28,6 +29,8 @@ enum diag_command {
 	DIAG_BOOTLOADER,
 	DIAG_CLEAR,
 	DIAG_FORCE_CHANNELS,
+	DIAG_PAIR,
+	DIAG_PROTOCOL,
 };
 
 enum diag_error {
@@ -35,6 +38,7 @@ enum diag_error {
 	DIAG_ERR_RADIO,
 	DIAG_ERR_BAD_CHANNELS,
 	DIAG_ERR_STORE,
+	DIAG_ERR_WRONG_PROTOCOL,
 };
 
 struct diag_request {
@@ -64,6 +68,7 @@ struct diag_status {
 	uint32_t minute_oldest;
 	uint32_t events_total;
 	uint32_t events_oldest;
+	uint8_t protocol;
 };
 
 /* Returns false for a report shorter than DIAG_REQUEST_LEN. */
@@ -73,8 +78,9 @@ bool diag_channels_arg(uint32_t arg, uint8_t out[3]);
 size_t diag_part_count(size_t payload_len);
 void diag_part(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
 	       const uint8_t *payload, size_t len, size_t part);
+/* detail is the active protocol for DIAG_ERR_WRONG_PROTOCOL and 0 otherwise. */
 void diag_error_report(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *req,
-		       enum diag_error code);
+		       enum diag_error code, uint8_t detail);
 size_t diag_encode_status(uint8_t *out, const struct diag_status *s);
 size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m,
 			  size_t n);

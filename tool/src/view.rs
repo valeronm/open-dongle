@@ -972,11 +972,11 @@ mod tests {
     fn status_payload(uptime_ms: u64, minute_next: u32, minute_oldest: u32) -> Vec<u8> {
         let mut p = fixture("status.hex");
         p[4..12].copy_from_slice(&uptime_ms.to_le_bytes());
-        let n = p.len();
+        let n = p.len() - 1;
         p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
         p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
         p[n - 8..n - 4].copy_from_slice(&0u32.to_le_bytes());
-        p[n - 4..].copy_from_slice(&0u32.to_le_bytes());
+        p[n - 4..n].copy_from_slice(&0u32.to_le_bytes());
         p
     }
 

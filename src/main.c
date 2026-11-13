@@ -335,6 +335,7 @@ static void fill_status(struct diag_status *s)
 		.totals = totals(),
 		.merges = reports.merges,
 		.surveys = counters.surveys,
+		.protocol = PROTOCOL_NUPHY,
 	};
 	if (link.own_known) {
 		memcpy(s->own, link.own, sizeof(s->own));
@@ -359,7 +360,7 @@ static void run_noise(const struct diag_request *req, uint8_t *payload)
 	err = survey_radio();
 
 	if (err) {
-		diag_reply_error(req, DIAG_ERR_RADIO);
+		diag_reply_error(req, DIAG_ERR_RADIO, 0);
 		return;
 	}
 	link_radio_resumed(&link, k_uptime_get_32());
@@ -387,13 +388,13 @@ static void force_channels(const struct diag_request *req)
 	int err;
 
 	if (forced != NULL && !link_channels_allowed(forced)) {
-		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS);
+		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS, 0);
 		return;
 	}
 	err = store_save_forced(forced);
 	if (err) {
 		printk("saving forced channels failed: %d\n", err);
-		diag_reply_error(req, DIAG_ERR_STORE);
+		diag_reply_error(req, DIAG_ERR_STORE, 0);
 		return;
 	}
 	link_force_channels(&link, forced);
@@ -449,7 +450,7 @@ static void serve_diag(const struct diag_request *req)
 		force_channels(req);
 		break;
 	default:
-		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND);
+		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		break;
 	}
 }
