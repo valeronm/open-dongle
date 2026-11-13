@@ -178,22 +178,29 @@ fn time_axis(boot: DateTime<Local>, shown: &[(u32, Minute)]) -> String {
         })
 }
 
-fn signal_legend() -> Line<'static> {
-    let key = |name: &'static str, color: Color| {
-        [
-            Span::raw("  "),
-            Span::styled("━ ", Style::default().fg(color)),
-            Span::raw(name),
-        ]
-    };
+fn legend(
+    title: &'static str,
+    keys: impl IntoIterator<Item = (&'static str, Color)>,
+) -> Line<'static> {
     Line::from_iter(
-        [Span::raw("signal dBm")].into_iter().chain(
-            SIGNAL_LINES
-                .iter()
-                .rev()
-                .flat_map(|(name, color, _)| key(name, *color)),
-        ),
+        [Span::raw(title)]
+            .into_iter()
+            .chain(keys.into_iter().flat_map(|(name, color)| {
+                [
+                    Span::raw("  "),
+                    Span::styled("━ ", Style::default().fg(color)),
+                    Span::raw(name),
+                ]
+            })),
     )
+}
+
+fn role_color(role: ChannelRole) -> Color {
+    match role {
+        ChannelRole::Current => Color::Green,
+        ChannelRole::Paired => Color::Yellow,
+        ChannelRole::Other => Color::Gray,
+    }
 }
 
 /// The dongle's history as last fetched, kept in step with its indexes.
@@ -482,7 +489,13 @@ impl App {
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
         let block = Block::bordered()
-            .title(signal_legend())
+            .title(legend(
+                "signal dBm",
+                SIGNAL_LINES
+                    .iter()
+                    .rev()
+                    .map(|&(name, color, _)| (name, color)),
+            ))
             .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
         let inner = block.inner(area);
         f.render_widget(block, area);
@@ -563,22 +576,22 @@ impl App {
             .iter()
             .map(|c| {
                 let role = s.map_or(ChannelRole::Other, |s| channel_role(c.channel, s));
-                let color = match role {
-                    ChannelRole::Current => Color::Green,
-                    ChannelRole::Paired => Color::Yellow,
-                    ChannelRole::Other => Color::Gray,
-                };
                 Bar::default()
                     .value(u64::from(noise_level(c.loudest)))
-                    .style(Style::default().fg(color))
+                    .style(Style::default().fg(role_color(role)))
                     .text_value(String::new())
             })
             .collect();
         let [chart, ruler] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
-        let block = Block::bordered().title(
-            "loudest per channel (green current, yellow paired)  ▲ BLE advertising, ├─┤ Wi-Fi 1/6/11",
-        );
+        let block = Block::bordered()
+            .title(legend(
+                "loudest per channel",
+                [ChannelRole::Current, ChannelRole::Paired]
+                    .into_iter()
+                    .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
+            ))
+            .title_bottom("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11");
         let bars_area = block.inner(chart);
         f.render_widget(
             BarChart::default()
@@ -752,14 +765,45 @@ mod tests {
         app.history.minutes[4].1 = marked;
         let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
         terminal.draw(|f| app.draw_history(f, f.area())).unwrap();
+        screen(&terminal)
+    }
+
+    fn screen(terminal: &Terminal<TestBackend>) -> Vec<String> {
         let buffer = terminal.backend().buffer();
         (0..buffer.area.height)
             .map(|y| {
                 (0..buffer.area.width)
-                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .map(|x| buffer[(x, y)].symbol())
                     .collect()
             })
             .collect()
+    }
+
+    #[test]
+    fn the_noise_legend_fits_an_80_column_terminal() {
+        let app = App::new(None);
+        let noise: Vec<NoiseChannel> = (2..=80)
+            .map(|channel| NoiseChannel {
+                channel,
+                loudest: -90,
+                average: -95,
+            })
+            .collect();
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|f| app.draw_noise(f, f.area(), &noise))
+            .unwrap();
+        let rows = screen(&terminal);
+        let text = format!("{}{}", rows[0], rows[10]);
+        for key in [
+            "loudest per channel",
+            "━ current",
+            "━ paired",
+            "▲ BLE advertising",
+            "├─┤ Wi-Fi 1/6/11",
+        ] {
+            assert!(text.contains(key), "{key} missing from {text}");
+        }
     }
 
     fn plotted(rows: &[String]) -> Vec<(usize, usize)> {

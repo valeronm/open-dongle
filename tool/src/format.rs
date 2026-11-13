@@ -34,7 +34,7 @@ pub enum ChannelRole {
 }
 
 impl ChannelRole {
-    fn label(self) -> Option<&'static str> {
+    pub fn label(self) -> Option<&'static str> {
         match self {
             ChannelRole::Current => Some("current"),
             ChannelRole::Paired => Some("paired"),
