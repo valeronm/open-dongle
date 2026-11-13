@@ -572,7 +572,7 @@ impl<T: Transport> App<T> {
             Constraint::Length(4),
             Constraint::Min(HISTORY_MIN_ROWS),
             Constraint::Max(EVENT_ROWS as u16 + 2),
-            Constraint::Length(help.len().max(1) as u16),
+            Constraint::Length(help.len() as u16),
         ])
         .areas(f.area());
         f.render_widget(status, top);
@@ -805,6 +805,7 @@ impl<T: Transport> App<T> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
+    use crate::format::UNIFYING_CONNECTED;
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::fixture;
     use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
@@ -949,7 +950,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
         let rows = screen(&terminal);
-        rows[24 - app.help(80).len()..]
+        rows[rows.len() - app.help(80).len()..]
             .iter()
             .map(|row| row.trim_end())
             .collect::<Vec<_>>()
@@ -1093,6 +1094,39 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_too_short_for_the_unifying_layout_still_draws() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.history.boot = Some(boot());
+        let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert_eq!(screen(&terminal).len(), 10);
+    }
+
+    #[test]
+    fn the_nuphy_footer_is_one_line_of_hints() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(
+            crate::protocol::read_status(&fixture("status.hex"))
+                .unwrap()
+                .unwrap(),
+        );
+        assert_eq!(app.protocol(), Protocol::Nuphy);
+        let hints = [
+            "n noise",
+            "p unifying",
+            "r reboot",
+            "b bootloader",
+            "c clear",
+            "←/→ history",
+            "↑/↓ events",
+            "esc back",
+            "q quit",
+        ];
+        assert_eq!(app.help(100), [hints.join("  ")]);
+    }
+
+    #[test]
     fn each_mode_offers_switching_to_the_other() {
         let mut app: App = App::new(None);
         app.history.status = Some(unifying_status());
@@ -1173,14 +1207,14 @@ mod tests {
     #[test]
     fn the_pairing_message_stays_while_the_status_reads_pairing() {
         let mut app = app_showing(PAIRING_OPEN);
-        refreshed_with_link_state(&mut app, 1);
+        refreshed_with_link_state(&mut app, UNIFYING_PAIRING);
         assert_eq!(app.message, PAIRING_OPEN);
     }
 
     #[test]
     fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
         let mut app = app_showing(PAIRING_OPEN);
-        refreshed_with_link_state(&mut app, 2);
+        refreshed_with_link_state(&mut app, UNIFYING_CONNECTED);
         assert_eq!(app.message, "");
         assert_eq!(
             footer(&mut app),
@@ -1191,7 +1225,7 @@ mod tests {
     #[test]
     fn another_message_stays_when_the_status_no_longer_reads_pairing() {
         let mut app = app_showing("done");
-        refreshed_with_link_state(&mut app, 2);
+        refreshed_with_link_state(&mut app, UNIFYING_CONNECTED);
         assert_eq!(app.message, "done");
     }
 

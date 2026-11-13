@@ -150,12 +150,13 @@ pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
 }
 
 pub const UNIFYING_PAIRING: u8 = 1;
+pub const UNIFYING_CONNECTED: u8 = 2;
 
 pub fn unifying_state_name(state: u8) -> &'static str {
     match state {
         0 => "not paired",
         UNIFYING_PAIRING => "pairing",
-        2 => "connected",
+        UNIFYING_CONNECTED => "connected",
         3 => "silent",
         _ => "unknown",
     }
