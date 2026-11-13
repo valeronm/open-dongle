@@ -248,12 +248,12 @@ static void test_a_command_belongs_to_one_protocol_or_to_all(void)
 	CHECK_EQ(diag_command_protocol(DIAG_HISTORY), PROTOCOL_NUPHY);
 	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), PROTOCOL_NUPHY);
 	CHECK_EQ(diag_command_protocol(DIAG_NOISE), PROTOCOL_NUPHY);
-	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), PROTOCOL_NUPHY);
 	CHECK_EQ(diag_command_protocol(DIAG_FORCE_CHANNELS), PROTOCOL_NUPHY);
 	CHECK_EQ(diag_command_protocol(DIAG_PAIR), PROTOCOL_UNIFYING);
 	CHECK_EQ(diag_command_protocol(DIAG_STATUS), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_REBOOT), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_BOOTLOADER), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_PROTOCOL), 0);
 	CHECK_EQ(diag_command_protocol(0), 0);
 	CHECK_EQ(diag_command_protocol(200), 0);

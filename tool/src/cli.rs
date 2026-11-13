@@ -17,60 +17,77 @@ use crate::protocol::{Action, ErrorCode, Protocol, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
+    for line in status_lines(s) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn status_lines(s: &Status) -> Vec<String> {
     let c = s.counters;
     let nuphy = s.protocol == Protocol::Nuphy;
-    println!("firmware  {}", version(s.firmware_version));
-    println!("protocol  {}", s.protocol.name());
+    let mut lines = vec![
+        format!("firmware  {}", version(s.firmware_version)),
+        format!("protocol  {}", s.protocol.name()),
+    ];
     if nuphy {
-        println!(
+        lines.push(format!(
             "link      {} on channel {} ({}), keyboard {}",
             link_state_name(s.link_state),
             s.channel,
             paired(s.own),
             keyboard_id(s.keyboard_id)
-        );
+        ));
     } else {
-        println!(
+        lines.push(format!(
             "link      {} on channel {}, keyboard {}",
             unifying_state_name(s.link_state),
             s.channel,
             wpid(s.keyboard_id)
-        );
+        ));
     }
-    println!(
+    lines.push(format!(
         "signal    {} dBm, {}",
         s.last_rssi,
         last_packet(s.last_rx_age_ms)
-    );
+    ));
     if nuphy {
-        println!("pairing   {}", pairing_offer(s.forced));
+        lines.push(format!("pairing   {}", pairing_offer(s.forced)));
     }
-    println!("usb       {}", usb_state(s.usb_live, s.usb_suspended));
-    println!(
+    lines.push(format!(
+        "usb       {}",
+        usb_state(s.usb_live, s.usb_suspended)
+    ));
+    lines.push(format!(
         "uptime    {}, reset by {}",
         uptime(s.uptime_ms),
         reset_causes(s.reset_cause)
-    );
-    if nuphy {
-        println!(
-            "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
-            c.packets,
-            c.invalid,
-            c.dropped,
-            c.channel_changes,
-            c.link_losses,
-            c.gaps,
-            c.usb_retries,
-            c.merges,
-            c.surveys
-        );
-        println!(
-            "history   {} minutes, {} events held",
-            s.minute_next.saturating_sub(s.minute_oldest),
-            s.events_total.saturating_sub(s.events_oldest)
-        );
+    ));
+    if !nuphy {
+        lines.push(format!(
+            "counters  packets {} dropped {} usb-retries {} merges {}",
+            c.packets, c.dropped, c.usb_retries, c.merges
+        ));
+        return lines;
     }
-    Ok(())
+    lines.push(format!(
+        "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
+        c.packets,
+        c.invalid,
+        c.dropped,
+        c.channel_changes,
+        c.link_losses,
+        c.gaps,
+        c.usb_retries,
+        c.merges,
+        c.surveys
+    ));
+    lines.push(format!(
+        "history   {} minutes, {} events held",
+        s.minute_next.saturating_sub(s.minute_oldest),
+        s.events_total.saturating_sub(s.events_oldest)
+    ));
+    lines
 }
 
 pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
@@ -95,7 +112,7 @@ pub fn open_nuphy(
 
 pub fn pair<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     dev.pair().map_err(|err| match err.downcast_ref::<Refused>() {
-        Some(r) if r.code == Ok(ErrorCode::WrongProtocol) => anyhow!(
+        Some(r) if r.running == Some(Protocol::Nuphy) => anyhow!(
             "the dongle runs NuPhy, whose keyboards start pairing themselves: hold Fn+4 on the keyboard"
         ),
         _ => err,
@@ -408,6 +425,61 @@ mod tests {
             err.contains("Unifying") && err.contains("open-dongle protocol nuphy"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn prints_a_nuphy_status() {
+        let s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            status_lines(&s),
+            [
+                "firmware  1.2.3",
+                "protocol  NuPhy",
+                "link      connected on channel 26 (paired 26 30 34), keyboard 7015a329",
+                "signal    -71 dBm, last packet 12 ms ago",
+                "pairing   offers channels 62 52 44, set by hand",
+                "usb       live",
+                "uptime    50d 02:25:19, reset by pin",
+                "counters  packets 1000 invalid 1 dropped 2 channels 3 losses 4 gaps 8 usb-retries 5 merges 6 surveys 7",
+                "history   1440 minutes, 512 events held",
+            ]
+        );
+    }
+
+    #[test]
+    fn prints_a_unifying_status_without_pairing_or_history() {
+        let mut payload = crate::protocol::tests::fixture("status.hex");
+        *payload.last_mut().unwrap() = Protocol::Unifying as u8;
+        let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
+        s.link_state = 2;
+        assert_eq!(
+            status_lines(&s),
+            [
+                "firmware  1.2.3",
+                "protocol  Unifying",
+                "link      connected on channel 26, keyboard 7015",
+                "signal    -71 dBm, last packet 12 ms ago",
+                "usb       live",
+                "uptime    50d 02:25:19, reset by pin",
+                "counters  packets 1000 dropped 2 usb-retries 5 merges 6",
+            ]
+        );
+    }
+
+    #[test]
+    fn pair_passes_through_a_refusal_not_naming_nuphy() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                let mut e = error_part(req[0], req[1], 5);
+                e[5] = 2;
+                vec![e]
+            }),
+            0,
+        );
+        let err = pair(&mut dev).unwrap_err().to_string();
+        assert!(!err.contains("Fn+4"), "{err}");
     }
 
     #[test]

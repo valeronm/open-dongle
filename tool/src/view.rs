@@ -313,7 +313,7 @@ impl Prompt {
     }
 }
 
-/// Noise and clear are refused by the dongle outside NuPhy mode.
+/// Noise is refused by the dongle outside NuPhy mode.
 fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Prompt)] {
     const NOISE: (char, &str, Prompt) = ('n', "noise", Prompt::Noise);
     const REBOOT: (char, &str, Prompt) = ('r', "reboot", Prompt::Action(Action::Reboot));
@@ -322,7 +322,7 @@ fn action_keys(protocol: Protocol) -> &'static [(char, &'static str, Prompt)] {
     const CLEAR: (char, &str, Prompt) = ('c', "clear", Prompt::Action(Action::Clear));
     match protocol {
         Protocol::Nuphy => &[NOISE, REBOOT, BOOTLOADER, CLEAR],
-        Protocol::Unifying => &[REBOOT, BOOTLOADER],
+        Protocol::Unifying => &[REBOOT, BOOTLOADER, CLEAR],
     }
 }
 
@@ -941,21 +941,21 @@ mod tests {
         assert!(!text.contains("noise peak"), "{text}");
         let footer = rows[23].trim_end();
         assert!(
-            footer.contains("r reboot") && footer.contains("q quit"),
+            footer.contains("r reboot") && footer.contains("c clear") && footer.contains("q quit"),
             "{footer}"
         );
-        assert!(
-            !footer.contains("n noise") && !footer.contains("c clear"),
-            "{footer}"
-        );
+        assert!(!footer.contains("n noise"), "{footer}");
     }
 
     #[test]
-    fn the_noise_and_clear_keys_are_offered_only_in_nuphy_mode() {
+    fn the_noise_key_is_offered_only_in_nuphy_mode_and_clear_in_both() {
         let mut app: App = App::new(None);
         app.history.status = Some(unifying_status());
         assert!(app.key_prompt('n').is_none());
-        assert!(app.key_prompt('c').is_none());
+        assert!(matches!(
+            app.key_prompt('c'),
+            Some(Prompt::Action(Action::Clear))
+        ));
         app.history.status.as_mut().unwrap().protocol = Protocol::Nuphy;
         assert!(matches!(app.key_prompt('n'), Some(Prompt::Noise)));
         assert!(matches!(

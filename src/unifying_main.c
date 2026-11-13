@@ -15,6 +15,7 @@
 
 static struct unifying_session session;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
+static uint32_t packets;
 
 static void print_hex(const char *label, const uint8_t *buf, size_t len)
 {
@@ -166,6 +167,10 @@ static void fill_status(struct diag_status *st, uint64_t now)
 	st->last_rssi = session.rssi;
 	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)
 					   : UINT32_MAX;
+	st->totals.packets = packets;
+	st->totals.dropped = core_rx_dropped();
+	st->totals.usb_retries = core_usb_retries();
+	st->merges = core_merges();
 	if (unifying_has_device(&session.pairing)) {
 		memcpy(st->keyboard_id, session.pairing.device.wpid, UNIFYING_WPID_LEN);
 	}
@@ -184,6 +189,11 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	case DIAG_PAIR:
 		unifying_session_open_pairing(&session, now);
 		printk("pairing open for %u s\n", UNIFYING_PAIRING_WINDOW_MS / 1000);
+		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+		break;
+	case DIAG_CLEAR:
+		packets = 0;
+		core_clear_counters();
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
@@ -229,6 +239,9 @@ void unifying_run(int store_err)
 		got = core_take_rx(&item, K_MSEC(TICK_MS));
 		now = (uint64_t)k_uptime_get();
 		if (got) {
+			if (item.pipe == UNIFYING_PIPE_DEVICE) {
+				packets++;
+			}
 			unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi, now,
 					       next_nonce, aes_ecb, &out);
 			apply_frame(&out, &item);
@@ -240,10 +253,11 @@ void unifying_run(int store_err)
 			serve_diag(&req, now);
 		}
 		dropped = core_rx_dropped();
-		if (dropped != reported_drops) {
+		/* A clear request zeroes the drop count. */
+		if (dropped > reported_drops) {
 			printk("receive queue full, %u frames dropped\n", dropped - reported_drops);
-			reported_drops = dropped;
 		}
+		reported_drops = dropped;
 		show_state(now);
 		core_watchdog_feed();
 	}

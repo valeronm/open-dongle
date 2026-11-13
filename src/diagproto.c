@@ -15,7 +15,6 @@ uint8_t diag_command_protocol(uint8_t command)
 	case DIAG_HISTORY:
 	case DIAG_EVENTS:
 	case DIAG_NOISE:
-	case DIAG_CLEAR:
 	case DIAG_FORCE_CHANNELS:
 		return PROTOCOL_NUPHY;
 	case DIAG_PAIR:
