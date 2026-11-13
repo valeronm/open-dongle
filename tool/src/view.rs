@@ -703,6 +703,7 @@ impl<T: Transport> App<T> {
 
     fn draw_events(&mut self, f: &mut Frame, area: Rect) {
         self.event_rows = usize::from(area.height.saturating_sub(2));
+        let protocol = self.protocol();
         let events = &self.history.events;
         let shown = events_window(events, self.history.events_top, self.event_rows);
         let title = if shown.end == events.len() {
@@ -721,7 +722,11 @@ impl<T: Transport> App<T> {
                 .rev()
                 .map(|(_, e)| {
                     let at = boot + TimeDelta::milliseconds(e.time_ms as i64);
-                    ListItem::new(format!("{}  {}", at.format(CLOCK), describe_event(e)))
+                    ListItem::new(format!(
+                        "{}  {}",
+                        at.format(CLOCK),
+                        describe_event(e, protocol)
+                    ))
                 })
                 .collect(),
             None => Vec::new(),

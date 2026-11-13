@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Event, EventKind, Noise, STRONG_DBM, Status, VersionMismatch,
+    Action, BUSY_DBM, Event, EventKind, Noise, Protocol, STRONG_DBM, Status, VersionMismatch,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -261,7 +261,17 @@ pub fn noise(n: Option<Noise>) -> String {
     })
 }
 
-pub fn describe_event(e: &Event) -> String {
+fn since_key(e: &Event) -> String {
+    match e.b {
+        // The firmware reports 255 both for no key since boot and for a last key 255 or more
+        // minutes ago.
+        u8::MAX if e.time_ms < u8::MAX as u64 * 60_000 => "no key since boot".into(),
+        u8::MAX => "no key for over 4 h".into(),
+        m => format!("{m} min after the last key"),
+    }
+}
+
+pub fn describe_event(e: &Event, protocol: Protocol) -> String {
     match e.kind {
         EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
         EventKind::Paired if e.value == 0 => format!("paired on channels {} {} {}", e.a, e.b, e.c),
@@ -270,9 +280,14 @@ pub fn describe_event(e: &Event) -> String {
             e.a, e.b, e.c, e.value as i32
         ),
         EventKind::LinkLost => format!(
-            "link lost after {}, last signal {} dBm, {}",
+            "{} after {}, last signal {} dBm, {}, {}",
+            match protocol {
+                Protocol::Nuphy => "link lost",
+                Protocol::Unifying => "keyboard silent",
+            },
             duration(e.value),
             e.a as i8,
+            since_key(e),
             noise(e.noise)
         ),
         EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
@@ -280,6 +295,12 @@ pub fn describe_event(e: &Event) -> String {
         EventKind::UsbSuspend => "usb suspended".into(),
         EventKind::UsbResume => "usb resumed".into(),
         EventKind::Clear => "history cleared".into(),
+        EventKind::LinkUp if e.c == 2 => format!(
+            "keyboard woke after {} on channel {}, signal {} dBm",
+            duration(e.value),
+            e.a,
+            e.b as i8
+        ),
         EventKind::LinkUp if e.c == 1 => format!(
             "link restored after {} on channel {}, signal {} dBm",
             duration(e.value),
@@ -301,12 +322,19 @@ pub fn describe_event(e: &Event) -> String {
             e.c as i8,
             noise(e.noise)
         ),
-        EventKind::UnifyingPaired
-        | EventKind::PairingOpened
-        | EventKind::PairingClosed
-        | EventKind::PairingTimeout
-        | EventKind::Reconnect
-        | EventKind::Attack => format!("event {:?}", e.kind),
+        EventKind::UnifyingPaired if e.value == 0 => {
+            format!("paired keyboard {:02x}{:02x}", e.a, e.b)
+        }
+        EventKind::UnifyingPaired => format!(
+            "paired keyboard {:02x}{:02x}, saving failed: {}",
+            e.a, e.b, e.value as i32
+        ),
+        EventKind::PairingOpened => "pairing opened".into(),
+        EventKind::PairingClosed => "pairing closed, nothing paired".into(),
+        EventKind::PairingTimeout => format!("pairing attempt timed out at request {}", e.a + 1),
+        EventKind::Reconnect if e.a == 1 => "keyboard reconnected, held keys released".into(),
+        EventKind::Reconnect => "keyboard reconnected".into(),
+        EventKind::Attack => "forged keystroke, attack mode for 5 s".into(),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -366,7 +394,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&back),
+            describe_event(&back, Protocol::Nuphy),
             "link restored after 4 s on channel 33, signal -63 dBm"
         );
         let first = Event {
@@ -375,7 +403,7 @@ mod tests {
             ..back
         };
         assert_eq!(
-            describe_event(&first),
+            describe_event(&first, Protocol::Nuphy),
             "link up 900 ms after boot on channel 33, signal -63 dBm"
         );
     }
@@ -392,7 +420,10 @@ mod tests {
             value: 0,
             noise: None,
         };
-        assert_eq!(describe_event(&moved), "moved from channel 2 to channel 70");
+        assert_eq!(
+            describe_event(&moved, Protocol::Nuphy),
+            "moved from channel 2 to channel 70"
+        );
     }
 
     #[test]
@@ -419,7 +450,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&gap),
+            describe_event(&gap, Protocol::Nuphy),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, noise -"
         );
         let noisy = Event {
@@ -431,7 +462,7 @@ mod tests {
             ..gap
         };
         assert_eq!(
-            describe_event(&noisy),
+            describe_event(&noisy, Protocol::Nuphy),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, \
              noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
@@ -444,14 +475,14 @@ mod tests {
             time_ms: 0,
             kind: EventKind::LinkLost,
             a: 0xb9,
-            b: 0,
+            b: 3,
             c: 0,
             value: 1200,
             noise: None,
         };
         assert_eq!(
-            describe_event(&lost),
-            "link lost after 1 s, last signal -71 dBm, noise -"
+            describe_event(&lost, Protocol::Nuphy),
+            "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -"
         );
         let noisy = Event {
             noise: Some(Noise {
@@ -462,8 +493,8 @@ mod tests {
             ..lost
         };
         assert_eq!(
-            describe_event(&noisy),
-            "link lost after 1 s, last signal -71 dBm, noise -50 dBm, 25.00% at -85, 3.00% at -60"
+            describe_event(&noisy, Protocol::Nuphy),
+            "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
         let paired = Event {
             time_ms: 0,
@@ -474,14 +505,98 @@ mod tests {
             value: 0,
             noise: None,
         };
-        assert_eq!(describe_event(&paired), "paired on channels 26 30 34");
+        assert_eq!(
+            describe_event(&paired, Protocol::Nuphy),
+            "paired on channels 26 30 34"
+        );
         let failed = Event {
             value: (-5i32) as u32,
             ..paired
         };
         assert_eq!(
-            describe_event(&failed),
+            describe_event(&failed, Protocol::Nuphy),
             "paired on channels 26 30 34, saving failed: -5"
+        );
+    }
+
+    fn event(kind: EventKind, a: u8, b: u8, c: u8, value: u32) -> Event {
+        Event {
+            time_ms: 0,
+            kind,
+            a,
+            b,
+            c,
+            value,
+            noise: None,
+        }
+    }
+
+    #[test]
+    fn a_unifying_silence_is_not_called_a_loss() {
+        let silent = event(EventKind::LinkLost, 0xc4, 255, 0, 2300);
+        assert_eq!(
+            describe_event(&silent, Protocol::Unifying),
+            "keyboard silent after 2 s, last signal -60 dBm, no key since boot, noise -"
+        );
+        let later = Event {
+            time_ms: 300 * 60_000,
+            ..silent
+        };
+        assert_eq!(
+            describe_event(&later, Protocol::Unifying),
+            "keyboard silent after 2 s, last signal -60 dBm, no key for over 4 h, noise -"
+        );
+    }
+
+    #[test]
+    fn a_link_up_after_a_wake_says_the_keyboard_woke() {
+        let woke = event(EventKind::LinkUp, 2, 0xc4, 2, 1_920_000);
+        assert_eq!(
+            describe_event(&woke, Protocol::Nuphy),
+            "keyboard woke after 32 min 0 s on channel 2, signal -60 dBm"
+        );
+    }
+
+    #[test]
+    fn describes_the_unifying_events() {
+        let d = |e: Event| describe_event(&e, Protocol::Unifying);
+        assert_eq!(
+            d(event(EventKind::UnifyingPaired, 0x40, 0x8a, 0, 0)),
+            "paired keyboard 408a"
+        );
+        assert_eq!(
+            d(event(
+                EventKind::UnifyingPaired,
+                0x40,
+                0x8a,
+                0,
+                (-5i32) as u32
+            )),
+            "paired keyboard 408a, saving failed: -5"
+        );
+        assert_eq!(
+            d(event(EventKind::PairingOpened, 0, 0, 0, 0)),
+            "pairing opened"
+        );
+        assert_eq!(
+            d(event(EventKind::PairingClosed, 0, 0, 0, 0)),
+            "pairing closed, nothing paired"
+        );
+        assert_eq!(
+            d(event(EventKind::PairingTimeout, 1, 0, 0, 0)),
+            "pairing attempt timed out at request 2"
+        );
+        assert_eq!(
+            d(event(EventKind::Reconnect, 1, 0, 0, 0)),
+            "keyboard reconnected, held keys released"
+        );
+        assert_eq!(
+            d(event(EventKind::Reconnect, 0, 0, 0, 0)),
+            "keyboard reconnected"
+        );
+        assert_eq!(
+            d(event(EventKind::Attack, 0, 0, 0, 0)),
+            "forged keystroke, attack mode for 5 s"
         );
     }
 

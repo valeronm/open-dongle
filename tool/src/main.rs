@@ -104,15 +104,15 @@ fn main() -> Result<()> {
         Cmd::Flash { file, confirm } => cli::flash(&file, serial, confirm.yes),
         Cmd::Status => cli::status(&device::open(serial)?.1),
         Cmd::History { minutes } => {
-            let (mut dev, s) = cli::open_nuphy(serial, "history")?;
+            let (mut dev, s) = device::open(serial)?;
             cli::history(&mut dev, &s, minutes)
         }
         Cmd::Events { count } => {
-            let (mut dev, s) = cli::open_nuphy(serial, "events")?;
+            let (mut dev, s) = device::open(serial)?;
             cli::events(&mut dev, &s, count)
         }
         Cmd::Noise(c) => {
-            let (mut dev, s) = cli::open_nuphy(serial, "the noise survey")?;
+            let (mut dev, s) = device::open(serial)?;
             cli::noise(&mut dev, &s, c.yes)
         }
         Cmd::Channels { channels } => {

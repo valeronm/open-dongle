@@ -63,25 +63,25 @@ fn status_lines(s: &Status) -> Vec<String> {
         uptime(s.uptime_ms),
         reset_causes(s.reset_cause)
     ));
-    if !nuphy {
+    if nuphy {
         lines.push(format!(
-            "counters  packets {} dropped {} usb-retries {} merges {}",
-            c.packets, c.dropped, c.usb_retries, c.merges
+            "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
+            c.packets,
+            c.invalid,
+            c.dropped,
+            c.channel_changes,
+            c.link_losses,
+            c.gaps,
+            c.usb_retries,
+            c.merges,
+            c.surveys
         ));
-        return lines;
+    } else {
+        lines.push(format!(
+            "counters  packets {} invalid {} dropped {} channels {} usb-retries {} merges {}",
+            c.packets, c.invalid, c.dropped, c.channel_changes, c.usb_retries, c.merges
+        ));
     }
-    lines.push(format!(
-        "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
-        c.packets,
-        c.invalid,
-        c.dropped,
-        c.channel_changes,
-        c.link_losses,
-        c.gaps,
-        c.usb_retries,
-        c.merges,
-        c.surveys
-    ));
     lines.push(format!(
         "history   {} minutes, {} events held",
         s.minute_next.saturating_sub(s.minute_oldest),
@@ -100,7 +100,7 @@ pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
     }
 }
 
-/// Opens the dongle for a command whose data only the NuPhy protocol keeps.
+/// Opens the dongle for a command that only the NuPhy protocol has, such as forced channels.
 pub fn open_nuphy(
     serial: Option<&str>,
     what: &str,
@@ -186,7 +186,7 @@ pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Resu
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e)
+            describe_event(&e, s.protocol)
         );
     }
     Ok(())
@@ -418,12 +418,14 @@ mod tests {
         let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
             .unwrap()
             .unwrap();
-        assert!(require_nuphy(&s, "history").is_ok());
+        assert!(require_nuphy(&s, "forced channels").is_ok());
         s.protocol = Protocol::Unifying;
-        let err = require_nuphy(&s, "events").unwrap_err().to_string();
+        let err = require_nuphy(&s, "forced channels")
+            .unwrap_err()
+            .to_string();
         assert_eq!(
             err,
-            "only NuPhy mode has events; the dongle runs Unifying (open-dongle protocol nuphy switches it)"
+            "only NuPhy mode has forced channels; the dongle runs Unifying (open-dongle protocol nuphy switches it)"
         );
     }
 
@@ -449,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn prints_a_unifying_status_without_pairing_or_history() {
+    fn prints_a_unifying_status_without_pairing() {
         let mut payload = crate::protocol::tests::fixture("status.hex");
         *payload.last_mut().unwrap() = Protocol::Unifying as u8;
         let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
@@ -463,7 +465,8 @@ mod tests {
                 "signal    -71 dBm, last packet 12 ms ago",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
-                "counters  packets 1000 dropped 2 usb-retries 5 merges 6",
+                "counters  packets 1000 invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
+                "history   1440 minutes, 512 events held",
             ]
         );
     }
