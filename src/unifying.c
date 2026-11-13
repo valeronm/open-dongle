@@ -652,9 +652,6 @@ void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_caus
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms)
 {
-	if (unifying_pairing_window_open(&s->pairing, now_ms)) {
-		return UNIFYING_PAIRING;
-	}
 	if (!unifying_has_device(&s->pairing)) {
 		return UNIFYING_NOT_PAIRED;
 	}

@@ -51,9 +51,15 @@ fn status_lines(s: &Status) -> Vec<String> {
         s.last_rssi,
         last_packet(s.last_rx_age_ms)
     ));
-    if nuphy {
-        lines.push(format!("pairing   {}", pairing_offer(s.forced)));
-    }
+    let offer = if nuphy {
+        format!(", {}", pairing_offer(s.forced))
+    } else {
+        String::new()
+    };
+    lines.push(format!(
+        "pairing   {}{offer}",
+        if s.pairing_open { "open" } else { "closed" }
+    ));
     lines.push(format!(
         "usb       {}",
         usb_state(s.usb_live, s.usb_suspended)
@@ -434,7 +440,7 @@ mod tests {
                 "protocol  NuPhy",
                 "link      connected on channel 26 (paired 26 30 34), keyboard 7015a329",
                 "signal    -71 dBm, last packet 12 ms ago",
-                "pairing   offers channels 62 52 44, set by hand",
+                "pairing   open, offers channels 62 52 44, set by hand",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
                 "counters  packets 1000 invalid 1 dropped 2 channels 3 losses 4 gaps 8 usb-retries 5 merges 6 surveys 7",
@@ -444,10 +450,22 @@ mod tests {
     }
 
     #[test]
-    fn prints_a_unifying_status_without_pairing() {
+    fn prints_closed_pairing_in_a_nuphy_status() {
+        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
+            .unwrap()
+            .unwrap();
+        s.pairing_open = false;
+        assert!(
+            status_lines(&s)
+                .contains(&"pairing   closed, offers channels 62 52 44, set by hand".to_string())
+        );
+    }
+
+    #[test]
+    fn prints_a_unifying_status() {
         let payload = crate::protocol::tests::status_running(Protocol::Unifying as u8);
         let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
-        s.link_state = 2;
+        s.link_state = 1;
         assert_eq!(
             status_lines(&s),
             [
@@ -455,6 +473,7 @@ mod tests {
                 "protocol  Unifying",
                 "link      connected on channel 26, keyboard 7015",
                 "signal    -71 dBm, last packet 12 ms ago",
+                "pairing   open",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
                 "counters  packets 1000 invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",

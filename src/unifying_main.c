@@ -207,12 +207,13 @@ static void show_state(uint64_t now)
 {
 	static const enum indicator_mode by_status[] = {
 		[UNIFYING_NOT_PAIRED] = IND_IDLE,
-		[UNIFYING_PAIRING] = IND_PAIRING,
 		[UNIFYING_CONNECTED] = IND_CONNECTED,
 		[UNIFYING_SILENT] = IND_CONNECTED,
 	};
 
-	core_show_state(by_status[unifying_session_status(&session, now)]);
+	core_show_state(unifying_pairing_window_open(&session.pairing, now)
+				? IND_PAIRING
+				: by_status[unifying_session_status(&session, now)]);
 }
 
 static void fill_status(struct diag_status *st)

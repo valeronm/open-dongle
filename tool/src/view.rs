@@ -602,8 +602,8 @@ impl<T: Transport> App<T> {
         let Some(s) = &self.history.status else {
             return vec![Line::from("disconnected")];
         };
-        if s.protocol == Protocol::Unifying {
-            return vec![
+        let mut lines = if s.protocol == Protocol::Unifying {
+            vec![
                 Line::from(format!(
                     "{} on {}, keyboard {}   signal {} dBm, {}",
                     unifying_state_name(s.link_state),
@@ -618,26 +618,31 @@ impl<T: Transport> App<T> {
                     uptime(s.uptime_ms),
                     s.protocol.name()
                 )),
-            ];
+            ]
+        } else {
+            vec![
+                Line::from(format!(
+                    "{} on {} ({})   signal {} dBm, {}",
+                    link_state_name(s.link_state),
+                    s.channel,
+                    paired(s.own),
+                    s.last_rssi,
+                    last_packet(s.last_rx_age_ms)
+                )),
+                Line::from(format!(
+                    "usb {}   up {}   losses {}   gaps {}   dropped {}",
+                    usb_state(s.usb_live, s.usb_suspended),
+                    uptime(s.uptime_ms),
+                    s.counters.link_losses,
+                    s.counters.gaps,
+                    s.counters.dropped
+                )),
+            ]
+        };
+        if s.pairing_open {
+            lines[1].push_span("   pairing open");
         }
-        vec![
-            Line::from(format!(
-                "{} on {} ({})   signal {} dBm, {}",
-                link_state_name(s.link_state),
-                s.channel,
-                paired(s.own),
-                s.last_rssi,
-                last_packet(s.last_rx_age_ms)
-            )),
-            Line::from(format!(
-                "usb {}   up {}   losses {}   gaps {}   dropped {}",
-                usb_state(s.usb_live, s.usb_suspended),
-                uptime(s.uptime_ms),
-                s.counters.link_losses,
-                s.counters.gaps,
-                s.counters.dropped
-            )),
-        ]
+        lines
     }
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
@@ -1055,7 +1060,7 @@ mod tests {
         let mut s = crate::protocol::read_status(&unifying_payload())
             .unwrap()
             .unwrap();
-        s.link_state = 2;
+        s.link_state = 1;
         s
     }
 
@@ -1180,6 +1185,25 @@ mod tests {
             footer(&mut app),
             "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it\nblinks fast"
         );
+    }
+
+    #[test]
+    fn the_status_shows_pairing_open_in_either_mode() {
+        let mut app: App = App::new(None);
+        app.history.status = Some(unifying_status());
+        assert!(
+            app.status_lines()[1]
+                .to_string()
+                .ends_with("   pairing open")
+        );
+        app.history.status = Some(nuphy_status());
+        assert!(
+            app.status_lines()[1]
+                .to_string()
+                .ends_with("   pairing open")
+        );
+        app.history.status.as_mut().unwrap().pairing_open = false;
+        assert!(!app.status_lines()[1].to_string().contains("pairing"));
     }
 
     #[test]

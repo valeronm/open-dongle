@@ -158,9 +158,8 @@ pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
 pub fn unifying_state_name(state: u8) -> &'static str {
     match state {
         0 => "not paired",
-        1 => "pairing",
-        2 => "connected",
-        3 => "silent",
+        1 => "connected",
+        2 => "silent",
         _ => "unknown",
     }
 }
@@ -742,9 +741,8 @@ mod tests {
     #[test]
     fn unifying_states_have_names() {
         assert_eq!(unifying_state_name(0), "not paired");
-        assert_eq!(unifying_state_name(1), "pairing");
-        assert_eq!(unifying_state_name(2), "connected");
-        assert_eq!(unifying_state_name(3), "silent");
+        assert_eq!(unifying_state_name(1), "connected");
+        assert_eq!(unifying_state_name(2), "silent");
         assert_eq!(unifying_state_name(9), "unknown");
     }
 

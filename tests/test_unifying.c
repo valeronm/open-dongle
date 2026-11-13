@@ -1582,7 +1582,7 @@ static void test_a_session_answers_pairing_on_the_frames_pipe(void)
 
 	unifying_session_init(&s, &receiver, NULL, 0);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
-	CHECK_EQ(unifying_session_status(&s, 10), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 10));
 	request_1(f, 0xe1, 0x05);
 	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), -50, 10, nonce, NULL, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_1);
@@ -1620,7 +1620,7 @@ static void test_completing_pairing_through_the_session_closes_the_window(void)
 	request_3(f, 0x00);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
-	CHECK(unifying_session_status(&s, 30) != UNIFYING_PAIRING);
+	CHECK(!unifying_pairing_window_open(&s.pairing, 30));
 }
 
 static void test_a_connect_frame_on_the_receiver_pipe_resends_the_leds(void)
@@ -2091,7 +2091,7 @@ static void test_pairing_opened_at_boot_closes_once_the_paired_keyboard_is_heard
 
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_BOOT, 0);
-	CHECK_EQ(unifying_session_status(&s, 10), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 10));
 	hear(&s, 100, &out);
 	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_CONNECTED);
 	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
@@ -2106,7 +2106,8 @@ static void test_pairing_opened_on_request_stays_open_when_the_keyboard_is_heard
 	session_paired(&s);
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	hear(&s, 100, &out);
-	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 110));
+	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_CONNECTED);
 }
 
 static void test_a_pairing_attempt_is_not_the_keyboard_connecting(void)
@@ -2122,7 +2123,7 @@ static void test_a_pairing_attempt_is_not_the_keyboard_connecting(void)
 	request_2(f, 0xe1);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
 	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_2);
-	CHECK_EQ(unifying_session_status(&s, 20), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 20));
 	unifying_session_tick(&s, 10 + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
 	CHECK(out.attempt_expired);
 	hear(&s, 6000, &out);
@@ -2141,7 +2142,7 @@ static void test_a_frame_with_a_bad_checksum_leaves_the_boot_window_open(void)
 	bad[sizeof(bad) - 1] ^= 0x80;
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, bad, sizeof(bad), 0, 10, nonce, fake_aes,
 			       &out);
-	CHECK_EQ(unifying_session_status(&s, 20), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 20));
 }
 
 static void test_a_session_with_no_keyboard_stays_in_pairing(void)
@@ -2153,7 +2154,8 @@ static void test_a_session_with_no_keyboard_stays_in_pairing(void)
 	unifying_session_open_pairing(&s, PAIRWIN_BOOT, 0);
 	unifying_session_tick(&s, 10 * PAIRWIN_MS, false, 0, 0, &out);
 	CHECK(!out.window_closed);
-	CHECK_EQ(unifying_session_status(&s, 10 * PAIRWIN_MS), UNIFYING_PAIRING);
+	CHECK(unifying_pairing_window_open(&s.pairing, 10 * PAIRWIN_MS));
+	CHECK_EQ(unifying_session_status(&s, 10 * PAIRWIN_MS), UNIFYING_NOT_PAIRED);
 }
 
 int main(void)

@@ -246,7 +246,6 @@ bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms);
 
 enum unifying_status {
 	UNIFYING_NOT_PAIRED,
-	UNIFYING_PAIRING,
 	UNIFYING_CONNECTED,
 	UNIFYING_SILENT,
 };
