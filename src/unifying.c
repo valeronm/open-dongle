@@ -34,15 +34,20 @@ static bool attempting(const struct unifying_pairing *p)
 	return p->attempt.state != UNIFYING_IDLE;
 }
 
-static bool window_open(uint64_t now_ms)
+void unifying_pairing_open(struct unifying_pairing *p, uint64_t now_ms)
 {
-	return now_ms < UNIFYING_PAIRING_WINDOW_MS;
+	p->window_until_ms = now_ms + UNIFYING_PAIRING_WINDOW_MS;
+}
+
+bool unifying_pairing_window_open(const struct unifying_pairing *p, uint64_t now_ms)
+{
+	return now_ms < p->window_until_ms;
 }
 
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint64_t now_ms)
 {
-	if (window_open(now_ms) && !attempting(p) && !p->has_device &&
+	if (unifying_pairing_window_open(p, now_ms) && !attempting(p) &&
 	    now_ms - s->last_ms >= UNIFYING_SWEEP_DWELL_MS) {
 		s->index = (s->index + 1) % UNIFYING_PAIRING_CHANNELS;
 		s->last_ms = now_ms;
@@ -180,8 +185,9 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 	if (step == 1) {
 		bool repeat = attempting(p) && frame[0] == a->id;
 
-		return !window_open(now_ms) || repeat ? 0
-						       : start(a, r, nonce, frame, now_ms, reply, event);
+		return !unifying_pairing_window_open(p, now_ms) || repeat
+			       ? 0
+			       : start(a, r, nonce, frame, now_ms, reply, event);
 	}
 	if (step == 2 && a->state == UNIFYING_ANSWERED_1 && frame[0] == a->id) {
 		memcpy(a->device_nonce, &frame[3], UNIFYING_NONCE_LEN);
@@ -200,6 +206,7 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 		a->state = UNIFYING_IDLE;
 		p->has_device = true;
 		p->device = a->dev;
+		p->window_until_ms = 0;
 		*event = UNIFYING_RX_PAIRED;
 		return response_final(a, reply);
 	}

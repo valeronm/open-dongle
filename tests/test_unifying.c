@@ -69,6 +69,14 @@ static size_t feed(struct unifying_pairing *p, const uint8_t *f, size_t len, uin
 	return feed_ev(p, f, len, now, reply, &ev);
 }
 
+static struct unifying_pairing open_pairing(void)
+{
+	struct unifying_pairing p = {0};
+
+	unifying_pairing_open(&p, 0);
+	return p;
+}
+
 static void pair_through_request_2(struct unifying_pairing *p)
 {
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
@@ -90,11 +98,12 @@ static void pair_fully(struct unifying_pairing *p)
 
 static void restore_paired(struct unifying_pairing *p, struct unifying_device *d)
 {
-	struct unifying_pairing done = {0};
+	struct unifying_pairing done = open_pairing();
 
 	pair_fully(&done);
 	*d = done.device;
 	unifying_pairing_restore(p, d);
+	unifying_pairing_open(p, 0);
 }
 
 static void start_second_attempt(struct unifying_pairing *p)
@@ -147,7 +156,7 @@ static void test_request_1_is_answered_with_the_assigned_address(void)
 	static const uint8_t expected[UNIFYING_FRAME_MAX] = {
 		0xe1, 0x1f, 0x01, 0xa1, 0xb2, 0xc3, 0xd4, 0x07, 0x08, 0x88, 0x02,
 		0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX], want[UNIFYING_FRAME_MAX];
 	size_t n;
 
@@ -166,7 +175,7 @@ static void test_request_1_is_answered_with_the_assigned_address(void)
 
 static void test_request_1_without_the_unifying_bit_is_refused(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	enum unifying_rx_event ev;
 
@@ -183,7 +192,7 @@ static void test_request_2_is_answered_with_the_nonce_and_derives_the_key(void)
 		0x1e, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 	static const uint8_t device_wpid[2] = {0x40, 0x8b};
 	static const uint8_t device_nonce[4] = {0xd1, 0xd2, 0xd3, 0xd4};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX], want[UNIFYING_FRAME_MAX];
 	uint8_t key[16];
 	enum unifying_rx_event ev;
@@ -205,7 +214,7 @@ static void test_request_3_gets_the_final_response_and_completes(void)
 {
 	static const uint8_t expected[10] = {0xe1, 0x0f, 0x06, 0xd1, 0xd2, 0xd3,
 					     0xd4, 0x11, 0x22, 0x00};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX], want[10];
 	enum unifying_rx_event ev;
 
@@ -225,7 +234,7 @@ static void test_request_3_gets_the_final_response_and_completes(void)
 
 static void test_request_3_is_accepted_though_its_id_byte_is_zero(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 
 	pair_through_request_2(&p);
@@ -237,7 +246,7 @@ static void test_request_3_is_accepted_though_its_id_byte_is_zero(void)
 
 static void test_a_repeated_request_gets_no_second_reply(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	enum unifying_rx_event ev;
 
@@ -250,7 +259,7 @@ static void test_a_repeated_request_gets_no_second_reply(void)
 
 static void test_a_request_out_of_order_or_with_another_id_is_ignored(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 
 	request_2(f, 0xe1);
@@ -266,7 +275,7 @@ static void test_a_request_out_of_order_or_with_another_id_is_ignored(void)
 
 static void test_a_frame_with_a_bad_checksum_is_ignored(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 
 	request_1(f, 0xe1, 0x05);
@@ -277,7 +286,7 @@ static void test_a_frame_with_a_bad_checksum_is_ignored(void)
 
 static void test_request_1_with_a_new_id_restarts_with_a_fresh_nonce(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	enum unifying_rx_event ev;
 
@@ -294,7 +303,7 @@ static void test_request_1_with_a_new_id_restarts_with_a_fresh_nonce(void)
 
 static void test_an_attempt_silent_for_the_timeout_returns_to_idle(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 
 	pair_through_request_2(&p);
 	CHECK(!unifying_pairing_expired(&p, 10 + UNIFYING_PAIRING_TIMEOUT_MS));
@@ -306,7 +315,7 @@ static void test_an_attempt_silent_for_the_timeout_returns_to_idle(void)
 
 static void test_a_completed_pairing_does_not_time_out(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 
 	pair_fully(&p);
 	CHECK(!unifying_pairing_expired(&p, 60000));
@@ -351,7 +360,7 @@ static void test_device_address_is_the_base_then_the_device_octet(void)
 static void test_idle_sweep_steps_through_the_pairing_channels(void)
 {
 	struct unifying_sweep s = {0};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint64_t now = 1000;
 
 	CHECK_EQ(unifying_sweep_channel(&s, &p, now), unifying_pairing_channels[1]);
@@ -367,7 +376,7 @@ static void test_idle_sweep_steps_through_the_pairing_channels(void)
 static void test_sweep_holds_the_channel_from_the_first_request(void)
 {
 	struct unifying_sweep s = {0};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	uint8_t held;
 
@@ -386,7 +395,7 @@ static void test_sweep_holds_the_channel_from_the_first_request(void)
 static void test_sweep_resumes_once_an_attempt_expires(void)
 {
 	struct unifying_sweep s = {0};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	uint8_t held;
 
@@ -399,7 +408,7 @@ static void test_sweep_resumes_once_an_attempt_expires(void)
 
 static void test_request_1_after_the_window_is_ignored(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	enum unifying_rx_event ev;
 
@@ -411,7 +420,7 @@ static void test_request_1_after_the_window_is_ignored(void)
 
 static void test_an_attempt_started_in_the_window_finishes_after_it(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	uint64_t t = UNIFYING_PAIRING_WINDOW_MS - 10;
 
@@ -427,14 +436,75 @@ static void test_an_attempt_started_in_the_window_finishes_after_it(void)
 static void test_sweep_holds_once_the_window_closes(void)
 {
 	struct unifying_sweep s = {0};
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t held = unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS - 5);
 
 	CHECK_EQ(unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS + 100), held);
 	CHECK_EQ(unifying_sweep_channel(&s, &p, UNIFYING_PAIRING_WINDOW_MS + 5000), held);
 }
 
-static void test_sweep_holds_inside_the_window_once_paired(void)
+static void test_request_1_before_pairing_opens_is_ignored(void)
+{
+	struct unifying_pairing p = {0};
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+	enum unifying_rx_event ev;
+
+	request_1(f, 0xe1, 0x05);
+	CHECK_EQ(feed_ev(&p, f, sizeof(f), 100, reply, &ev), 0);
+	CHECK_EQ(ev, UNIFYING_RX_NONE);
+}
+
+static void test_the_window_runs_30_s_from_opening(void)
+{
+	struct unifying_pairing p = {0};
+
+	unifying_pairing_open(&p, 5000);
+	CHECK(unifying_pairing_window_open(&p, 5000));
+	CHECK(unifying_pairing_window_open(&p, 5000 + 29999));
+	CHECK(!unifying_pairing_window_open(&p, 5000 + 30000));
+}
+
+static void test_pairing_closes_the_window(void)
+{
+	struct unifying_pairing p = open_pairing();
+
+	pair_fully(&p);
+	CHECK(unifying_has_device(&p));
+	CHECK(!unifying_pairing_window_open(&p, 30));
+}
+
+static void test_a_restored_device_leaves_the_window_closed(void)
+{
+	struct unifying_pairing p = open_pairing();
+	struct unifying_device d = {0};
+
+	unifying_pairing_restore(&p, &d);
+	CHECK(!unifying_pairing_window_open(&p, 10));
+}
+
+static void test_a_restored_record_leaves_the_window_closed(void)
+{
+	struct unifying_pairing p = open_pairing();
+	uint8_t rec[UNIFYING_RECORD_LEN] = {0};
+
+	unifying_record_restore(&p, rec);
+	CHECK(!unifying_pairing_window_open(&p, 10));
+}
+
+static void test_a_paired_dongle_sweeps_while_pairing_is_open(void)
+{
+	static const struct unifying_device d = {0};
+	struct unifying_sweep s = {0};
+	struct unifying_pairing p;
+	uint8_t first;
+
+	unifying_pairing_restore(&p, &d);
+	unifying_pairing_open(&p, 1000);
+	first = unifying_sweep_channel(&s, &p, 1000);
+	CHECK(unifying_sweep_channel(&s, &p, 1000 + UNIFYING_SWEEP_DWELL_MS) != first);
+}
+
+static void test_a_paired_dongle_holds_its_channel_with_pairing_closed(void)
 {
 	static const struct unifying_device d = {0};
 	struct unifying_sweep s = {0};
@@ -443,8 +513,6 @@ static void test_sweep_holds_inside_the_window_once_paired(void)
 
 	unifying_pairing_restore(&p, &d);
 	first = unifying_sweep_channel(&s, &p, 1000);
-
-	CHECK_EQ(unifying_sweep_channel(&s, &p, 1000 + UNIFYING_SWEEP_DWELL_MS), first);
 	CHECK_EQ(unifying_sweep_channel(&s, &p, 1000 + 5 * UNIFYING_SWEEP_DWELL_MS), first);
 }
 
@@ -536,11 +604,12 @@ static void test_a_refused_request_during_an_attempt_keeps_the_paired_device(voi
 
 static void test_request_1_with_the_id_of_a_completed_attempt_starts_a_new_one(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	enum unifying_rx_event ev;
 
 	pair_fully(&p);
+	unifying_pairing_open(&p, 1000);
 	request_1(f, 0xe1, 0x05);
 	CHECK_EQ(feed_ev(&p, f, sizeof(f), 1000, reply, &ev), UNIFYING_FRAME_MAX);
 	CHECK_EQ(ev, UNIFYING_RX_ANSWERED_1);
@@ -563,6 +632,7 @@ static void test_a_completed_attempt_replaces_the_paired_device(void)
 	CHECK_EQ(ev, UNIFYING_RX_NONE);
 	now = p.device;
 	CHECK(memcmp(now.key, old.key, UNIFYING_KEY_LEN) != 0);
+	unifying_pairing_open(&p, 2000);
 	request_1(f, 0xe8, 0x05);
 	feed_ev(&p, f, sizeof(f), 2000, reply, &ev);
 	CHECK(unifying_pairing_expired(&p, 2001 + UNIFYING_PAIRING_TIMEOUT_MS));
@@ -572,7 +642,7 @@ static void test_a_completed_attempt_replaces_the_paired_device(void)
 
 static void test_request_1_after_the_uptime_passes_32_bits_is_ignored(void)
 {
-	struct unifying_pairing p = {0};
+	struct unifying_pairing p = open_pairing();
 	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
 	uint64_t now = (1ULL << 32) + 10;
 	enum unifying_rx_event ev;
@@ -1339,7 +1409,7 @@ static void test_the_record_is_the_wpid_then_the_key(void)
 
 static void test_a_restored_record_pairs_the_device(void)
 {
-	struct unifying_pairing p = {0}, q;
+	struct unifying_pairing p = open_pairing(), q;
 	uint8_t rec[UNIFYING_RECORD_LEN];
 
 	pair_fully(&p);
@@ -1495,7 +1565,13 @@ int main(void)
 	RUN(test_request_1_after_the_window_is_ignored);
 	RUN(test_an_attempt_started_in_the_window_finishes_after_it);
 	RUN(test_sweep_holds_once_the_window_closes);
-	RUN(test_sweep_holds_inside_the_window_once_paired);
+	RUN(test_request_1_before_pairing_opens_is_ignored);
+	RUN(test_the_window_runs_30_s_from_opening);
+	RUN(test_pairing_closes_the_window);
+	RUN(test_a_restored_device_leaves_the_window_closed);
+	RUN(test_a_restored_record_leaves_the_window_closed);
+	RUN(test_a_paired_dongle_sweeps_while_pairing_is_open);
+	RUN(test_a_paired_dongle_holds_its_channel_with_pairing_closed);
 	RUN(test_a_restored_device_is_paired_and_a_new_request_still_starts_an_attempt);
 	RUN(test_a_refused_request_keeps_the_restored_device_paired);
 	RUN(test_an_expired_attempt_returns_to_the_restored_device);

@@ -14,7 +14,7 @@
 #define UNIFYING_ADDRESS_LEN 5
 #define UNIFYING_PAIRING_CHANNELS 11
 #define UNIFYING_SWEEP_DWELL_MS 20
-#define UNIFYING_PAIRING_WINDOW_MS 60000
+#define UNIFYING_PAIRING_WINDOW_MS 30000
 #define UNIFYING_AES_BLOCK_LEN 16
 #define UNIFYING_KEEPALIVE_DEFAULT_MS 1100
 #define UNIFYING_LED_FRAME_LEN 10
@@ -65,6 +65,7 @@ struct unifying_pairing {
 	bool has_device;
 	struct unifying_device device;
 	struct unifying_attempt attempt;
+	uint64_t window_until_ms;
 };
 
 enum unifying_rx_event {
@@ -99,8 +100,8 @@ void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIF
  * nonce is copied in when Request 1 starts an attempt, so it must be one no earlier attempt used.
  * A repeat of an answered request gets 0, since ESB keeps its reply queued until the keyboard moves
  * on. A Request 1 lacking the Unifying-compatible capability discards any attempt in progress. The
- * paired device changes only when Request 3 completes an attempt. A Request 1 is ignored from
- * UNIFYING_PAIRING_WINDOW_MS on; Requests 2 and 3 are not.
+ * paired device changes only when Request 3 completes an attempt. A Request 1 is ignored while the
+ * window is closed; Requests 2 and 3 are not.
  */
 size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_receiver *r,
 			   const uint8_t nonce[UNIFYING_NONCE_LEN], const uint8_t *frame, size_t len,
@@ -113,12 +114,17 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 bool unifying_pairing_expired(struct unifying_pairing *p, uint64_t now_ms);
 
 /*
- * Returns the channel to listen on: until UNIFYING_PAIRING_WINDOW_MS it steps through the pairing
- * channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too; during an attempt, with
- * a paired device and after the window it holds the current one.
+ * Returns the channel to listen on: while pairing is open and no attempt runs it steps through the
+ * pairing channels every UNIFYING_SWEEP_DWELL_MS, since the keyboard hops them too; otherwise it
+ * holds the current one.
  */
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint64_t now_ms);
+
+/* Opens the window for UNIFYING_PAIRING_WINDOW_MS; a completed pairing closes it. */
+void unifying_pairing_open(struct unifying_pairing *p, uint64_t now_ms);
+
+bool unifying_pairing_window_open(const struct unifying_pairing *p, uint64_t now_ms);
 
 bool unifying_has_device(const struct unifying_pairing *p);
 

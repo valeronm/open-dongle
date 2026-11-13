@@ -328,6 +328,7 @@ int main(void)
 		unifying_record_restore(&pairing, record);
 		printk("restored paired keyboard\n");
 	}
+	unifying_pairing_open(&pairing, 0);
 	watchdog_start();
 	sys_rand_get(next_nonce, sizeof(next_nonce));
 
