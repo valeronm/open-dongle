@@ -48,9 +48,13 @@ static void aes_ecb(const uint8_t key[UNIFYING_KEY_LEN], const uint8_t in[UNIFYI
 static void on_paired(void)
 {
 	uint8_t record[UNIFYING_RECORD_LEN];
+	int err;
 
 	unifying_record_of(&session.pairing, record);
-	printk("pairing saved: %d\n", store_save_unifying(record, sizeof(record)));
+	err = store_save_unifying(record, sizeof(record));
+	printk("pairing saved: %d\n", err);
+	core_log(HISTORY_UNIFYING_PAIRED, session.pairing.device.wpid[0],
+		 session.pairing.device.wpid[1], 0, (uint32_t)err);
 }
 
 static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, size_t n)
@@ -86,8 +90,36 @@ static void queue_leds(uint8_t leds)
 	}
 }
 
+static uint8_t link_up_kind(enum unifying_heard h)
+{
+	switch (h) {
+	case UNIFYING_HEARD_WOKE:
+		return HISTORY_UP_WOKE;
+	case UNIFYING_HEARD_AGAIN:
+		return HISTORY_UP_AGAIN;
+	default:
+		return HISTORY_UP_FIRST;
+	}
+}
+
 static void apply_frame(const struct unifying_out *out, const struct rx_item *item)
 {
+	if (item->pipe == UNIFYING_PIPE_DEVICE) {
+		core_count(out->invalid ? CORE_INVALID : CORE_PACKETS);
+		if (!out->invalid) {
+			core_rssi(item->rssi);
+		}
+	}
+	if (out->heard != UNIFYING_HEARD_NONE) {
+		core_log(HISTORY_LINK_UP, session.channel, (uint8_t)item->rssi,
+			 link_up_kind(out->heard), out->down_ms);
+	}
+	if (out->reconnected) {
+		core_log(HISTORY_RECONNECT, out->release_all, 0, 0, 0);
+	}
+	if (out->attack_started) {
+		core_log(HISTORY_ATTACK, 0, 0, 0, 0);
+	}
 	if (out->event == UNIFYING_RX_ANSWERED_1) {
 		sys_rand_get(next_nonce, sizeof(next_nonce));
 	}
@@ -121,10 +153,18 @@ static void apply_tick(const struct unifying_out *out)
 	if (out->send_led) {
 		queue_leds(out->leds);
 	}
+	if (out->went_silent) {
+		core_log(HISTORY_LINK_LOST, (uint8_t)session.rssi, core_minutes_since_key(), 0,
+			 out->silent_ms);
+	}
 	if (out->attempt_expired) {
 		printk("pairing timed out\n");
+		core_log(HISTORY_PAIRING_TIMEOUT, out->expired_step, 0, 0, 0);
 	}
-	if (out->set_channel && radio_set_channel(out->channel) == 0) {
+	if (out->window_closed) {
+		core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
+	}
+	if (out->set_channel && core_set_channel(out->channel) == 0) {
 		unifying_session_channel_moved(&session);
 	}
 }
@@ -143,16 +183,24 @@ static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_
 		.prefixes = {pairing[4], device[4], 0x00},
 		.pipes = 3,
 		.channel = channel,
+		.noise = true,
 	};
 }
 
 static int home(void)
 {
-	return CORE_NO_HOME;
+	return unifying_has_device(&session.pairing) &&
+			       !unifying_pairing_window_open(&session.pairing,
+							     (uint64_t)k_uptime_get())
+		       ? session.channel
+		       : CORE_NO_HOME;
 }
 
 static void radio_resumed(void)
 {
+	unifying_session_radio_resumed(&session, (uint64_t)k_uptime_get());
+	/* The survey's channel set flushed any ACK payload queued before it. */
+	unifying_session_channel_moved(&session);
 }
 
 static void show_state(uint64_t now)
@@ -187,6 +235,7 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	case DIAG_PAIR:
 		unifying_session_open_pairing(&session, now);
 		printk("pairing open for %u s\n", UNIFYING_PAIRING_WINDOW_MS / 1000);
+		core_log(HISTORY_PAIRING_OPENED, 0, 0, 0, 0);
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
@@ -239,9 +288,6 @@ FUNC_NORETURN void unifying_run(int store_err)
 		got = core_take_rx(&item, K_MSEC(TICK_MS));
 		now = (uint64_t)k_uptime_get();
 		if (got) {
-			if (item.pipe == UNIFYING_PIPE_DEVICE) {
-				core_count(CORE_PACKETS);
-			}
 			unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi, now,
 					       next_nonce, aes_ecb, &out);
 			apply_frame(&out, &item);

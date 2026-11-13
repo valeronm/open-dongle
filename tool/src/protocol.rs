@@ -388,6 +388,12 @@ pub enum EventKind {
     LinkUp,
     LinkMoved,
     LinkGap,
+    UnifyingPaired,
+    PairingOpened,
+    PairingClosed,
+    PairingTimeout,
+    Reconnect,
+    Attack,
     Unknown(u8),
 }
 
@@ -405,6 +411,12 @@ impl From<u8> for EventKind {
             9 => Self::LinkUp,
             10 => Self::LinkMoved,
             11 => Self::LinkGap,
+            12 => Self::UnifyingPaired,
+            13 => Self::PairingOpened,
+            14 => Self::PairingClosed,
+            15 => Self::PairingTimeout,
+            16 => Self::Reconnect,
+            17 => Self::Attack,
             other => Self::Unknown(other),
         }
     }
@@ -756,6 +768,12 @@ pub(crate) mod tests {
                 EventKind::LinkUp,
                 EventKind::LinkMoved,
                 EventKind::LinkGap,
+                EventKind::UnifyingPaired,
+                EventKind::PairingOpened,
+                EventKind::PairingClosed,
+                EventKind::PairingTimeout,
+                EventKind::Reconnect,
+                EventKind::Attack,
             ]
         );
     }

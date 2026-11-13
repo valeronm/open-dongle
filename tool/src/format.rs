@@ -301,6 +301,12 @@ pub fn describe_event(e: &Event) -> String {
             e.c as i8,
             noise(e.noise)
         ),
+        EventKind::UnifyingPaired
+        | EventKind::PairingOpened
+        | EventKind::PairingClosed
+        | EventKind::PairingTimeout
+        | EventKind::Reconnect
+        | EventKind::Attack => format!("event {:?}", e.kind),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }

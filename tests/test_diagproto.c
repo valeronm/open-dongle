@@ -213,7 +213,10 @@ static void test_event_type_numbers_match_fixture(void)
 	const uint8_t got[] = {HISTORY_BOOT, HISTORY_PAIRED, HISTORY_LINK_LOST,
 			       HISTORY_SURVEY, HISTORY_NOISE, HISTORY_USB_SUSPEND,
 			       HISTORY_USB_RESUME, HISTORY_CLEAR, HISTORY_LINK_UP,
-			       HISTORY_LINK_MOVED, HISTORY_LINK_GAP};
+			       HISTORY_LINK_MOVED, HISTORY_LINK_GAP,
+			       HISTORY_UNIFYING_PAIRED, HISTORY_PAIRING_OPENED,
+			       HISTORY_PAIRING_CLOSED, HISTORY_PAIRING_TIMEOUT,
+			       HISTORY_RECONNECT, HISTORY_ATTACK};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 
