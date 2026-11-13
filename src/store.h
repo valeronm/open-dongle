@@ -14,8 +14,5 @@ int store_save_forced(const uint8_t *channels);
 /* True only when exactly len bytes were stored. */
 bool store_load_unifying(void *out, size_t len);
 int store_save_unifying(const void *in, size_t len);
-/* True only when a whole counter was stored. */
-bool store_load_unifying_counter(uint64_t *out);
-int store_save_unifying_counter(uint64_t next_counter);
 
 #endif

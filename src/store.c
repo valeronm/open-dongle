@@ -6,7 +6,6 @@
 #define CHANNELS_KEY "dongle/channels"
 #define FORCED_KEY "dongle/forced"
 #define UNIFYING_KEY "dongle/unifying"
-#define UNIFYING_COUNTER_KEY "dongle/unifying_counter"
 
 static bool load_exact(const char *key, void *out, size_t len)
 {
@@ -56,14 +55,4 @@ bool store_load_unifying(void *out, size_t len)
 int store_save_unifying(const void *in, size_t len)
 {
 	return settings_save_one(UNIFYING_KEY, in, len);
-}
-
-bool store_load_unifying_counter(uint64_t *out)
-{
-	return load_exact(UNIFYING_COUNTER_KEY, out, sizeof(*out));
-}
-
-int store_save_unifying_counter(uint64_t next_counter)
-{
-	return settings_save_one(UNIFYING_COUNTER_KEY, &next_counter, sizeof(next_counter));
 }

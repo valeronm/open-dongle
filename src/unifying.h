@@ -23,6 +23,9 @@
 #define UNIFYING_IDLE_KEEPALIVE_MS 1000
 #define UNIFYING_LED_INTERVAL_MS 1000
 #define UNIFYING_KEYSTROKE_REPORTS 2
+#define UNIFYING_WPID_LEN 2
+#define UNIFYING_FLOOR_LEN 8
+#define UNIFYING_RECORD_LEN (UNIFYING_WPID_LEN + UNIFYING_KEY_LEN + UNIFYING_FLOOR_LEN)
 #define UNIFYING_COUNTER_LIMIT (0x100000000ULL - (1ULL << 20))
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
@@ -195,13 +198,25 @@ bool unifying_led_due(const struct unifying_led *led, bool has_device, uint64_t 
 
 void unifying_led_sent(struct unifying_led *led, uint64_t now_ms);
 
+/* The record is the wpid, the key, then next_counter as the floor in 8 little-endian bytes. */
+void unifying_record_of(const struct unifying_pairing *p, const struct unifying_link *l,
+			uint8_t out[UNIFYING_RECORD_LEN]);
+
+/* A new pairing has no known counter, so l is reset and the record's floor is 0. */
+void unifying_record_of_new_pairing(const struct unifying_pairing *p, struct unifying_link *l,
+				    uint8_t out[UNIFYING_RECORD_LEN]);
+
+/* Discards whatever state p and l hold, then pairs the recorded device and seeds its floor. */
+void unifying_record_restore(struct unifying_pairing *p, struct unifying_link *l,
+			     const uint8_t in[UNIFYING_RECORD_LEN]);
+
 /*
  * Records any frame from the keyboard; keep-alive and set-keep-alive frames also carry its timeout.
- * Returns true, with *floor to store, for the first keep-alive timeout of at least
+ * Returns true, when the record is due for saving, for the first keep-alive timeout of at least
  * UNIFYING_IDLE_KEEPALIVE_MS announced after a typed keystroke.
  */
 bool unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t len,
-			 uint64_t now_ms, uint64_t *floor);
+			 uint64_t now_ms);
 
 /*
  * Returns true once when a key is held and nothing was heard for twice the keep-alive timeout; the

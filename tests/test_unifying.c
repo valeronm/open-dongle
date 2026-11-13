@@ -910,17 +910,16 @@ static void test_keep_alives_make_a_save_due_only_after_a_typed_keystroke(void)
 	struct unifying_link l;
 	struct report r;
 	struct report out[UNIFYING_KEYSTROKE_REPORTS];
-	uint64_t floor = 0;
 
 	unifying_link_reset(&l);
 	CHECK(!receive_keystroke_at(&l, 4, forged, 10000, &r));
 	CHECK(!receive_keystroke_at(&l, 5, press_a, 10010, &r));
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 10020, &floor));
+	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 10020));
 	CHECK(!receive_keystroke_at(&l, 6, press_a, 10000 + UNIFYING_ATTACK_MS, &r));
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15010, &floor));
+	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15010));
 	CHECK_EQ(receive_keystrokes_at(&l, 7, press_a, 15020, out), 2);
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15030, &floor));
-	CHECK_EQ(floor, 8);
+	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 15030));
+	CHECK_EQ(l.next_counter, 8);
 }
 
 static const uint8_t release[REPORT_KEYBOARD_LEN] = {0x00, 0x00, 0x00, 0x00,
@@ -1127,13 +1126,6 @@ static void test_the_led_frame_carries_the_led_bits(void)
 	CHECK_MEM(f, expected, UNIFYING_LED_FRAME_LEN);
 }
 
-static bool hear(struct unifying_link *l, const uint8_t *frame, size_t len, uint64_t now)
-{
-	uint64_t floor;
-
-	return unifying_link_heard(l, frame, len, now, &floor);
-}
-
 static void hold_a_key(struct unifying_link *l)
 {
 	struct report r;
@@ -1148,10 +1140,10 @@ static void test_keep_alive_frames_set_the_timeout(void)
 
 	unifying_link_reset(&l);
 	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
-	hear(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 5);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 5);
 	CHECK_EQ(l.keepalive_ms, 88);
 	CHECK_EQ(l.last_ms, 5);
-	hear(&l, keep_alive_1100, sizeof(keep_alive_1100), 9);
+	unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 9);
 	CHECK_EQ(l.keepalive_ms, 1100);
 	CHECK_EQ(l.last_ms, 9);
 }
@@ -1162,12 +1154,12 @@ static void test_other_frames_leave_the_timeout_but_count_as_heard(void)
 	uint8_t bad[sizeof(keep_alive_1100)];
 
 	unifying_link_reset(&l);
-	hear(&l, pairing_complete, sizeof(pairing_complete), 7);
+	unifying_link_heard(&l, pairing_complete, sizeof(pairing_complete), 7);
 	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
 	CHECK_EQ(l.last_ms, 7);
 	memcpy(bad, keep_alive_1100, sizeof(bad));
 	bad[sizeof(bad) - 1] ^= 0x10;
-	hear(&l, bad, sizeof(bad), 8);
+	unifying_link_heard(&l, bad, sizeof(bad), 8);
 	CHECK_EQ(l.keepalive_ms, UNIFYING_KEEPALIVE_DEFAULT_MS);
 }
 
@@ -1177,7 +1169,7 @@ static void test_a_held_key_goes_stuck_after_twice_the_timeout_once(void)
 	uint64_t t = 10000;
 
 	unifying_link_reset(&l);
-	hear(&l, set_keep_alive_88, sizeof(set_keep_alive_88), t);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), t);
 	hold_a_key(&l);
 	CHECK(!unifying_link_silent(&l, t + 176));
 	CHECK(unifying_link_silent(&l, t + 177));
@@ -1190,9 +1182,9 @@ static void test_a_frame_heard_in_time_postpones_the_stuck_key(void)
 	struct unifying_link l;
 
 	unifying_link_reset(&l);
-	hear(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
 	hold_a_key(&l);
-	hear(&l, keep_alive_1100, sizeof(keep_alive_1100), 100);
+	unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 100);
 	CHECK(!unifying_link_silent(&l, 1000));
 	CHECK(!unifying_link_silent(&l, 100 + 2 * 1100));
 	CHECK(unifying_link_silent(&l, 100 + 2 * 1100 + 1));
@@ -1203,7 +1195,7 @@ static void test_nothing_held_is_never_silent(void)
 	struct unifying_link l;
 
 	unifying_link_reset(&l);
-	hear(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
 	CHECK(!unifying_link_silent(&l, 100000));
 }
 
@@ -1215,7 +1207,7 @@ static void test_a_release_report_clears_the_held_state(void)
 	struct report r;
 
 	unifying_link_reset(&l);
-	hear(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
+	unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 0);
 	hold_a_key(&l);
 	receive_keystroke(&l, 2, released, &r);
 	CHECK(!unifying_link_silent(&l, 100000));
@@ -1229,26 +1221,24 @@ static void test_a_release_report_clears_the_held_state(void)
 static void test_the_counter_is_not_saved_before_a_keystroke(void)
 {
 	struct unifying_link l;
-	uint64_t floor;
 
 	unifying_link_reset(&l);
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 0, &floor));
+	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 0));
 }
 
 static void test_the_counter_is_saved_once_when_the_keyboard_goes_idle(void)
 {
 	struct unifying_link l;
 	struct report r;
-	uint64_t floor = 0;
 
 	accept_counter_1000(&l);
-	CHECK(!unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 10, &floor));
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 20, &floor));
-	CHECK_EQ(floor, 1001);
-	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 1120, &floor));
+	CHECK(!unifying_link_heard(&l, set_keep_alive_88, sizeof(set_keep_alive_88), 10));
+	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 20));
+	CHECK_EQ(l.next_counter, 1001);
+	CHECK(!unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 1120));
 	CHECK(receive_keystroke(&l, 1001, press_a, &r));
-	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 2220, &floor));
-	CHECK_EQ(floor, 1002);
+	CHECK(unifying_link_heard(&l, keep_alive_1100, sizeof(keep_alive_1100), 2220));
+	CHECK_EQ(l.next_counter, 1002);
 }
 
 static void test_a_floor_refuses_counters_below_it_and_bounds_the_window(void)
@@ -1272,6 +1262,79 @@ static void test_a_floor_of_zero_leaves_the_counter_unknown(void)
 	unifying_link_set_floor(&l, 0);
 	CHECK_EQ(receive_keystrokes_at(&l, 500, press_a, 0, out), 0);
 	CHECK_EQ(receive_keystrokes_at(&l, 501, release, 0, out), 2);
+}
+
+static void test_the_record_holds_the_device_then_the_floor_little_endian(void)
+{
+	struct unifying_pairing p;
+	struct unifying_device d;
+	struct unifying_link l;
+	uint8_t rec[UNIFYING_RECORD_LEN];
+	static const uint8_t floor[8] = {0x01, 0x23, 0x45, 0x67, 0x00, 0x00, 0x00, 0x00};
+
+	restore_paired(&p, &d);
+	unifying_link_reset(&l);
+	unifying_link_set_floor(&l, 0x67452301);
+	unifying_record_of(&p, &l, rec);
+	CHECK_MEM(&rec[0], d.wpid, 2);
+	CHECK_MEM(&rec[2], d.key, UNIFYING_KEY_LEN);
+	CHECK_MEM(&rec[18], floor, sizeof(floor));
+}
+
+static void test_a_restored_record_pairs_the_device_and_seeds_the_floor(void)
+{
+	struct unifying_pairing p, q;
+	struct unifying_device d;
+	struct unifying_link l;
+	struct report r;
+	uint8_t rec[UNIFYING_RECORD_LEN];
+
+	restore_paired(&p, &d);
+	unifying_link_reset(&l);
+	unifying_link_set_floor(&l, 5000);
+	unifying_record_of(&p, &l, rec);
+	unifying_link_reset(&l);
+	unifying_record_restore(&q, &l, rec);
+	CHECK(unifying_has_device(&q));
+	CHECK_MEM(&q.device, &d, sizeof(d));
+	CHECK_EQ(q.attempt.state, UNIFYING_IDLE);
+	CHECK(!receive_keystroke(&l, 4999, press_a, &r));
+	CHECK(receive_keystroke(&l, 5000, press_a, &r));
+}
+
+static void test_a_record_after_a_new_pairing_leaves_the_counter_unknown(void)
+{
+	struct unifying_pairing p = {0}, q;
+	struct unifying_link l;
+	struct report out[UNIFYING_KEYSTROKE_REPORTS];
+	uint8_t rec[UNIFYING_RECORD_LEN];
+
+	pair_fully(&p);
+	unifying_link_reset(&l);
+	unifying_record_of(&p, &l, rec);
+	unifying_record_restore(&q, &l, rec);
+	CHECK(unifying_has_device(&q));
+	CHECK_MEM(&q.device, &p.device, sizeof(p.device));
+	CHECK_EQ(receive_keystrokes_at(&l, 500, press_a, 0, out), 0);
+	CHECK_EQ(receive_keystrokes_at(&l, 501, press_a, 0, out), 2);
+}
+
+static void test_a_new_pairing_records_floor_0_and_resets_the_link(void)
+{
+	static const uint8_t zero[8] = {0};
+	struct unifying_pairing p = {0};
+	struct unifying_link l;
+	uint8_t rec[UNIFYING_RECORD_LEN];
+
+	pair_fully(&p);
+	unifying_link_reset(&l);
+	unifying_link_set_floor(&l, 5000);
+	unifying_record_of_new_pairing(&p, &l, rec);
+	CHECK_MEM(&rec[0], p.device.wpid, 2);
+	CHECK_MEM(&rec[2], p.device.key, UNIFYING_KEY_LEN);
+	CHECK_MEM(&rec[18], zero, sizeof(zero));
+	CHECK_EQ(l.next_counter, 0);
+	CHECK(!l.synced);
 }
 
 static void test_no_led_frame_is_due_without_a_request(void)
@@ -1407,6 +1470,10 @@ int main(void)
 	RUN(test_the_counter_is_saved_once_when_the_keyboard_goes_idle);
 	RUN(test_a_floor_refuses_counters_below_it_and_bounds_the_window);
 	RUN(test_a_floor_of_zero_leaves_the_counter_unknown);
+	RUN(test_the_record_holds_the_device_then_the_floor_little_endian);
+	RUN(test_a_restored_record_pairs_the_device_and_seeds_the_floor);
+	RUN(test_a_record_after_a_new_pairing_leaves_the_counter_unknown);
+	RUN(test_a_new_pairing_records_floor_0_and_resets_the_link);
 	RUN(test_no_led_frame_is_due_without_a_request);
 	RUN(test_no_led_frame_is_due_without_a_paired_device);
 	RUN(test_led_requests_within_the_interval_send_once_now_and_once_after_it);

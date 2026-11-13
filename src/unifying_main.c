@@ -102,12 +102,20 @@ static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rs
 	}
 }
 
+static int save_record(void)
+{
+	uint8_t record[UNIFYING_RECORD_LEN];
+
+	unifying_record_of(&pairing, &link, record);
+	return store_save_unifying(record, sizeof(record));
+}
+
 static void on_paired(void)
 {
-	printk("counter floor reset: %d\n", store_save_unifying_counter(0));
-	printk("pairing saved: %d\n",
-	       store_save_unifying(&pairing.device, sizeof(pairing.device)));
-	unifying_link_reset(&link);
+	uint8_t record[UNIFYING_RECORD_LEN];
+
+	unifying_record_of_new_pairing(&pairing, &link, record);
+	printk("pairing saved: %d\n", store_save_unifying(record, sizeof(record)));
 	indicator_set(IND_CONNECTED);
 }
 
@@ -189,14 +197,13 @@ static void submit(const struct report *r)
 static void handle_keyboard(const struct rx_item *item, uint64_t now)
 {
 	struct report typed[UNIFYING_KEYSTROKE_REPORTS];
-	uint64_t floor;
 	size_t n;
 	int err;
 
-	if (unifying_link_heard(&link, item->data, item->len, now, &floor)) {
-		err = store_save_unifying_counter(floor);
+	if (unifying_link_heard(&link, item->data, item->len, now)) {
+		err = save_record();
 		if (err) {
-			printk("saving counter floor failed: %d\n", err);
+			printk("saving pairing record failed: %d\n", err);
 		}
 	}
 	if (!unifying_has_device(&pairing)) {
@@ -287,8 +294,7 @@ int main(void)
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	struct unifying_sweep sweep = {0};
 	uint8_t device_address[UNIFYING_ADDRESS_LEN];
-	struct unifying_device dev;
-	uint64_t counter_floor;
+	uint8_t record[UNIFYING_RECORD_LEN];
 	uint8_t channel;
 	int err;
 
@@ -307,14 +313,11 @@ int main(void)
 	err = store_init();
 	if (err) {
 		printk("store init failed: %d\n", err);
-	} else if (store_load_unifying(&dev, sizeof(dev))) {
-		unifying_pairing_restore(&pairing, &dev);
-		printk("restored paired keyboard\n");
 	}
 	unifying_link_reset(&link);
-	if (unifying_has_device(&pairing) && store_load_unifying_counter(&counter_floor)) {
-		unifying_link_set_floor(&link, counter_floor);
-		printk("restored counter floor\n");
+	if (err == 0 && store_load_unifying(record, sizeof(record))) {
+		unifying_record_restore(&pairing, &link, record);
+		printk("restored paired keyboard\n");
 	}
 	watchdog_start();
 	sys_rand_get(next_nonce, sizeof(next_nonce));
