@@ -1828,6 +1828,49 @@ static void test_a_radio_pause_postpones_the_silence(void)
 	CHECK(out.went_silent);
 }
 
+static void test_an_open_pairing_window_postpones_the_silence(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t closes = 1500 + UNIFYING_PAIRING_WINDOW_MS;
+
+	session_paired(&s);
+	hear(&s, 1000, &out);
+	unifying_session_open_pairing(&s, 1500);
+	for (uint64_t t = 1500; t < closes; t += 10) {
+		unifying_session_tick(&s, t, false, 0, 0, &out);
+		CHECK(!out.went_silent);
+	}
+	unifying_session_tick(&s, closes, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, silence_after(&s, closes) - 10, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, silence_after(&s, closes), false, 0, 0, &out);
+	CHECK(out.went_silent);
+}
+
+static void test_completing_pairing_ends_the_postponed_silence_at_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
+	unifying_session_tick(&s, 5, false, 0, 0, &out);
+	request_2(f, 0xe1);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
+	request_3(f, 0x00);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
+	unifying_session_tick(&s, silence_after(&s, 20) - 1, false, 0, 0, &out);
+	CHECK(!out.went_silent);
+	unifying_session_tick(&s, silence_after(&s, 20), false, 0, 0, &out);
+	CHECK(out.went_silent);
+}
+
 static void test_a_refused_keystroke_and_a_bad_checksum_are_invalid(void)
 {
 	struct unifying_session s;
@@ -2099,6 +2142,8 @@ int main(void)
 	RUN(test_a_connect_frame_while_connected_is_a_reconnect_not_a_wake);
 	RUN(test_an_unpaired_session_never_goes_silent);
 	RUN(test_a_radio_pause_postpones_the_silence);
+	RUN(test_an_open_pairing_window_postpones_the_silence);
+	RUN(test_completing_pairing_ends_the_postponed_silence_at_once);
 	RUN(test_a_refused_keystroke_and_a_bad_checksum_are_invalid);
 	RUN(test_a_forged_keystroke_starts_the_attack_once);
 	RUN(test_a_window_that_runs_out_is_reported_closed_once);

@@ -548,6 +548,8 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
 		s->window_was_open = false;
+		/* Pairing closes the window early, and the tick had set deaf_until_ms to its old end. */
+		s->deaf_until_ms = now_ms;
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
 		uint32_t refused = s->link.refused;
@@ -594,6 +596,10 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	bool pending;
 
 	*out = (struct unifying_out){0};
+	/* The pairing sweep leaves the keyboard's channel, so the window is deaf time. */
+	if (open && !s->silent) {
+		s->deaf_until_ms = s->pairing.window_until_ms;
+	}
 	if (s->heard && !s->silent && unifying_has_device(&s->pairing) &&
 	    quiet_too_long(s, now_ms)) {
 		s->silent = true;
