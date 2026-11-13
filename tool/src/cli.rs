@@ -94,7 +94,7 @@ pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
     match s.protocol {
         Protocol::Nuphy => Ok(()),
         other => bail!(
-            "{what} is kept only in NuPhy mode; the dongle runs {} (open-dongle protocol nuphy switches it)",
+            "only NuPhy mode has {what}; the dongle runs {} (open-dongle protocol nuphy switches it)",
             other.name()
         ),
     }
@@ -420,10 +420,10 @@ mod tests {
             .unwrap();
         assert!(require_nuphy(&s, "history").is_ok());
         s.protocol = Protocol::Unifying;
-        let err = require_nuphy(&s, "history").unwrap_err().to_string();
-        assert!(
-            err.contains("Unifying") && err.contains("open-dongle protocol nuphy"),
-            "{err}"
+        let err = require_nuphy(&s, "events").unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "only NuPhy mode has events; the dongle runs Unifying (open-dongle protocol nuphy switches it)"
         );
     }
 
