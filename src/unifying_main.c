@@ -233,9 +233,9 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 {
 	switch (req->command) {
 	case DIAG_PAIR:
-		unifying_session_open_pairing(&session, now);
-		printk("pairing open for %u s\n", UNIFYING_PAIRING_WINDOW_MS / 1000);
-		core_log(HISTORY_PAIRING_OPENED, 0, 0, 0, 0);
+		unifying_session_open_pairing(&session, PAIRWIN_REQUEST, now);
+		printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
+		core_log_pairing_opened(&session.pairing.window);
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
@@ -266,6 +266,8 @@ FUNC_NORETURN void unifying_run(int store_err)
 	stored = store_err == 0 && store_load_unifying(record, sizeof(record));
 	unifying_session_init(&session, &receiver, stored ? record : NULL,
 			      (uint64_t)k_uptime_get());
+	unifying_session_open_pairing(&session, PAIRWIN_BOOT, (uint64_t)k_uptime_get());
+	core_log_pairing_opened(&session.pairing.window);
 	if (stored) {
 		printk("restored paired keyboard\n");
 	}

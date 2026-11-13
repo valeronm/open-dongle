@@ -113,6 +113,19 @@ static void test_the_keyboard_connecting_leaves_a_window_open_until_paired(void)
 	CHECK(pairwin_is_open(&w, 1));
 }
 
+static void test_a_timed_window_counts_down_its_time_left(void)
+{
+	struct pairwin w = {0};
+
+	CHECK_EQ(pairwin_left_ms(&w, 0), 0);
+	pairwin_open(&w, PAIRWIN_REQUEST, true, 1000);
+	CHECK_EQ(pairwin_left_ms(&w, 1000), PAIRWIN_MS);
+	CHECK_EQ(pairwin_left_ms(&w, 1000 + PAIRWIN_MS - 1), 1);
+	CHECK_EQ(pairwin_left_ms(&w, 1000 + PAIRWIN_MS), 0);
+	pairwin_open(&w, PAIRWIN_REQUEST, false, 0);
+	CHECK_EQ(pairwin_left_ms(&w, 0), 0);
+}
+
 int main(void)
 {
 	RUN(test_a_window_is_closed_until_opened);
@@ -127,5 +140,6 @@ int main(void)
 	RUN(test_a_window_closed_early_does_not_run_out);
 	RUN(test_a_window_until_paired_does_not_run_out);
 	RUN(test_the_keyboard_connecting_leaves_a_window_open_until_paired);
+	RUN(test_a_timed_window_counts_down_its_time_left);
 	return TEST_EXIT();
 }

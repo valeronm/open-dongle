@@ -22,6 +22,8 @@ struct pairwin {
 void pairwin_open(struct pairwin *w, enum pairwin_cause cause, bool paired, uint32_t now_ms);
 bool pairwin_is_open(const struct pairwin *w, uint32_t now_ms);
 void pairwin_paired(struct pairwin *w);
+/* 0 for a closed window and for one that stays open until paired. */
+uint32_t pairwin_left_ms(const struct pairwin *w, uint32_t now_ms);
 /* Returns true once when a window that was open has passed its PAIRWIN_MS, and closes it. */
 bool pairwin_ran_out(struct pairwin *w, uint32_t now_ms);
 /*

@@ -193,6 +193,11 @@ void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
 	log_event(type, a, b, c, value);
 }
 
+void core_log_pairing_opened(const struct pairwin *w)
+{
+	core_log(HISTORY_PAIRING_OPENED, w->cause, w->until_paired, 0, 0);
+}
+
 void core_rssi(int8_t dbm)
 {
 	take_noise();

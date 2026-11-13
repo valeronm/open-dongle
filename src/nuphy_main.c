@@ -93,11 +93,6 @@ static void apply(const struct link_out *out)
 	}
 }
 
-static void log_pairing_opened(void)
-{
-	core_log(HISTORY_PAIRING_OPENED, link.window.cause, link.window.until_paired, 0, 0);
-}
-
 static void run_survey(void)
 {
 	const struct chan_survey *survey;
@@ -226,7 +221,7 @@ static void serve_diag(const struct diag_request *req)
 	case DIAG_PAIR:
 		link_open_pairing(&link, PAIRWIN_REQUEST, k_uptime_get_32());
 		printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
-		log_pairing_opened();
+		core_log_pairing_opened(&link.window);
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
@@ -256,7 +251,7 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	paired = store_err == 0 && store_load_channels(own);
 	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
 	link_open_pairing(&link, PAIRWIN_BOOT, k_uptime_get_32());
-	log_pairing_opened();
+	core_log_pairing_opened(&link.window);
 	if (store_err == 0 && store_load_forced(forced) && !link_force_channels(&link, forced)) {
 		printk("stored forced channels refused\n");
 	}

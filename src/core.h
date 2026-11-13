@@ -8,6 +8,7 @@
 #include "diagproto.h"
 #include "history.h"
 #include "indicator.h"
+#include "pairwin.h"
 #include "protocol.h"
 #include "radio.h"
 #include "reports.h"
@@ -65,6 +66,7 @@ void core_start_history(const struct core_loop *loop);
 void core_count(enum core_counter c);
 /* Takes the pending noise readings first, which a gap or loss event records. */
 void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
+void core_log_pairing_opened(const struct pairwin *w);
 /* Takes the pending noise readings first. */
 void core_rssi(int8_t dbm);
 /* UINT8_MAX when no report has changed what the host sees since boot, or 255 minutes or more ago. */

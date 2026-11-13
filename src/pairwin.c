@@ -13,6 +13,14 @@ bool pairwin_is_open(const struct pairwin *w, uint32_t now_ms)
 	return w->open && (w->until_paired || now_ms - w->opened_ms < PAIRWIN_MS);
 }
 
+uint32_t pairwin_left_ms(const struct pairwin *w, uint32_t now_ms)
+{
+	if (w->until_paired || !pairwin_is_open(w, now_ms)) {
+		return 0;
+	}
+	return PAIRWIN_MS - (now_ms - w->opened_ms);
+}
+
 void pairwin_paired(struct pairwin *w)
 {
 	w->open = false;

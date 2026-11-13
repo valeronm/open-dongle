@@ -21,6 +21,6 @@ suite(diagproto ../src/diagproto.c)
 target_compile_definitions(test_diagproto PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tool/fixtures")
 suite(history ../src/history.c ../src/noise.c)
-suite(unifying ../src/unifying.c)
+suite(unifying ../src/unifying.c ../src/pairwin.c)
 suite(protocol ../src/protocol.c)
 suite(pairwin ../src/pairwin.c)

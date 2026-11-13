@@ -34,14 +34,14 @@ static bool attempting(const struct unifying_pairing *p)
 	return p->attempt.state != UNIFYING_IDLE;
 }
 
-void unifying_pairing_open(struct unifying_pairing *p, uint64_t now_ms)
+void unifying_pairing_open(struct unifying_pairing *p, enum pairwin_cause cause, uint64_t now_ms)
 {
-	p->window_until_ms = now_ms + UNIFYING_PAIRING_WINDOW_MS;
+	pairwin_open(&p->window, cause, p->has_device, (uint32_t)now_ms);
 }
 
 bool unifying_pairing_window_open(const struct unifying_pairing *p, uint64_t now_ms)
 {
-	return now_ms < p->window_until_ms;
+	return pairwin_is_open(&p->window, (uint32_t)now_ms);
 }
 
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
@@ -206,7 +206,7 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 		a->state = UNIFYING_IDLE;
 		p->has_device = true;
 		p->device = a->dev;
-		p->window_until_ms = 0;
+		pairwin_paired(&p->window);
 		*event = UNIFYING_RX_PAIRED;
 		return response_final(a, reply);
 	}
@@ -547,9 +547,6 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
-		s->window_was_open = false;
-		/* Pairing closes the window early, and the tick had set deaf_until_ms to its old end. */
-		s->deaf_until_ms = now_ms;
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
 		uint32_t refused = s->link.refused;
@@ -561,6 +558,10 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		} else if (s->silent) {
 			out->heard = s->connect_in_silence ? UNIFYING_HEARD_WOKE : UNIFYING_HEARD_AGAIN;
 			out->down_ms = (uint32_t)(now_ms - s->silent_since_ms);
+		}
+		/* Requests 2 and 3 of a pairing attempt arrive on this pipe too. */
+		if (!attempting(&s->pairing) && unifying_checksum_ok(frame, len)) {
+			pairwin_link_up(&s->pairing.window);
 		}
 		s->silent = false;
 		s->connect_in_silence = false;
@@ -585,6 +586,10 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 							   len);
 		unifying_led_resend(&s->led);
 	}
+	/* A frame can close the window early, while the tick sets deaf_until_ms to its full end. */
+	if (!unifying_pairing_window_open(&s->pairing, now_ms) && s->deaf_until_ms > now_ms) {
+		s->deaf_until_ms = now_ms;
+	}
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
@@ -598,7 +603,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	*out = (struct unifying_out){0};
 	/* The pairing sweep leaves the keyboard's channel, so the window is deaf time. */
 	if (open && !s->silent) {
-		s->deaf_until_ms = s->pairing.window_until_ms;
+		s->deaf_until_ms = now_ms + pairwin_left_ms(&s->pairing.window, (uint32_t)now_ms);
 	}
 	if (s->heard && !s->silent && unifying_has_device(&s->pairing) &&
 	    quiet_too_long(s, now_ms)) {
@@ -620,8 +625,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 		out->expired_step = step;
 	}
 	pending = step != UNIFYING_IDLE && !out->attempt_expired;
-	out->window_closed = s->window_was_open && !open && !pending;
-	s->window_was_open = open || pending;
+	out->window_closed = !pending && pairwin_ran_out(&s->pairing.window, (uint32_t)now_ms);
 	next = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
 	if (next != s->channel) {
 		out->set_channel = true;
@@ -640,10 +644,10 @@ void unifying_session_channel_moved(struct unifying_session *s)
 	unifying_led_dropped(&s->led);
 }
 
-void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms)
+void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_cause cause,
+				    uint64_t now_ms)
 {
-	unifying_pairing_open(&s->pairing, now_ms);
-	s->window_was_open = true;
+	unifying_pairing_open(&s->pairing, cause, now_ms);
 }
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms)

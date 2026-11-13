@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "pairwin.h"
 #include "reports.h"
 
 #define UNIFYING_FRAME_MAX 22
@@ -14,7 +15,6 @@
 #define UNIFYING_ADDRESS_LEN 5
 #define UNIFYING_PAIRING_CHANNELS 11
 #define UNIFYING_SWEEP_DWELL_MS 20
-#define UNIFYING_PAIRING_WINDOW_MS 30000
 #define UNIFYING_AES_BLOCK_LEN 16
 #define UNIFYING_KEEPALIVE_DEFAULT_MS 1100
 #define UNIFYING_LED_FRAME_LEN 10
@@ -65,7 +65,7 @@ struct unifying_pairing {
 	bool has_device;
 	struct unifying_device device;
 	struct unifying_attempt attempt;
-	uint64_t window_until_ms;
+	struct pairwin window;
 };
 
 enum unifying_rx_event {
@@ -121,8 +121,7 @@ bool unifying_pairing_expired(struct unifying_pairing *p, uint64_t now_ms);
 uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_pairing *p,
 			       uint64_t now_ms);
 
-/* Opens the window for UNIFYING_PAIRING_WINDOW_MS; a completed pairing closes it. */
-void unifying_pairing_open(struct unifying_pairing *p, uint64_t now_ms);
+void unifying_pairing_open(struct unifying_pairing *p, enum pairwin_cause cause, uint64_t now_ms);
 
 bool unifying_pairing_window_open(const struct unifying_pairing *p, uint64_t now_ms);
 
@@ -266,7 +265,6 @@ struct unifying_session {
 	bool silent;
 	uint64_t silent_since_ms;
 	bool connect_in_silence;
-	bool window_was_open;
 	uint64_t deaf_until_ms;
 };
 
@@ -326,7 +324,8 @@ void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint3
 /* The radio moved to out->channel, dropping any queued replies. */
 void unifying_session_channel_moved(struct unifying_session *s);
 
-void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms);
+void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_cause cause,
+				    uint64_t now_ms);
 
 /* The receiver was off until now_ms, so silence before it is not the keyboard's. */
 void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms);
