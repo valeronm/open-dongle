@@ -506,3 +506,97 @@ void unifying_record_restore(struct unifying_pairing *p, const uint8_t in[UNIFYI
 	memcpy(d.key, &in[RECORD_KEY_OFFSET], UNIFYING_KEY_LEN);
 	unifying_pairing_restore(p, &d);
 }
+
+void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
+			   const uint8_t *record, uint64_t now_ms)
+{
+	memset(s, 0, sizeof(*s));
+	s->receiver = *r;
+	unifying_link_reset(&s->link);
+	if (record != NULL) {
+		unifying_record_restore(&s->pairing, record);
+	}
+	s->channel = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
+}
+
+void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
+			    size_t len, int8_t rssi, uint64_t now_ms,
+			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
+			    struct unifying_out *out)
+{
+	*out = (struct unifying_out){0};
+	out->reply_len = unifying_pairing_rx(&s->pairing, &s->receiver, nonce, frame, len, now_ms,
+					     out->reply, &out->event);
+	out->reply_pipe = pipe;
+	if (out->event == UNIFYING_RX_PAIRED) {
+		unifying_link_reset(&s->link);
+	}
+	if (pipe == UNIFYING_PIPE_DEVICE) {
+		s->heard = true;
+		s->heard_ms = now_ms;
+		s->rssi = rssi;
+		unifying_link_heard(&s->link, frame, len, now_ms);
+		if (unifying_has_device(&s->pairing)) {
+			out->reports = unifying_keystroke(&s->link, s->pairing.device.key, frame, len,
+							  now_ms, aes, out->report);
+			if (out->reports == 0 &&
+			    unifying_media_report(&s->link, frame, len, &out->report[0])) {
+				out->reports = 1;
+			}
+		}
+	} else if (pipe == UNIFYING_PIPE_RECEIVER) {
+		out->release_all = unifying_link_reconnect(&s->link, s->receiver.device_octet, frame,
+							   len);
+		unifying_led_resend(&s->led);
+	}
+}
+
+void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
+			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out)
+{
+	uint8_t next;
+
+	*out = (struct unifying_out){0};
+	out->release_all = unifying_link_silent(&s->link, now_ms);
+	if (leds_changed) {
+		unifying_led_want(&s->led, host_leds);
+	}
+	out->send_led = unifying_led_due(&s->led, unifying_has_device(&s->pairing), taken_count,
+					 &out->leds);
+	out->attempt_expired = unifying_pairing_expired(&s->pairing, now_ms);
+	next = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
+	if (next != s->channel) {
+		out->set_channel = true;
+		out->channel = next;
+		s->channel = next;
+	}
+}
+
+void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count)
+{
+	unifying_led_sent(&s->led, leds, taken_count);
+}
+
+void unifying_session_channel_moved(struct unifying_session *s)
+{
+	unifying_led_dropped(&s->led);
+}
+
+void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms)
+{
+	unifying_pairing_open(&s->pairing, now_ms);
+}
+
+enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms)
+{
+	if (unifying_pairing_window_open(&s->pairing, now_ms)) {
+		return UNIFYING_PAIRING;
+	}
+	if (!unifying_has_device(&s->pairing)) {
+		return UNIFYING_NOT_PAIRED;
+	}
+	if (s->heard && now_ms - s->heard_ms < 2 * (uint64_t)s->link.keepalive_ms) {
+		return UNIFYING_CONNECTED;
+	}
+	return UNIFYING_SILENT;
+}

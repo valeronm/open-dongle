@@ -11,25 +11,21 @@
 #include "unifying.h"
 #include "usb.h"
 
-#define PIPE_DEVICE 1
-#define PIPE_RECEIVER 2
 #define TICK_MS 10
 #define WATCHDOG_TIMEOUT_MS 3000
 #define USB_RETRY_MS 2
 
-static struct unifying_receiver receiver = {.device_octet = 0x07, .wpid = {0x88, 0x02}};
-static struct unifying_pairing pairing;
-static struct unifying_link link;
+static struct unifying_session session;
 static struct reports reports;
 static atomic_t host_leds;
 static atomic_t led_changed;
-static struct unifying_led led;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
 static atomic_t rx_dropped;
 
 struct rx_item {
 	uint8_t len;
 	uint8_t pipe;
+	int8_t rssi;
 	uint8_t data[RADIO_MAX_PAYLOAD];
 };
 
@@ -92,9 +88,7 @@ static void aes_ecb(const uint8_t key[UNIFYING_KEY_LEN], const uint8_t in[UNIFYI
 
 static void on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi)
 {
-	struct rx_item item = {.len = len, .pipe = pipe};
-
-	ARG_UNUSED(rssi);
+	struct rx_item item = {.len = len, .pipe = pipe, .rssi = rssi};
 
 	memcpy(item.data, data, MIN(len, sizeof(item.data)));
 	if (k_msgq_put(&rx_queue, &item, K_NO_WAIT) != 0) {
@@ -106,15 +100,14 @@ static void on_paired(void)
 {
 	uint8_t record[UNIFYING_RECORD_LEN];
 
-	unifying_link_reset(&link);
-	unifying_record_of(&pairing, record);
+	unifying_record_of(&session.pairing, record);
 	printk("pairing saved: %d\n", store_save_unifying(record, sizeof(record)));
 	indicator_set(IND_CONNECTED);
 }
 
 static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, size_t n)
 {
-	const struct unifying_attempt *a = &pairing.attempt;
+	const struct unifying_attempt *a = &session.pairing.attempt;
 
 	switch (event) {
 	case UNIFYING_RX_ANSWERED_1:
@@ -127,37 +120,10 @@ static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, s
 		break;
 	case UNIFYING_RX_PAIRED:
 		printk("request 3: name \"%.*s\", paired\n", a->name_len, a->name);
-		on_paired();
 		break;
 	default:
 		break;
 	}
-}
-
-static void handle_pairing(const struct rx_item *item, uint64_t now)
-{
-	uint8_t reply[UNIFYING_FRAME_MAX];
-	enum unifying_rx_event event;
-	size_t n;
-	int err;
-
-	n = unifying_pairing_rx(&pairing, &receiver, next_nonce, item->data, item->len,
-				now, reply, &event);
-	if (event == UNIFYING_RX_ANSWERED_1) {
-		sys_rand_get(next_nonce, sizeof(next_nonce));
-	}
-	if (event == UNIFYING_RX_REFUSED) {
-		print_hex("request 1 refused, not Unifying-compatible:", item->data, item->len);
-		return;
-	}
-	if (n == 0) {
-		return;
-	}
-	err = radio_reply(item->pipe, reply, n);
-	if (err) {
-		printk("queueing reply failed: %d\n", err);
-	}
-	report_pairing(event, reply, n);
 }
 
 static void lock_reports(void)
@@ -187,22 +153,65 @@ static void submit(const struct report *r)
 	}
 }
 
-static void handle_keyboard(const struct rx_item *item, uint64_t now)
+static void release_all_keys(void)
 {
-	struct report typed[UNIFYING_KEYSTROKE_REPORTS];
-	size_t n;
+	lock_reports();
+	reports_release_all(&reports);
+	unlock_reports(true);
+}
 
-	unifying_link_heard(&link, item->data, item->len, now);
-	if (!unifying_has_device(&pairing)) {
-		return;
+static void queue_leds(uint8_t leds)
+{
+	uint8_t frame[UNIFYING_LED_FRAME_LEN];
+	uint32_t taken;
+	size_t n = unifying_led_frame(leds, frame);
+
+	taken = radio_replies_taken();
+	if (radio_reply(UNIFYING_PIPE_DEVICE, frame, n) == 0) {
+		unifying_session_led_queued(&session, leds, taken);
 	}
-	n = unifying_keystroke(&link, pairing.device.key, item->data, item->len, now, aes_ecb,
-			       typed);
-	if (n == 0 && unifying_media_report(&link, item->data, item->len, &typed[0])) {
-		n = 1;
+}
+
+static void apply_frame(const struct unifying_out *out, const struct rx_item *item)
+{
+	if (out->event == UNIFYING_RX_ANSWERED_1) {
+		sys_rand_get(next_nonce, sizeof(next_nonce));
 	}
-	for (size_t i = 0; i < n; i++) {
-		submit(&typed[i]);
+	if (out->event == UNIFYING_RX_REFUSED) {
+		print_hex("request 1 refused, not Unifying-compatible:", item->data, item->len);
+	}
+	if (out->reply_len != 0) {
+		int err = radio_reply(out->reply_pipe, out->reply, out->reply_len);
+
+		if (err) {
+			printk("queueing reply failed: %d\n", err);
+		}
+		report_pairing(out->event, out->reply, out->reply_len);
+	}
+	if (out->event == UNIFYING_RX_PAIRED) {
+		on_paired();
+	}
+	for (size_t i = 0; i < out->reports; i++) {
+		submit(&out->report[i]);
+	}
+	if (out->release_all) {
+		release_all_keys();
+	}
+}
+
+static void apply_tick(const struct unifying_out *out)
+{
+	if (out->release_all) {
+		release_all_keys();
+	}
+	if (out->send_led) {
+		queue_leds(out->leds);
+	}
+	if (out->attempt_expired) {
+		printk("pairing timed out\n");
+	}
+	if (out->set_channel && radio_set_channel(out->channel) == 0) {
+		unifying_session_channel_moved(&session);
 	}
 }
 
@@ -248,27 +257,6 @@ static void on_leds(uint8_t leds)
 	atomic_set(&led_changed, 1);
 }
 
-static void send_leds(void)
-{
-	uint8_t frame[UNIFYING_LED_FRAME_LEN];
-	uint8_t leds;
-	uint32_t taken;
-	size_t n;
-
-	if (atomic_clear(&led_changed) != 0) {
-		unifying_led_want(&led, (uint8_t)atomic_get(&host_leds));
-	}
-	if (!unifying_led_due(&led, unifying_has_device(&pairing), radio_replies_taken(),
-			      &leds)) {
-		return;
-	}
-	n = unifying_led_frame(leds, frame);
-	taken = radio_replies_taken();
-	if (radio_reply(PIPE_DEVICE, frame, n) == 0) {
-		unifying_led_sent(&led, leds, taken);
-	}
-}
-
 static void no_diag(const uint8_t *buf, size_t len)
 {
 	ARG_UNUSED(buf);
@@ -301,10 +289,10 @@ int main(void)
 	};
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	struct radio_config rc;
-	struct unifying_sweep sweep = {0};
+	struct unifying_receiver receiver = {.device_octet = 0x07, .wpid = {0x88, 0x02}};
 	uint8_t device_address[UNIFYING_ADDRESS_LEN];
 	uint8_t record[UNIFYING_RECORD_LEN];
-	uint8_t channel;
+	bool stored;
 	int err;
 
 	memcpy(receiver.base, &raw, sizeof(receiver.base));
@@ -323,24 +311,24 @@ int main(void)
 	if (err) {
 		printk("store init failed: %d\n", err);
 	}
-	unifying_link_reset(&link);
-	if (err == 0 && store_load_unifying(record, sizeof(record))) {
-		unifying_record_restore(&pairing, record);
+	stored = err == 0 && store_load_unifying(record, sizeof(record));
+	unifying_session_init(&session, &receiver, stored ? record : NULL,
+			      (uint64_t)k_uptime_get());
+	if (stored) {
 		printk("restored paired keyboard\n");
 	}
-	unifying_pairing_open(&pairing, 0);
+	unifying_session_open_pairing(&session, 0);
 	watchdog_start();
 	sys_rand_get(next_nonce, sizeof(next_nonce));
 
-	channel = unifying_sweep_channel(&sweep, &pairing, (uint64_t)k_uptime_get());
-	rc = unifying_radio(device_address, channel);
+	rc = unifying_radio(device_address, session.channel);
 	while ((err = radio_start(&rc, on_radio_rx)) != 0) {
 		indicator_set(IND_ERROR);
 		printk("radio start failed: %d\n", err);
 		k_sleep(K_SECONDS(1));
 		watchdog_feed();
 	}
-	if (unifying_has_device(&pairing)) {
+	if (unifying_has_device(&session.pairing)) {
 		indicator_set(IND_CONNECTED);
 	} else {
 		indicator_set(IND_PAIRING);
@@ -348,43 +336,23 @@ int main(void)
 	print_hex("unifying poc sweeping pairing channels, assigned device address", device_address, 5);
 
 	for (;;) {
+		struct unifying_out out;
 		struct rx_item item;
 		uint64_t now;
-		uint8_t next;
+		bool changed;
 		bool got;
 
 		got = k_msgq_get(&rx_queue, &item, K_MSEC(TICK_MS)) == 0;
 		now = (uint64_t)k_uptime_get();
 		if (got) {
-			handle_pairing(&item, now);
-			if (item.pipe == PIPE_DEVICE) {
-				handle_keyboard(&item, now);
-			} else if (item.pipe == PIPE_RECEIVER) {
-				if (unifying_link_reconnect(&link, receiver.device_octet, item.data,
-							    item.len)) {
-					lock_reports();
-					reports_release_all(&reports);
-					unlock_reports(true);
-				}
-				unifying_led_resend(&led);
-			}
+			unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi, now,
+					       next_nonce, aes_ecb, &out);
+			apply_frame(&out, &item);
 		}
-		if (unifying_link_silent(&link, now)) {
-			lock_reports();
-			reports_release_all(&reports);
-			unlock_reports(true);
-		}
-		send_leds();
-		if (unifying_pairing_expired(&pairing, now)) {
-			printk("pairing timed out\n");
-		}
-		next = unifying_sweep_channel(&sweep, &pairing, now);
-		if (next != channel) {
-			if (radio_set_channel(next) == 0) {
-				unifying_led_dropped(&led);
-			}
-			channel = next;
-		}
+		changed = atomic_clear(&led_changed) != 0;
+		unifying_session_tick(&session, now, changed, (uint8_t)atomic_get(&host_leds),
+				      radio_replies_taken(), &out);
+		apply_tick(&out);
 		if (atomic_get(&rx_dropped) != 0) {
 			printk("receive queue full, %ld frames dropped\n", atomic_clear(&rx_dropped));
 		}

@@ -237,4 +237,65 @@ void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t l
  */
 bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms);
 
+#define UNIFYING_PIPE_PAIRING 0
+#define UNIFYING_PIPE_DEVICE 1
+#define UNIFYING_PIPE_RECEIVER 2
+
+enum unifying_status {
+	UNIFYING_NOT_PAIRED,
+	UNIFYING_PAIRING,
+	UNIFYING_CONNECTED,
+	UNIFYING_SILENT,
+};
+
+struct unifying_session {
+	struct unifying_receiver receiver;
+	struct unifying_pairing pairing;
+	struct unifying_link link;
+	struct unifying_led led;
+	struct unifying_sweep sweep;
+	uint8_t channel;
+	bool heard;
+	uint64_t heard_ms;
+	int8_t rssi;
+};
+
+/* What the caller must do after a session call; zeroed by the call. */
+struct unifying_out {
+	enum unifying_rx_event event;
+	uint8_t reply_pipe;
+	size_t reply_len;
+	uint8_t reply[UNIFYING_FRAME_MAX];
+	size_t reports;
+	struct report report[UNIFYING_KEYSTROKE_REPORTS];
+	bool release_all;
+	bool send_led;
+	uint8_t leds;
+	bool attempt_expired;
+	bool set_channel;
+	uint8_t channel;
+};
+
+/* record is NULL when no keyboard is stored. */
+void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
+			   const uint8_t *record, uint64_t now_ms);
+
+void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
+			    size_t len, int8_t rssi, uint64_t now_ms,
+			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
+			    struct unifying_out *out);
+
+void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
+			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out);
+
+/* taken_count is sampled before the LED frame was queued. */
+void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count);
+
+/* The radio moved to out->channel, dropping any queued replies. */
+void unifying_session_channel_moved(struct unifying_session *s);
+
+void unifying_session_open_pairing(struct unifying_session *s, uint64_t now_ms);
+
+enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms);
+
 #endif

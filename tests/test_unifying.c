@@ -1540,6 +1540,137 @@ static void test_no_led_frame_is_due_without_a_paired_device(void)
 	check_due(&led, 0, 0x02);
 }
 
+static void session_paired(struct unifying_session *s)
+{
+	struct unifying_pairing done = open_pairing();
+	uint8_t record[UNIFYING_RECORD_LEN];
+
+	pair_fully(&done);
+	unifying_record_of(&done, record);
+	unifying_session_init(s, &receiver, record, 0);
+}
+
+static void test_a_session_without_a_record_is_not_paired(void)
+{
+	struct unifying_session s;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_NOT_PAIRED);
+}
+
+static void test_a_session_answers_pairing_on_the_frames_pipe(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	CHECK_EQ(unifying_session_status(&s, 10), UNIFYING_PAIRING);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), -50, 10, nonce, NULL, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_1);
+	CHECK_EQ(out.reply_pipe, UNIFYING_PIPE_PAIRING);
+	CHECK_EQ(out.reply_len, UNIFYING_FRAME_MAX);
+}
+
+static void test_a_refused_request_gets_no_reply_from_the_session(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x01);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 10, nonce, NULL, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_REFUSED);
+	CHECK_EQ(out.reply_len, 0);
+}
+
+static void test_completing_pairing_through_the_session_closes_the_window(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 0, nonce, NULL, &out);
+	request_2(f, 0xe1);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_ANSWERED_2);
+	request_3(f, 0x00);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
+	CHECK(unifying_session_status(&s, 30) != UNIFYING_PAIRING);
+}
+
+static void test_a_connect_frame_on_the_receiver_pipe_resends_the_leds(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_tick(&s, 0, true, 0x02, 0, &out);
+	CHECK(out.send_led);
+	unifying_session_led_queued(&s, out.leds, 0);
+	unifying_session_tick(&s, 10, false, 0x02, 1, &out);
+	CHECK(!out.send_led);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 20,
+			       nonce, fake_aes, &out);
+	unifying_session_tick(&s, 30, false, 0x02, 1, &out);
+	CHECK(out.send_led);
+	CHECK_EQ(out.leds, 0x02);
+}
+
+static void test_a_heard_paired_keyboard_is_connected_then_silent(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_SILENT);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
+			       -60, 1000, nonce, fake_aes, &out);
+	CHECK_EQ(s.rssi, -60);
+	CHECK_EQ(unifying_session_status(&s, 1000 + 2 * s.link.keepalive_ms - 1),
+		 UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 1000 + 2 * s.link.keepalive_ms), UNIFYING_SILENT);
+}
+
+static void test_the_tick_moves_the_channel_while_pairing_is_open(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	unifying_session_init(&s, &receiver, NULL, 0);
+	unifying_session_open_pairing(&s, 0);
+	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS, false, 0, 0, &out);
+	CHECK(out.set_channel);
+	CHECK_EQ(out.channel, s.channel);
+	unifying_session_tick(&s, UNIFYING_SWEEP_DWELL_MS + 1, false, 0, 0, &out);
+	CHECK(!out.set_channel);
+}
+
+static void test_a_session_types_a_keystroke_from_the_device_pipe(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_paired(&s);
+	keystroke(f, 0x5f66f458, release);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 10, nonce, fake_aes, &out);
+	CHECK_EQ(out.reports, 1);
+	keystroke(f, 0x5f66f459, press_a);
+	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
+	CHECK_EQ(out.reports, 1);
+	CHECK_EQ(out.report[0].kind, REPORT_KEYBOARD);
+	CHECK_EQ(out.report[0].keyboard[2], 0x04);
+}
+
 int main(void)
 {
 	RUN(test_checksum_is_the_negated_sum);
@@ -1637,5 +1768,13 @@ int main(void)
 	RUN(test_an_led_frame_not_queued_stays_due);
 	RUN(test_a_dropped_led_frame_is_sent_again);
 	RUN(test_no_led_frame_is_due_without_a_paired_device);
+	RUN(test_a_session_without_a_record_is_not_paired);
+	RUN(test_a_session_answers_pairing_on_the_frames_pipe);
+	RUN(test_a_refused_request_gets_no_reply_from_the_session);
+	RUN(test_completing_pairing_through_the_session_closes_the_window);
+	RUN(test_a_connect_frame_on_the_receiver_pipe_resends_the_leds);
+	RUN(test_a_heard_paired_keyboard_is_connected_then_silent);
+	RUN(test_the_tick_moves_the_channel_while_pairing_is_open);
+	RUN(test_a_session_types_a_keystroke_from_the_device_pipe);
 	return TEST_EXIT();
 }
