@@ -139,6 +139,20 @@ pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
     })
 }
 
+pub fn unifying_state_name(state: u8) -> &'static str {
+    match state {
+        0 => "not paired",
+        1 => "pairing",
+        2 => "connected",
+        3 => "silent",
+        _ => "unknown",
+    }
+}
+
+pub fn wpid(id: Option<[u8; 4]>) -> String {
+    id.map_or("none".into(), |id| format!("{:02x}{:02x}", id[0], id[1]))
+}
+
 pub fn duration(ms: u32) -> String {
     let s = ms / 1000;
     match ms {
@@ -561,5 +575,20 @@ mod tests {
         let span = |from: usize, to: usize| ruler[from - 2..=to - 2].iter().collect::<String>();
         assert!(span(27, 47).contains('6'));
         assert!(span(52, 72).contains("11"));
+    }
+
+    #[test]
+    fn unifying_states_have_names() {
+        assert_eq!(unifying_state_name(0), "not paired");
+        assert_eq!(unifying_state_name(1), "pairing");
+        assert_eq!(unifying_state_name(2), "connected");
+        assert_eq!(unifying_state_name(3), "silent");
+        assert_eq!(unifying_state_name(9), "unknown");
+    }
+
+    #[test]
+    fn a_wpid_prints_its_two_bytes_or_none() {
+        assert_eq!(wpid(Some([0x40, 0x8a, 0, 0])), "408a");
+        assert_eq!(wpid(None), "none");
     }
 }

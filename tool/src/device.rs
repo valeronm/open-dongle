@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
     Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
-    Status, VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise, parse_part,
-    read_status, request,
+    Reader, Status, VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise,
+    parse_part, read_status, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -163,6 +163,20 @@ impl<T: Transport> Device<T> {
     pub fn force_channels(&mut self, channels: Option<[u8; 3]>) -> Result<()> {
         self.call(Command::ForceChannels, channels_arg(channels), TIMEOUT)
             .map(drop)
+    }
+
+    pub fn pair(&mut self) -> Result<()> {
+        self.call(Command::Pair, 0, TIMEOUT).map(drop)
+    }
+
+    /// Returns the protocol running when the dongle answered, and whether it now reboots.
+    pub fn protocol(&mut self, set: Option<Protocol>) -> Result<(Protocol, bool)> {
+        let reply = self.call(Command::Protocol, set.map_or(0, |p| p as u32), TIMEOUT)?;
+        let mut r = Reader::new(&reply);
+        let running = Protocol::from_code(r.u8()?).ok_or_else(|| {
+            anyhow::anyhow!("the dongle reports a protocol this tool does not know")
+        })?;
+        Ok((running, r.u8()? != 0))
     }
 
     pub fn noise(&mut self) -> Result<Vec<NoiseChannel>> {
@@ -435,5 +449,35 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("did not answer"), "{err}");
+    }
+
+    #[test]
+    fn setting_a_protocol_sends_its_number_and_reads_the_reboot_flag() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                assert_eq!(req[0], Command::Protocol as u8);
+                assert_eq!(req[2], 2);
+                parts(req[0], req[1], &[1, 1])
+            }),
+            0,
+        );
+        assert_eq!(
+            dev.protocol(Some(Protocol::Unifying)).unwrap(),
+            (Protocol::Nuphy, true)
+        );
+    }
+
+    #[test]
+    fn a_wrong_protocol_refusal_names_the_running_one() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                let mut e = error_part(req[0], req[1], 5);
+                e[5] = 2;
+                vec![e]
+            }),
+            0,
+        );
+        let err = dev.pair().unwrap_err().to_string();
+        assert!(err.contains("Unifying"), "{err}");
     }
 }

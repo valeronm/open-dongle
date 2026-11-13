@@ -40,9 +40,7 @@ pub enum Command {
     Bootloader,
     Clear,
     ForceChannels,
-    #[cfg_attr(not(test), expect(dead_code))]
     Pair,
-    #[cfg_attr(not(test), expect(dead_code))]
     Protocol,
 }
 

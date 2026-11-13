@@ -10,7 +10,7 @@ mod view;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use protocol::Action;
+use protocol::{Action, Protocol};
 
 #[derive(Parser)]
 #[command(version, about = "Flash and inspect the OpenDongle firmware")]
@@ -27,6 +27,21 @@ struct Confirm {
     /// Skip the confirmation
     #[arg(long)]
     yes: bool,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum ProtocolName {
+    Nuphy,
+    Unifying,
+}
+
+impl From<ProtocolName> for Protocol {
+    fn from(name: ProtocolName) -> Self {
+        match name {
+            ProtocolName::Nuphy => Protocol::Nuphy,
+            ProtocolName::Unifying => Protocol::Unifying,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -53,6 +68,13 @@ enum Cmd {
         #[arg(required = true, num_args = 1..=3)]
         channels: Vec<String>,
     },
+    /// Show the protocol the dongle runs, or switch it; the dongle reboots into the new one
+    Protocol {
+        #[arg(value_enum)]
+        name: Option<ProtocolName>,
+    },
+    /// Open Unifying pairing for 30 s
+    Pair,
     /// Restart the dongle firmware
     Reboot(Confirm),
     /// Reboot into the UF2 bootloader for flashing
@@ -82,21 +104,23 @@ fn main() -> Result<()> {
         Cmd::Flash { file, confirm } => cli::flash(&file, serial, confirm.yes),
         Cmd::Status => cli::status(&device::open(serial)?.1),
         Cmd::History { minutes } => {
-            let (mut dev, s) = device::open(serial)?;
+            let (mut dev, s) = cli::open_nuphy(serial, "history")?;
             cli::history(&mut dev, &s, minutes)
         }
         Cmd::Events { count } => {
-            let (mut dev, s) = device::open(serial)?;
+            let (mut dev, s) = cli::open_nuphy(serial, "events")?;
             cli::events(&mut dev, &s, count)
         }
         Cmd::Noise(c) => {
-            let (mut dev, s) = device::open(serial)?;
+            let (mut dev, s) = cli::open_nuphy(serial, "the noise survey")?;
             cli::noise(&mut dev, &s, c.yes)
         }
         Cmd::Channels { channels } => {
             let forced = cli::parse_channels(&channels)?;
-            cli::channels(&mut device::open(serial)?.0, forced)
+            cli::channels(&mut cli::open_nuphy(serial, "forced channels")?.0, forced)
         }
+        Cmd::Protocol { name } => cli::protocol(serial, name.map(Into::into)),
+        Cmd::Pair => cli::pair(&mut device::open(serial)?.0),
         Cmd::Reboot(c) => cli::action(&mut device::open(serial)?.0, Action::Reboot, c.yes),
         Cmd::Bootloader(c) => cli::action(
             &mut device::open_unchecked(serial)?,

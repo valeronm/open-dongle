@@ -3,7 +3,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Local;
 
 use crate::board::{self, State};
@@ -11,51 +11,130 @@ use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
     keyboard_id, last_packet, link_state_name, noise_level, paired, pairing_offer, reset_causes,
-    uptime, usb_state, version, wall_clock,
+    unifying_state_name, uptime, usb_state, version, wall_clock, wpid,
 };
-use crate::protocol::{Action, ErrorCode, Status};
+use crate::protocol::{Action, ErrorCode, Protocol, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
     let c = s.counters;
+    let nuphy = s.protocol == Protocol::Nuphy;
     println!("firmware  {}", version(s.firmware_version));
-    println!(
-        "link      {} on channel {} ({}), keyboard {}",
-        link_state_name(s.link_state),
-        s.channel,
-        paired(s.own),
-        keyboard_id(s.keyboard_id)
-    );
+    println!("protocol  {}", s.protocol.name());
+    if nuphy {
+        println!(
+            "link      {} on channel {} ({}), keyboard {}",
+            link_state_name(s.link_state),
+            s.channel,
+            paired(s.own),
+            keyboard_id(s.keyboard_id)
+        );
+    } else {
+        println!(
+            "link      {} on channel {}, keyboard {}",
+            unifying_state_name(s.link_state),
+            s.channel,
+            wpid(s.keyboard_id)
+        );
+    }
     println!(
         "signal    {} dBm, {}",
         s.last_rssi,
         last_packet(s.last_rx_age_ms)
     );
-    println!("pairing   {}", pairing_offer(s.forced));
+    if nuphy {
+        println!("pairing   {}", pairing_offer(s.forced));
+    }
     println!("usb       {}", usb_state(s.usb_live, s.usb_suspended));
     println!(
         "uptime    {}, reset by {}",
         uptime(s.uptime_ms),
         reset_causes(s.reset_cause)
     );
+    if nuphy {
+        println!(
+            "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
+            c.packets,
+            c.invalid,
+            c.dropped,
+            c.channel_changes,
+            c.link_losses,
+            c.gaps,
+            c.usb_retries,
+            c.merges,
+            c.surveys
+        );
+        println!(
+            "history   {} minutes, {} events held",
+            s.minute_next.saturating_sub(s.minute_oldest),
+            s.events_total.saturating_sub(s.events_oldest)
+        );
+    }
+    Ok(())
+}
+
+pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
+    match s.protocol {
+        Protocol::Nuphy => Ok(()),
+        other => bail!(
+            "{what} is kept only in NuPhy mode; the dongle runs {} (open-dongle protocol nuphy switches it)",
+            other.name()
+        ),
+    }
+}
+
+/// Opens the dongle for a command whose data only the NuPhy protocol keeps.
+pub fn open_nuphy(
+    serial: Option<&str>,
+    what: &str,
+) -> Result<(Device<device::HidTransport>, Status)> {
+    let (dev, s) = device::open(serial)?;
+    require_nuphy(&s, what)?;
+    Ok((dev, s))
+}
+
+pub fn pair<T: Transport>(dev: &mut Device<T>) -> Result<()> {
+    dev.pair().map_err(|err| match err.downcast_ref::<Refused>() {
+        Some(r) if r.code == Ok(ErrorCode::WrongProtocol) => anyhow!(
+            "the dongle runs NuPhy, whose keyboards start pairing themselves: hold Fn+4 on the keyboard"
+        ),
+        _ => err,
+    })?;
     println!(
-        "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
-        c.packets,
-        c.invalid,
-        c.dropped,
-        c.channel_changes,
-        c.link_losses,
-        c.gaps,
-        c.usb_retries,
-        c.merges,
-        c.surveys
-    );
-    println!(
-        "history   {} minutes, {} events held",
-        s.minute_next.saturating_sub(s.minute_oldest),
-        s.events_total.saturating_sub(s.events_oldest)
+        "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it blinks fast"
     );
     Ok(())
+}
+
+pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
+    let (mut dev, before) = device::open(serial)?;
+    let Some(want) = set else {
+        println!("the dongle runs {}", before.protocol.name());
+        return Ok(());
+    };
+    let (running, rebooting) = dev.protocol(Some(want))?;
+    if !rebooting {
+        println!("the dongle already runs {}", running.name());
+        return Ok(());
+    }
+    drop(dev);
+    let deadline = std::time::Instant::now() + RETURN_WAIT;
+    std::thread::sleep(Duration::from_secs(1));
+    let s = loop {
+        std::thread::sleep(Duration::from_millis(300));
+        if let Ok(Ok(s)) = device::open_unchecked(serial).and_then(|mut d| d.read_status())
+            && s.uptime_ms < before.uptime_ms
+        {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            bail!("the dongle did not come back within {RETURN_WAIT:?}; replug it");
+        }
+    };
+    if s.protocol != want {
+        bail!("the dongle came back running {}", s.protocol.name());
+    }
+    status(&s)
 }
 
 pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> Result<()> {
@@ -244,7 +323,7 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::Command;
+    use crate::protocol::{Command, Protocol};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
@@ -315,5 +394,33 @@ mod tests {
         let err = flash(&path, Some("no-such-board"), true).unwrap_err();
         std::fs::remove_file(&path).unwrap();
         assert!(format!("{err:#}").contains("UF2"), "{err:#}");
+    }
+
+    #[test]
+    fn nuphy_only_commands_name_the_running_protocol() {
+        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
+            .unwrap()
+            .unwrap();
+        assert!(require_nuphy(&s, "history").is_ok());
+        s.protocol = Protocol::Unifying;
+        let err = require_nuphy(&s, "history").unwrap_err().to_string();
+        assert!(
+            err.contains("Unifying") && err.contains("open-dongle protocol nuphy"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn pair_in_nuphy_mode_says_how_nuphy_pairs() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                let mut e = error_part(req[0], req[1], 5);
+                e[5] = 1;
+                vec![e]
+            }),
+            0,
+        );
+        let err = pair(&mut dev).unwrap_err().to_string();
+        assert!(err.contains("Fn+4"), "{err}");
     }
 }

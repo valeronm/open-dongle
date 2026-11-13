@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- One firmware runs the NuPhy Air75 V2 or a Logitech Unifying keyboard (tested with the MX Keys): `open-dongle protocol` switches between them, keeping each one's pairing, and `open-dongle pair` opens Unifying pairing for 30 s.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.
