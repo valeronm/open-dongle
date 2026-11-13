@@ -27,6 +27,12 @@ static atomic_t host_leds;
 static atomic_t leds_changed;
 static atomic_t rx_dropped;
 static atomic_t usb_retries;
+static struct history history;
+static uint32_t counts[CORE_COUNTERS];
+static const struct core_loop *loop;
+static int64_t last_key_ms = -1;
+static bool usb_was_suspended;
+static bool usb_seen_live;
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 static int wdt_channel = -1;
@@ -106,6 +112,9 @@ bool core_submit(const struct report *r)
 	lock_reports();
 	changed = reports_update(&reports, r);
 	unlock_reports(changed);
+	if (changed) {
+		last_key_ms = k_uptime_get();
+	}
 	if (changed && usb_suspended()) {
 		usb_wakeup();
 	}
@@ -134,13 +143,156 @@ uint32_t core_merges(void)
 	return merges;
 }
 
-void core_clear_counters(void)
+static struct history_totals totals(void)
+{
+	return (struct history_totals){
+		.packets = counts[CORE_PACKETS],
+		.invalid = counts[CORE_INVALID],
+		.dropped = core_rx_dropped(),
+		.channel_changes = counts[CORE_CHANNEL_CHANGES],
+		.link_losses = counts[CORE_LINK_LOSSES],
+		.usb_retries = core_usb_retries(),
+		.gaps = counts[CORE_GAPS],
+	};
+}
+
+static void log_event(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+{
+	history_event(&history, &(struct history_event){.time_ms = k_uptime_get(),
+							.type = type,
+							.a = a,
+							.b = b,
+							.c = c,
+							.value = value});
+}
+
+static void take_noise(void)
+{
+	struct noise_tally t;
+	uint8_t channel = radio_noise_take(&t);
+	int home = loop->home();
+
+	history_noise(&history, &t, home != CORE_NO_HOME && channel == home);
+}
+
+void core_start_history(const struct core_loop *l)
+{
+	loop = l;
+	history_init(&history, k_uptime_get(), &(struct history_totals){0});
+	log_event(HISTORY_BOOT, 0, 0, 0, boot_reset_cause);
+}
+
+void core_count(enum core_counter c)
+{
+	counts[c]++;
+}
+
+void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+{
+	take_noise();
+	log_event(type, a, b, c, value);
+}
+
+void core_rssi(int8_t dbm)
+{
+	take_noise();
+	history_rssi(&history, dbm);
+}
+
+uint8_t core_minutes_since_key(void)
+{
+	int64_t minutes;
+
+	if (last_key_ms < 0) {
+		return UINT8_MAX;
+	}
+	minutes = (k_uptime_get() - last_key_ms) / HISTORY_MINUTE_MS;
+	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
+}
+
+void core_poll(void)
+{
+	bool suspended = usb_suspended();
+	struct history_totals t;
+
+	usb_seen_live |= usb_live();
+	if (suspended != usb_was_suspended) {
+		if (usb_seen_live) {
+			core_log(suspended ? HISTORY_USB_SUSPEND : HISTORY_USB_RESUME, 0, 0, 0, 0);
+		}
+		usb_was_suspended = suspended;
+	}
+	take_noise();
+	t = totals();
+	history_tick(&history, k_uptime_get(), &t);
+}
+
+int core_set_channel(uint8_t channel)
+{
+	int err;
+
+	take_noise();
+	err = radio_set_channel(channel);
+	if (err == 0) {
+		core_count(CORE_CHANNEL_CHANGES);
+	}
+	return err;
+}
+
+const struct chan_survey *core_survey(void)
+{
+	static struct chan_survey survey;
+
+	take_noise();
+	core_watchdog_feed();
+	return radio_survey(&survey) == 0 ? &survey : NULL;
+}
+
+static void clear(const struct diag_request *req)
 {
 	lock_reports();
 	reports.merges = 0;
 	unlock_reports(false);
 	atomic_clear(&rx_dropped);
 	atomic_clear(&usb_retries);
+	memset(counts, 0, sizeof(counts));
+	history_clear(&history, k_uptime_get(), &(struct history_totals){0});
+	log_event(HISTORY_CLEAR, 0, 0, 0, 0);
+	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
+static void serve_minutes(const struct diag_request *req, uint8_t *payload)
+{
+	static struct history_minute page[DIAG_MINUTES_PER_PAGE];
+	uint32_t first;
+	size_t n = history_minutes(&history, req->arg, &first, page, ARRAY_SIZE(page));
+
+	diag_reply(req, payload, diag_encode_minutes(payload, first, page, n), DIAG_AFTER_NONE);
+}
+
+static void serve_events(const struct diag_request *req, uint8_t *payload)
+{
+	static struct history_event page[DIAG_EVENTS_PER_PAGE];
+	uint32_t first;
+	size_t n = history_events(&history, req->arg, &first, page, ARRAY_SIZE(page));
+
+	diag_reply(req, payload, diag_encode_events(payload, first, page, n), DIAG_AFTER_NONE);
+}
+
+static void serve_noise(const struct diag_request *req, uint8_t *payload)
+{
+	const struct chan_survey *survey;
+
+	/* The receiver goes deaf during the survey, so a key held now stays down on the host. */
+	core_release_keys();
+	survey = core_survey();
+	if (survey == NULL) {
+		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		return;
+	}
+	loop->radio_resumed();
+	log_event(HISTORY_NOISE, 0, 0, 0, 0);
+	diag_reply(req, payload, diag_encode_noise(payload, survey), DIAG_AFTER_NONE);
 }
 
 bool core_take_leds(uint8_t *leds)
@@ -238,6 +390,22 @@ void core_fill_status(struct diag_status *st)
 		.usb_suspended = usb_suspended(),
 	};
 	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
+	st->totals = totals();
+	st->merges = core_merges();
+	st->surveys = counts[CORE_SURVEYS];
+	st->minute_next = history.minute_next;
+	st->minute_oldest = history.minute_oldest;
+	st->events_total = history.events_total;
+	st->events_oldest = history.events_oldest;
+}
+
+static void serve_status(const struct diag_request *req, uint8_t *payload)
+{
+	struct diag_status st;
+
+	core_fill_status(&st);
+	loop->fill_status(&st);
+	diag_reply(req, payload, diag_encode_status(payload, &st), DIAG_AFTER_NONE);
 }
 
 static void serve_protocol(const struct diag_request *req)
@@ -274,6 +442,8 @@ static void serve_protocol(const struct diag_request *req)
 
 bool core_take_request(struct diag_request *out)
 {
+	static uint8_t payload[DIAG_PAYLOAD_MAX];
+
 	while (diag_take_request(out)) {
 		uint8_t owner = diag_command_protocol(out->command);
 
@@ -282,6 +452,9 @@ bool core_take_request(struct diag_request *out)
 			continue;
 		}
 		switch (out->command) {
+		case DIAG_STATUS:
+			serve_status(out, payload);
+			break;
 		case DIAG_PROTOCOL:
 			serve_protocol(out);
 			break;
@@ -290,6 +463,18 @@ bool core_take_request(struct diag_request *out)
 			break;
 		case DIAG_BOOTLOADER:
 			diag_reply(out, NULL, 0, DIAG_AFTER_BOOTLOADER);
+			break;
+		case DIAG_HISTORY:
+			serve_minutes(out, payload);
+			break;
+		case DIAG_EVENTS:
+			serve_events(out, payload);
+			break;
+		case DIAG_NOISE:
+			serve_noise(out, payload);
+			break;
+		case DIAG_CLEAR:
+			clear(out);
 			break;
 		default:
 			return true;

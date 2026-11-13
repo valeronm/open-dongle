@@ -245,9 +245,9 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 
 static void test_a_command_belongs_to_one_protocol_or_to_all(void)
 {
-	CHECK_EQ(diag_command_protocol(DIAG_HISTORY), PROTOCOL_NUPHY);
-	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), PROTOCOL_NUPHY);
-	CHECK_EQ(diag_command_protocol(DIAG_NOISE), PROTOCOL_NUPHY);
+	CHECK_EQ(diag_command_protocol(DIAG_HISTORY), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_NOISE), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_FORCE_CHANNELS), PROTOCOL_NUPHY);
 	CHECK_EQ(diag_command_protocol(DIAG_PAIR), PROTOCOL_UNIFYING);
 	CHECK_EQ(diag_command_protocol(DIAG_STATUS), 0);

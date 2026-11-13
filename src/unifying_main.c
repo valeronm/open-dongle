@@ -15,7 +15,6 @@
 
 static struct unifying_session session;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
-static uint32_t packets;
 
 static void print_hex(const char *label, const uint8_t *buf, size_t len)
 {
@@ -147,6 +146,15 @@ static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_
 	};
 }
 
+static int home(void)
+{
+	return CORE_NO_HOME;
+}
+
+static void radio_resumed(void)
+{
+}
+
 static void show_state(uint64_t now)
 {
 	static const enum indicator_mode by_status[] = {
@@ -159,18 +167,15 @@ static void show_state(uint64_t now)
 	core_show_state(by_status[unifying_session_status(&session, now)]);
 }
 
-static void fill_status(struct diag_status *st, uint64_t now)
+static void fill_status(struct diag_status *st)
 {
-	core_fill_status(st);
+	uint64_t now = (uint64_t)k_uptime_get();
+
 	st->link_state = unifying_session_status(&session, now);
 	st->channel = session.channel;
 	st->last_rssi = session.rssi;
 	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)
 					   : UINT32_MAX;
-	st->totals.packets = packets;
-	st->totals.dropped = core_rx_dropped();
-	st->totals.usb_retries = core_usb_retries();
-	st->merges = core_merges();
 	if (unifying_has_device(&session.pairing)) {
 		memcpy(st->keyboard_id, session.pairing.device.wpid, UNIFYING_WPID_LEN);
 	}
@@ -178,22 +183,10 @@ static void fill_status(struct diag_status *st, uint64_t now)
 
 static void serve_diag(const struct diag_request *req, uint64_t now)
 {
-	static uint8_t payload[DIAG_PAYLOAD_MAX];
-	struct diag_status st;
-
 	switch (req->command) {
-	case DIAG_STATUS:
-		fill_status(&st, now);
-		diag_reply(req, payload, diag_encode_status(payload, &st), DIAG_AFTER_NONE);
-		break;
 	case DIAG_PAIR:
 		unifying_session_open_pairing(&session, now);
 		printk("pairing open for %u s\n", UNIFYING_PAIRING_WINDOW_MS / 1000);
-		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
-		break;
-	case DIAG_CLEAR:
-		packets = 0;
-		core_clear_counters();
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
@@ -201,6 +194,12 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 		break;
 	}
 }
+
+static const struct core_loop loop = {
+	.home = home,
+	.radio_resumed = radio_resumed,
+	.fill_status = fill_status,
+};
 
 FUNC_NORETURN void unifying_run(int store_err)
 {
@@ -212,6 +211,7 @@ FUNC_NORETURN void unifying_run(int store_err)
 	uint32_t reported_drops = 0;
 	bool stored;
 
+	core_start_history(&loop);
 	memcpy(receiver.base, &raw, sizeof(receiver.base));
 	unifying_device_address(&receiver, device_address);
 	stored = store_err == 0 && store_load_unifying(record, sizeof(record));
@@ -240,13 +240,14 @@ FUNC_NORETURN void unifying_run(int store_err)
 		now = (uint64_t)k_uptime_get();
 		if (got) {
 			if (item.pipe == UNIFYING_PIPE_DEVICE) {
-				packets++;
+				core_count(CORE_PACKETS);
 			}
 			unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi, now,
 					       next_nonce, aes_ecb, &out);
 			apply_frame(&out, &item);
 		}
 		changed = core_take_leds(&leds);
+		core_poll();
 		unifying_session_tick(&session, now, changed, leds, radio_replies_taken(), &out);
 		apply_tick(&out);
 		while (core_take_request(&req)) {

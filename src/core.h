@@ -4,11 +4,34 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
+#include "chanpick.h"
 #include "diagproto.h"
+#include "history.h"
 #include "indicator.h"
 #include "protocol.h"
 #include "radio.h"
 #include "reports.h"
+
+#define CORE_NO_HOME (-1)
+
+enum core_counter {
+	CORE_PACKETS,
+	CORE_INVALID,
+	CORE_CHANNEL_CHANGES,
+	CORE_LINK_LOSSES,
+	CORE_GAPS,
+	CORE_SURVEYS,
+	CORE_COUNTERS,
+};
+
+/* What the core asks of the running protocol loop. */
+struct core_loop {
+	/* The channel whose noise counts toward the minute, or CORE_NO_HOME. */
+	int (*home)(void);
+	/* Runs after each survey that answers a noise request, which keeps the receiver off. */
+	void (*radio_resumed)(void);
+	void (*fill_status)(struct diag_status *st);
+};
 
 struct rx_item {
 	uint8_t len;
@@ -32,16 +55,34 @@ bool core_submit(const struct report *r);
 void core_release_keys(void);
 uint32_t core_usb_retries(void);
 uint32_t core_merges(void);
-void core_clear_counters(void);
 /* Returns true once after each host LED change; *leds always receives the current LEDs. */
 bool core_take_leds(uint8_t *leds);
 void core_watchdog_feed(void);
 /* A suspended host shows IND_SLEEP whatever the mode. */
 void core_show_state(enum indicator_mode mode);
-/* Sets the fields every protocol reports and zeroes the rest. */
+/* Starts the history with a boot event; loop must stay valid for the rest of the program. */
+void core_start_history(const struct core_loop *loop);
+void core_count(enum core_counter c);
+/* Takes the pending noise readings first, which a gap or loss event records. */
+void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
+/* Takes the pending noise readings first. */
+void core_rssi(int8_t dbm);
+/* UINT8_MAX when no report has changed what the host sees since boot, or 255 minutes or more ago. */
+uint8_t core_minutes_since_key(void);
+/* Logs USB suspend changes and closes the minutes that ended. */
+void core_poll(void);
+/* Takes the pending noise readings, which a channel change drops, and counts a change that
+ * succeeds. */
+int core_set_channel(uint8_t channel);
+/* Takes the pending noise readings, which a survey drops. Blocks for about 1.5 s with the receiver
+ * off; returns NULL when the radio failed. */
+const struct chan_survey *core_survey(void);
+/* Sets the fields every protocol reports and zeroes the rest; loop.fill_status adds the
+ * protocol's own. */
 void core_fill_status(struct diag_status *st);
-/* Answers protocol, reboot and bootloader requests, and requests for the other protocol's commands,
- * itself; returns true with the next request it does not answer. */
+/* Answers status, protocol, reboot, bootloader, history, events, clear and noise requests, and
+ * requests for the other protocol's commands, itself; returns true with the next request it does
+ * not answer. */
 bool core_take_request(struct diag_request *out);
 
 FUNC_NORETURN void nuphy_run(int store_err);

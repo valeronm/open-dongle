@@ -12,9 +12,6 @@ static uint8_t *put_le(uint8_t *p, uint64_t v, size_t bytes)
 uint8_t diag_command_protocol(uint8_t command)
 {
 	switch (command) {
-	case DIAG_HISTORY:
-	case DIAG_EVENTS:
-	case DIAG_NOISE:
 	case DIAG_FORCE_CHANNELS:
 		return PROTOCOL_NUPHY;
 	case DIAG_PAIR:
