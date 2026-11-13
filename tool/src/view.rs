@@ -18,9 +18,9 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, NOISE_QUESTION, PAIRING_OPEN, action_question, channel_role, describe_event,
-    last_packet, link_state_name, noise_level, noise_ruler, paired, share, switch_question,
-    unifying_state_name, uptime, usb_state, wall_clock, wpid,
+    ChannelRole, NOISE_QUESTION, PAIRING_OPEN, UNIFYING_PAIRING, action_question, channel_role,
+    describe_event, last_packet, link_state_name, noise_level, noise_ruler, paired, share,
+    switch_question, unifying_state_name, uptime, usb_state, wall_clock, wpid,
 };
 use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status};
 
@@ -515,9 +515,23 @@ impl<T: Transport> App<T> {
             return;
         };
         match status.and_then(|s| self.history.refresh(dev, s)) {
-            Ok(()) => self.refresh_error = None,
+            Ok(()) => {
+                self.refresh_error = None;
+                self.drop_pairing_message_once_closed();
+            }
             Err(e) if e.is::<Lost>() => self.disconnect(&e),
             Err(e) => self.refresh_error = Some(error_text(&e)),
+        }
+    }
+
+    /// The dongle closes its pairing window on its own, so the message outlives the window.
+    fn drop_pairing_message_once_closed(&mut self) {
+        let pairing =
+            self.history.status.as_ref().is_some_and(|s| {
+                s.protocol == Protocol::Unifying && s.link_state == UNIFYING_PAIRING
+            });
+        if !pairing && self.message == PAIRING_OPEN {
+            self.message.clear();
         }
     }
 
@@ -1139,6 +1153,46 @@ mod tests {
             footer(&mut app),
             "pairing is open for 30 s; hold an Easy-Switch key on the keyboard until it\nblinks fast"
         );
+    }
+
+    fn refreshed_with_link_state(app: &mut App<Fake>, link_state: u8) {
+        let mut s = unifying_status();
+        s.link_state = link_state;
+        s.minute_next = s.minute_oldest;
+        s.events_total = s.events_oldest;
+        app.refresh(Ok(s));
+    }
+
+    fn app_showing(message: &str) -> App<Fake> {
+        let mut app = App::new(None);
+        app.device = Some(Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0));
+        app.message = message.into();
+        app
+    }
+
+    #[test]
+    fn the_pairing_message_stays_while_the_status_reads_pairing() {
+        let mut app = app_showing(PAIRING_OPEN);
+        refreshed_with_link_state(&mut app, 1);
+        assert_eq!(app.message, PAIRING_OPEN);
+    }
+
+    #[test]
+    fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
+        let mut app = app_showing(PAIRING_OPEN);
+        refreshed_with_link_state(&mut app, 2);
+        assert_eq!(app.message, "");
+        assert_eq!(
+            footer(&mut app),
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history\n↑/↓ events  esc back  q quit"
+        );
+    }
+
+    #[test]
+    fn another_message_stays_when_the_status_no_longer_reads_pairing() {
+        let mut app = app_showing("done");
+        refreshed_with_link_state(&mut app, 2);
+        assert_eq!(app.message, "done");
     }
 
     struct Unplugged;
