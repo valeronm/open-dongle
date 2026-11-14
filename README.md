@@ -132,7 +132,7 @@ SDK releases, so other versions are untested.
 ```
 mise run build
 mise run flash [serial]
-cargo install --path tool
+cargo install --locked --path tool
 ```
 
 `mise run flash` flashes the image `mise run build` wrote. The udev rule is in `tools/udev`.

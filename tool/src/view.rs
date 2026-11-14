@@ -13,6 +13,7 @@ use ratatui::{
     widgets::{
         Axis, Bar, BarChart, BarGroup, Block, Borders, Chart, Dataset, GraphType, List, ListItem,
         Paragraph,
+        canvas::{Context, Painter},
     },
 };
 
@@ -43,7 +44,9 @@ const CLOCK: &str = "%H:%M:%S";
 const GUTTER: u16 = 12;
 const DBM_FLOOR: i8 = -100;
 const DBM_CEILING: i8 = -20;
+const DBM_BOUNDS: [f64; 2] = [DBM_FLOOR as f64, DBM_CEILING as f64];
 const DBM_LABELS: [i8; 3] = [DBM_FLOOR, -60, DBM_CEILING];
+const DBM_MARKER: symbols::Marker = symbols::Marker::Braille;
 
 type MinuteDbm = fn(&Minute) -> Option<i8>;
 
@@ -195,11 +198,11 @@ fn dbm_runs(shown: &[(u32, Minute)], pick: MinuteDbm) -> Vec<Vec<(f64, f64)>> {
         .collect()
 }
 
-/// The chart row a reading lands on, by the braille canvas's own scaling of four dots to a row.
-fn dbm_row(dbm: i8, rows: u16) -> usize {
-    let dots = f64::from(rows) * 4.0 - 1.0;
-    let span = f64::from(DBM_CEILING) - f64::from(DBM_FLOOR);
-    ((f64::from(DBM_CEILING) - f64::from(dbm)) * dots / span) as usize / 4
+/// The row the chart's canvas plots a reading on.
+fn dbm_row(dbm: i8, rows: u16) -> Option<usize> {
+    let mut canvas = Context::new(1, rows, [0.0, 1.0], DBM_BOUNDS, DBM_MARKER);
+    let (_, dot) = Painter::from(&mut canvas).get_point(0.0, f64::from(dbm))?;
+    Some(dot / 4)
 }
 
 /// Rounds each bar up, so a nonzero value never draws blank beside a much larger one.
@@ -787,7 +790,7 @@ impl<T: Transport> App<T> {
             .flat_map(|(color, runs)| {
                 runs.iter().map(|run| {
                     Dataset::default()
-                        .marker(symbols::Marker::Braille)
+                        .marker(DBM_MARKER)
                         .graph_type(GraphType::Line)
                         .style(Style::default().fg(*color))
                         .data(run)
@@ -797,13 +800,13 @@ impl<T: Transport> App<T> {
         f.render_widget(
             Chart::new(datasets)
                 .x_axis(Axis::default().bounds([0.0, width.saturating_sub(1).max(1) as f64]))
-                .y_axis(Axis::default().bounds([f64::from(DBM_FLOOR), f64::from(DBM_CEILING)])),
+                .y_axis(Axis::default().bounds(DBM_BOUNDS)),
             chart,
         );
         f.render_widget(Block::new().borders(Borders::LEFT), chart_axis);
         let mut label_rows = vec![Line::default(); usize::from(dbm_labels.height)];
         for dbm in DBM_LABELS {
-            if let Some(row) = label_rows.get_mut(dbm_row(dbm, dbm_labels.height)) {
+            if let Some(row) = dbm_row(dbm, dbm_labels.height).and_then(|r| label_rows.get_mut(r)) {
                 *row = Line::from(dbm.to_string());
             }
         }
