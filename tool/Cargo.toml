@@ -3,7 +3,6 @@ name = "open-dongle"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-rust-version = "1.99"
 description = "Flash and inspect the OpenDongle firmware"
 repository = "https://github.com/valeronm/open-dongle"
 

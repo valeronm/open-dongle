@@ -1,5 +1,5 @@
 [tools]
-rust = { version = "1.99", components = "rustfmt,clippy" }
+rust = { version = "1.100", components = "rustfmt,clippy" }
 cmake = "4.4"
 ninja = "1.13"
 python = "3.14"
