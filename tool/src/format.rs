@@ -171,7 +171,31 @@ pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
     })
 }
 
-pub fn unifying_state_name(state: u8) -> &'static str {
+pub fn state_name(s: &Status) -> &'static str {
+    match s.protocol {
+        Protocol::Nuphy => link_state_name(s.link_state),
+        Protocol::Unifying => unifying_state_name(s.link_state),
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum LinkHealth {
+    Connected,
+    Pairing,
+    Waiting,
+    NotPaired,
+}
+
+pub fn link_health(s: &Status) -> LinkHealth {
+    match (s.protocol, s.link_state) {
+        (Protocol::Unifying, 1) | (Protocol::Nuphy, 4) => LinkHealth::Connected,
+        (Protocol::Unifying, 0) => LinkHealth::NotPaired,
+        (Protocol::Nuphy, 1..=3) => LinkHealth::Pairing,
+        _ => LinkHealth::Waiting,
+    }
+}
+
+fn unifying_state_name(state: u8) -> &'static str {
     match state {
         0 => "not paired",
         1 => "connected",
@@ -200,7 +224,7 @@ pub fn last_packet(age_ms: Option<u32>) -> String {
     })
 }
 
-pub fn link_state_name(state: u8) -> &'static str {
+fn link_state_name(state: u8) -> &'static str {
     match state {
         0 => "searching",
         1 => "surveying",

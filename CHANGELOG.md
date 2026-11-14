@@ -22,6 +22,10 @@
   records whether the keyboard woke.
 - The live view's `p` key switches the protocol after asking, which restarts the history, and `a`
   opens pairing for 30 s.
+- The live view's status box has a row each for the link, the keyboard's channels (the current one
+  and the paired ones marked) and the dongle, colors the link state and signal, and names the
+  protocol in its title. The history panel charts channel changes per minute. In Unifying mode,
+  which counts no losses or gaps, the panel and `open-dongle history` leave them out.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.

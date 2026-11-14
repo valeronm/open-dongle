@@ -108,6 +108,61 @@ impl Protocol {
             Self::Unifying => "Unifying",
         }
     }
+
+    /// The counters this protocol's firmware counts, in the order status lists them.
+    pub fn counters(self) -> &'static [Counter] {
+        use Counter::*;
+        match self {
+            Self::Nuphy => &[
+                Packets,
+                Invalid,
+                Dropped,
+                ChannelChanges,
+                LinkLosses,
+                Gaps,
+                UsbRetries,
+                Merges,
+                Surveys,
+            ],
+            Self::Unifying => &[
+                Packets,
+                Invalid,
+                Dropped,
+                ChannelChanges,
+                UsbRetries,
+                Merges,
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Counter {
+    Packets,
+    Invalid,
+    Dropped,
+    ChannelChanges,
+    LinkLosses,
+    Gaps,
+    UsbRetries,
+    Merges,
+    Surveys,
+}
+
+impl Counter {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Packets => "packets",
+            Self::Invalid => "invalid",
+            Self::Dropped => "dropped",
+            Self::ChannelChanges => "channels",
+            Self::LinkLosses => "losses",
+            Self::Gaps => "gaps",
+            Self::UsbRetries => "usb-retries",
+            Self::Merges => "merges",
+            Self::Surveys => "surveys",
+        }
+    }
 }
 
 pub fn channels_arg(channels: Option<[u8; 3]>) -> u32 {
@@ -237,6 +292,22 @@ pub struct Counters {
     pub surveys: u32,
 }
 
+impl Counters {
+    pub fn get(&self, counter: Counter) -> u32 {
+        match counter {
+            Counter::Packets => self.packets,
+            Counter::Invalid => self.invalid,
+            Counter::Dropped => self.dropped,
+            Counter::ChannelChanges => self.channel_changes,
+            Counter::LinkLosses => self.link_losses,
+            Counter::Gaps => self.gaps,
+            Counter::UsbRetries => self.usb_retries,
+            Counter::Merges => self.merges,
+            Counter::Surveys => self.surveys,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub firmware_version: [u8; 3],
@@ -269,6 +340,11 @@ pub const NUPHY_FIXED_CHANNELS: [u8; 7] = [16, 22, 44, 48, 58, 72, 78];
 pub const UNIFYING_CHANNELS: [u8; 11] = [5, 8, 17, 32, 35, 41, 44, 62, 65, 71, 74];
 
 impl Status {
+    /// Only a NuPhy dongle reports the channels it paired on.
+    pub fn never_paired(&self) -> bool {
+        self.protocol == Protocol::Nuphy && self.own.is_none()
+    }
+
     /// The channels a move can send the link to, ascending.
     pub fn keyboard_channels(&self) -> Vec<u8> {
         let mut channels: Vec<u8> = match self.protocol {
@@ -392,6 +468,22 @@ pub struct Minute {
     pub gaps: u8,
     pub rssi: Option<Rssi>,
     pub noise: Option<Noise>,
+}
+
+impl Minute {
+    /// `None` for a counter the dongle keeps only as a total.
+    pub fn get(&self, counter: Counter) -> Option<u16> {
+        Some(match counter {
+            Counter::Packets => self.packets,
+            Counter::Invalid => self.invalid.into(),
+            Counter::Dropped => self.dropped.into(),
+            Counter::ChannelChanges => self.channel_changes.into(),
+            Counter::LinkLosses => self.link_losses.into(),
+            Counter::UsbRetries => self.usb_retries.into(),
+            Counter::Gaps => self.gaps.into(),
+            Counter::Merges | Counter::Surveys => return None,
+        })
+    }
 }
 
 /// A reading the dongle had nothing for arrives as all zero bytes.

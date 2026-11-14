@@ -7,7 +7,7 @@ use ratatui::{
     DefaultTerminal, Frame,
     crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind},
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
     widgets::{
@@ -18,25 +18,25 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, NOISE_QUESTION, action_question, channel_role, describe_event, last_packet,
-    link_state_name, noise_level, noise_ruler, paired, pairing_open, share, switch_question,
-    unifying_state_name, uptime, usb_state, wall_clock, wpid,
+    ChannelRole, LinkHealth, NOISE_QUESTION, action_question, channel_role, describe_event,
+    last_packet, link_health, noise_level, noise_ruler, paired, pairing_open, share, state_name,
+    switch_question, uptime, usb_state, wall_clock, wpid,
 };
 use crate::protocol::{
-    Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status, Step, step_channel,
+    Action, BUSY_DBM, Counter, Event, Minute, NoiseChannel, Protocol, Status, Step, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
 const EVENT_ROWS: usize = 8;
-const CHART_MIN_ROWS: u16 = 7;
+const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
-const PANEL_ROWS: [Constraint; 3] = [
-    Constraint::Min(CHART_MIN_ROWS),
-    Constraint::Length(STRIPS.len() as u16),
-    Constraint::Length(TIME_AXIS_ROWS),
-];
-const HISTORY_MIN_ROWS: u16 = 2 + min_rows(&PANEL_ROWS);
+const STATUS_ROWS: u16 = 3;
+const STATUS_LABEL_WIDTH: usize = 10;
+const SEPARATOR: &str = "   ";
+/// A link that averaged -70 dBm had no gaps, and gaps followed packets at -78 dBm or weaker.
+const SIGNAL_GOOD_DBM: i8 = -70;
+const SIGNAL_WEAK_DBM: i8 = -78;
 const CLOCK: &str = "%H:%M:%S";
 
 /// Wide enough for a strip's name beside its scale at 100.00%.
@@ -55,50 +55,128 @@ const SIGNAL_LINES: [(&str, Color, MinuteDbm); 4] = [
     ("max", Color::Green, |m| m.rssi.map(|r| r.max)),
 ];
 
+#[derive(Clone, Copy)]
+enum Source {
+    Counter(Counter),
+    Busy,
+}
+
 struct Strip {
     name: &'static str,
-    value: fn(&Minute) -> u16,
-    scale: fn(u16) -> String,
+    source: Source,
 }
 
-fn count(n: u16) -> String {
-    n.to_string()
+impl Strip {
+    fn value(&self, m: &Minute) -> u16 {
+        match self.source {
+            Source::Counter(counter) => m.get(counter).unwrap_or(0),
+            Source::Busy => m.noise.map_or(0, |n| n.busy),
+        }
+    }
+
+    fn scale(&self, top: u16) -> String {
+        match self.source {
+            Source::Counter(_) => top.to_string(),
+            Source::Busy => share(top),
+        }
+    }
 }
 
-const STRIPS: [Strip; 4] = [
+const STRIPS: [Strip; 5] = [
     Strip {
         name: "losses",
-        value: |m| u16::from(m.link_losses),
-        scale: count,
+        source: Source::Counter(Counter::LinkLosses),
     },
     Strip {
         name: "gaps",
-        value: |m| u16::from(m.gaps),
-        scale: count,
+        source: Source::Counter(Counter::Gaps),
     },
     Strip {
         name: "dropped",
-        value: |m| u16::from(m.dropped),
-        scale: count,
+        source: Source::Counter(Counter::Dropped),
+    },
+    Strip {
+        name: "channel",
+        source: Source::Counter(Counter::ChannelChanges),
     },
     Strip {
         name: "busy",
-        value: |m| m.noise.map_or(0, |n| n.busy),
-        scale: share,
+        source: Source::Busy,
     },
 ];
 
-const fn min_rows(rows: &[Constraint]) -> u16 {
-    let mut sum = 0;
-    let mut i = 0;
-    while i < rows.len() {
-        sum += match rows[i] {
-            Constraint::Min(n) | Constraint::Length(n) => n,
+fn strips(protocol: Protocol) -> impl Iterator<Item = &'static Strip> {
+    STRIPS.iter().filter(move |strip| match strip.source {
+        Source::Counter(counter) => protocol.counters().contains(&counter),
+        Source::Busy => true,
+    })
+}
+
+fn panel_rows(strips: usize) -> [Constraint; 3] {
+    [
+        Constraint::Min(CHART_MIN_ROWS),
+        Constraint::Length(strips as u16),
+        Constraint::Length(TIME_AXIS_ROWS),
+    ]
+}
+
+fn history_min_rows(protocol: Protocol) -> u16 {
+    let rows: u16 = panel_rows(strips(protocol).count())
+        .iter()
+        .map(|row| match row {
+            Constraint::Min(n) | Constraint::Length(n) => *n,
             _ => panic!("a panel row needs a fixed minimum"),
-        };
-        i += 1;
+        })
+        .sum();
+    2 + rows
+}
+
+fn status_row(label: &str, spans: impl IntoIterator<Item = Span<'static>>) -> Line<'static> {
+    Line::from_iter(
+        std::iter::once(Span::raw(format!("{label:<STATUS_LABEL_WIDTH$}"))).chain(spans),
+    )
+}
+
+fn link_color(health: LinkHealth) -> Color {
+    match health {
+        LinkHealth::Connected => Color::Green,
+        LinkHealth::Pairing => Color::Cyan,
+        LinkHealth::Waiting => Color::Yellow,
+        LinkHealth::NotPaired => Color::Red,
     }
-    sum
+}
+
+fn signal_color(dbm: i8) -> Color {
+    match dbm {
+        SIGNAL_GOOD_DBM.. => Color::Green,
+        SIGNAL_WEAK_DBM.. => Color::Yellow,
+        _ => Color::Red,
+    }
+}
+
+fn role_style(role: ChannelRole) -> Style {
+    match role {
+        ChannelRole::Current => Style::new().add_modifier(Modifier::REVERSED),
+        ChannelRole::Paired => Style::new().add_modifier(Modifier::BOLD),
+        ChannelRole::Other => Style::new(),
+    }
+}
+
+fn channel_spans(s: &Status) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for channel in s.keyboard_channels() {
+        if !spans.is_empty() {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            channel.to_string(),
+            role_style(channel_role(channel, s)),
+        ));
+    }
+    if s.never_paired() {
+        spans.push(Span::raw(format!("{SEPARATOR}{}", paired(s.own))));
+    }
+    spans
 }
 
 /// A chart line joins neighboring points, so each minute without a reading ends a run.
@@ -582,12 +660,15 @@ impl<T: Transport> App<T> {
     }
 
     fn draw(&mut self, f: &mut Frame) {
-        let status =
-            Paragraph::new(self.status_lines()).block(Block::bordered().title("OpenDongle"));
+        let title = match &self.history.status {
+            Some(s) => format!("OpenDongle · {}", s.protocol.name()),
+            None => "OpenDongle".into(),
+        };
+        let status = Paragraph::new(self.status_lines()).block(Block::bordered().title(title));
         let help = self.help(f.area().width as usize);
         let [top, middle, bottom, footer] = Layout::vertical([
-            Constraint::Length(4),
-            Constraint::Min(HISTORY_MIN_ROWS),
+            Constraint::Length(STATUS_ROWS + 2),
+            Constraint::Min(history_min_rows(self.protocol())),
             Constraint::Max(EVENT_ROWS as u16 + 2),
             Constraint::Length(help.len() as u16),
         ])
@@ -633,47 +714,37 @@ impl<T: Transport> App<T> {
         let Some(s) = &self.history.status else {
             return vec![Line::from("disconnected")];
         };
-        let mut lines = if s.protocol == Protocol::Unifying {
-            vec![
-                Line::from(format!(
-                    "{} on {}, keyboard {}   signal {} dBm, {}",
-                    unifying_state_name(s.link_state),
-                    s.channel,
-                    wpid(s.keyboard_id),
-                    s.last_rssi,
-                    last_packet(s.last_rx_age_ms)
-                )),
-                Line::from(format!(
-                    "usb {}   up {}   {}",
-                    usb_state(s.usb_live, s.usb_suspended),
-                    uptime(s.uptime_ms),
-                    s.protocol.name()
-                )),
-            ]
-        } else {
-            vec![
-                Line::from(format!(
-                    "{} on {} ({})   signal {} dBm, {}",
-                    link_state_name(s.link_state),
-                    s.channel,
-                    paired(s.own),
-                    s.last_rssi,
-                    last_packet(s.last_rx_age_ms)
-                )),
-                Line::from(format!(
-                    "usb {}   up {}   losses {}   gaps {}   dropped {}",
-                    usb_state(s.usb_live, s.usb_suspended),
-                    uptime(s.uptime_ms),
-                    s.counters.link_losses,
-                    s.counters.gaps,
-                    s.counters.dropped
-                )),
-            ]
+        let keyboard = match s.protocol {
+            Protocol::Unifying => format!(", keyboard {}", wpid(s.keyboard_id)),
+            Protocol::Nuphy => String::new(),
         };
+        let signal_style = match s.last_rx_age_ms {
+            Some(_) => Style::new().fg(signal_color(s.last_rssi)),
+            None => Style::new(),
+        };
+        let link = vec![
+            Span::styled(state_name(s), Style::new().fg(link_color(link_health(s)))),
+            Span::raw(format!(" on {}{keyboard}{SEPARATOR}", s.channel)),
+            Span::styled(format!("{} dBm", s.last_rssi), signal_style),
+            Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
+        ];
+        let mut dongle = vec![Span::raw(format!(
+            "usb {}{SEPARATOR}up {}",
+            usb_state(s.usb_live, s.usb_suspended),
+            uptime(s.uptime_ms)
+        ))];
         if s.pairing_open {
-            lines[1].push_span("   pairing open");
+            dongle.push(Span::raw(SEPARATOR));
+            dongle.push(Span::styled(
+                "pairing open",
+                Style::new().fg(link_color(LinkHealth::Pairing)),
+            ));
         }
-        lines
+        vec![
+            status_row("link", link),
+            status_row("channels", channel_spans(s)),
+            status_row("dongle", dongle),
+        ]
     }
 
     fn draw_history(&mut self, f: &mut Frame, area: Rect) {
@@ -694,7 +765,8 @@ impl<T: Transport> App<T> {
             Constraint::Fill(1),
         ])
         .areas(inner);
-        let rows = Layout::vertical(PANEL_ROWS);
+        let kept: Vec<&Strip> = strips(self.protocol()).collect();
+        let rows = Layout::vertical(panel_rows(kept.len()));
         let [dbm_labels, strip_labels, _] = rows.areas(gutter);
         let [chart_axis, _, _] = rows.areas(axis_line);
         let [chart, strips, axis] = rows.areas(plot);
@@ -740,13 +812,13 @@ impl<T: Transport> App<T> {
         let mut names = Vec::new();
         let mut scales = Vec::new();
         let mut bars = Vec::new();
-        for strip in &STRIPS {
-            let values: Vec<u16> = shown.iter().map(|(_, m)| (strip.value)(m)).collect();
+        for strip in kept {
+            let values: Vec<u16> = shown.iter().map(|(_, m)| strip.value(m)).collect();
             let (top, bar) = bar_strip(&values);
             names.push(Line::from(strip.name));
             scales.push(match top {
                 0 => Line::default(),
-                _ => Line::from((strip.scale)(top)),
+                _ => Line::from(strip.scale(top)),
             });
             bars.push(Line::from(bar));
         }
@@ -953,8 +1025,25 @@ mod tests {
         assert_eq!(time_axis(boot(), &[]), "");
     }
 
+    #[test]
+    fn every_counter_strip_plots_a_counter_a_minute_holds() {
+        for strip in &STRIPS {
+            if let Source::Counter(counter) = strip.source {
+                assert!(quiet().get(counter).is_some(), "{}", strip.name);
+            }
+        }
+    }
+
     fn panel_with(marked: Minute, height: u16) -> Vec<String> {
+        panel_in(Protocol::Nuphy, marked, height)
+    }
+
+    fn panel_in(protocol: Protocol, marked: Minute, height: u16) -> Vec<String> {
         let mut app: App = App::new(None);
+        app.history.status = Some(Status {
+            protocol,
+            ..nuphy_status()
+        });
         app.history.boot = Some(boot());
         app.history.minutes = (0..10).map(|i| (i, quiet())).collect();
         app.history.minutes[4].1 = marked;
@@ -1279,18 +1368,18 @@ mod tests {
         let mut app: App = App::new(None);
         app.history.status = Some(unifying_status());
         assert!(
-            app.status_lines()[1]
+            app.status_lines()[2]
                 .to_string()
                 .ends_with("   pairing open")
         );
         app.history.status = Some(nuphy_status());
         assert!(
-            app.status_lines()[1]
+            app.status_lines()[2]
                 .to_string()
                 .ends_with("   pairing open")
         );
         app.history.status.as_mut().unwrap().pairing_open = false;
-        assert!(!app.status_lines()[1].to_string().contains("pairing"));
+        assert!(!app.status_lines()[2].to_string().contains("pairing"));
     }
 
     #[test]
@@ -1433,7 +1522,7 @@ mod tests {
             gaps: 3,
             ..with_signal(-60)
         };
-        let rows = panel_with(marked, HISTORY_MIN_ROWS);
+        let rows = panel_with(marked, history_min_rows(Protocol::Nuphy));
         let gaps = rows
             .iter()
             .find(|r| r.starts_with("│gaps"))
@@ -1447,7 +1536,7 @@ mod tests {
     #[test]
     fn a_reading_sits_on_its_labeled_row_or_on_the_edge_past_the_chart() {
         for (dbm, label) in [(-60, "-60"), (-15, "-20"), (-110, "-100")] {
-            for height in HISTORY_MIN_ROWS..HISTORY_MIN_ROWS + 6 {
+            for height in history_min_rows(Protocol::Nuphy)..history_min_rows(Protocol::Nuphy) + 6 {
                 let rows = panel_with(with_signal(dbm), height);
                 let labeled = rows.iter().position(|r| r.contains(label)).unwrap();
                 let plotted = plotted(&rows);
@@ -1467,7 +1556,7 @@ mod tests {
             }),
             ..quiet()
         };
-        let rows = panel_with(marked, HISTORY_MIN_ROWS);
+        let rows = panel_with(marked, history_min_rows(Protocol::Nuphy));
         assert!(
             rows.iter().any(|r| r.starts_with("│busy 100.00% ")),
             "{rows:#?}"
@@ -1587,5 +1676,125 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(0, 2), (1, 2)]
         );
+    }
+
+    fn inside_box(row: &str) -> &str {
+        row.trim_end().trim_matches('│').trim_end()
+    }
+
+    fn status_box(status: &Status) -> Terminal<TestBackend> {
+        let mut app: App = App::new(None);
+        app.history.status = Some(status.clone());
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        terminal
+    }
+
+    #[test]
+    fn the_status_box_holds_a_row_each_for_link_channels_and_dongle() {
+        let s = nuphy_status();
+        let terminal = status_box(&s);
+        let rows = screen(&terminal);
+        assert!(rows[0].starts_with("┌OpenDongle · NuPhy"), "{}", rows[0]);
+        assert_eq!(
+            inside_box(&rows[1]),
+            "link      connected on 26   -71 dBm   last packet 12 ms ago"
+        );
+        assert_eq!(
+            inside_box(&rows[2]),
+            "channels  16 22 26 30 34 44 48 58 72 78"
+        );
+        assert_eq!(
+            inside_box(&rows[3]),
+            format!(
+                "dongle    usb live   up {}   pairing open",
+                uptime(s.uptime_ms)
+            )
+        );
+        assert!(rows[4].starts_with('└'), "{}", rows[4]);
+    }
+
+    #[test]
+    fn a_unifying_link_row_names_the_keyboard() {
+        let s = unifying_status();
+        let terminal = status_box(&s);
+        let rows = screen(&terminal);
+        assert!(rows[0].starts_with("┌OpenDongle · Unifying"), "{}", rows[0]);
+        assert!(
+            inside_box(&rows[1]).starts_with(&format!(
+                "link      connected on {}, keyboard {}   {} dBm",
+                s.channel,
+                wpid(s.keyboard_id),
+                s.last_rssi
+            )),
+            "{}",
+            rows[1]
+        );
+        assert_eq!(
+            inside_box(&rows[2]),
+            "channels  5 8 17 32 35 41 44 62 65 71 74"
+        );
+    }
+
+    #[test]
+    fn a_never_paired_nuphy_dongle_says_so_on_the_channels_row() {
+        let mut s = nuphy_status();
+        s.own = None;
+        let terminal = status_box(&s);
+        assert_eq!(
+            inside_box(&screen(&terminal)[2]),
+            "channels  16 22 44 48 58 72 78   never paired"
+        );
+    }
+
+    fn cell_at(terminal: &Terminal<TestBackend>, row: u16, text: &str) -> ratatui::buffer::Cell {
+        let line = &screen(terminal)[usize::from(row)];
+        let at = line
+            .find(text)
+            .unwrap_or_else(|| panic!("{text} not in {line}"));
+        let col = line[..at].chars().count() as u16;
+        terminal.backend().buffer()[(col, row)].clone()
+    }
+
+    #[test]
+    fn the_channels_row_marks_the_current_channel_and_the_paired_ones() {
+        let terminal = status_box(&nuphy_status());
+        assert_eq!(cell_at(&terminal, 2, "26").modifier, Modifier::REVERSED);
+        assert_eq!(cell_at(&terminal, 2, "30").modifier, Modifier::BOLD);
+        assert_eq!(cell_at(&terminal, 2, "16").modifier, Modifier::empty());
+    }
+
+    #[test]
+    fn the_link_state_and_signal_are_colored_by_how_good_they_are() {
+        let terminal = status_box(&nuphy_status());
+        assert_eq!(cell_at(&terminal, 1, "connected").fg, Color::Green);
+        assert_eq!(cell_at(&terminal, 1, "-71 dBm").fg, Color::Yellow);
+        let mut weak = nuphy_status();
+        weak.last_rssi = -80;
+        assert_eq!(cell_at(&status_box(&weak), 1, "-80 dBm").fg, Color::Red);
+        assert_eq!(cell_at(&terminal, 3, "pairing open").fg, Color::Cyan);
+        let mut s = unifying_status();
+        s.link_state = 0;
+        let terminal = status_box(&s);
+        assert_eq!(cell_at(&terminal, 1, "not paired").fg, Color::Red);
+    }
+
+    fn strip_names(protocol: Protocol) -> String {
+        panel_in(protocol, quiet(), history_min_rows(protocol)).join("\n")
+    }
+
+    #[test]
+    fn the_unifying_panel_leaves_out_the_strips_its_firmware_never_counts() {
+        let nuphy = strip_names(Protocol::Nuphy);
+        for name in ["losses", "gaps", "dropped", "channel", "busy"] {
+            assert!(nuphy.contains(name), "{name} missing from {nuphy}");
+        }
+        let unifying = strip_names(Protocol::Unifying);
+        for name in ["dropped", "channel", "busy"] {
+            assert!(unifying.contains(name), "{name} missing from {unifying}");
+        }
+        for name in ["losses", "gaps"] {
+            assert!(!unifying.contains(name), "{name} shown in {unifying}");
+        }
     }
 }

@@ -10,10 +10,10 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    keyboard_id, last_packet, link_state_name, noise_level, paired, pairing_offer, reset_causes,
-    unifying_state_name, uptime, usb_state, version, wall_clock, wpid,
+    keyboard_id, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name, uptime,
+    usb_state, version, wall_clock, wpid,
 };
-use crate::protocol::{Action, ErrorCode, Protocol, Status};
+use crate::protocol::{Action, Counter, ErrorCode, Minute, Protocol, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
@@ -30,22 +30,20 @@ fn status_lines(s: &Status) -> Vec<String> {
         format!("firmware  {}", version(s.firmware_version)),
         format!("protocol  {}", s.protocol.name()),
     ];
-    if nuphy {
-        lines.push(format!(
-            "link      {} on channel {} ({}), keyboard {}",
-            link_state_name(s.link_state),
-            s.channel,
+    let keyboard = if nuphy {
+        format!(
+            " ({}), keyboard {}",
             paired(s.own),
             keyboard_id(s.keyboard_id)
-        ));
+        )
     } else {
-        lines.push(format!(
-            "link      {} on channel {}, keyboard {}",
-            unifying_state_name(s.link_state),
-            s.channel,
-            wpid(s.keyboard_id)
-        ));
-    }
+        format!(", keyboard {}", wpid(s.keyboard_id))
+    };
+    lines.push(format!(
+        "link      {} on channel {}{keyboard}",
+        state_name(s),
+        s.channel
+    ));
     lines.push(format!(
         "signal    {} dBm, {}",
         s.last_rssi,
@@ -69,25 +67,13 @@ fn status_lines(s: &Status) -> Vec<String> {
         uptime(s.uptime_ms),
         reset_causes(s.reset_cause)
     ));
-    if nuphy {
-        lines.push(format!(
-            "counters  packets {} invalid {} dropped {} channels {} losses {} gaps {} usb-retries {} merges {} surveys {}",
-            c.packets,
-            c.invalid,
-            c.dropped,
-            c.channel_changes,
-            c.link_losses,
-            c.gaps,
-            c.usb_retries,
-            c.merges,
-            c.surveys
-        ));
-    } else {
-        lines.push(format!(
-            "counters  packets {} invalid {} dropped {} channels {} usb-retries {} merges {}",
-            c.packets, c.invalid, c.dropped, c.channel_changes, c.usb_retries, c.merges
-        ));
-    }
+    let counters: Vec<String> = s
+        .protocol
+        .counters()
+        .iter()
+        .map(|&counter| format!("{} {}", counter.name(), c.get(counter)))
+        .collect();
+    lines.push(format!("counters  {}", counters.join(" ")));
     lines.push(format!(
         "history   {} minutes, {} events held",
         s.minute_next.saturating_sub(s.minute_oldest),
@@ -164,25 +150,35 @@ pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
     status(&s)
 }
 
+fn minute_line(protocol: Protocol, m: &Minute) -> String {
+    let counters: Vec<String> = protocol
+        .counters()
+        .iter()
+        .filter_map(|&counter| {
+            let width = if counter == Counter::Packets { 5 } else { 3 };
+            m.get(counter)
+                .map(|n| format!("{} {n:width$}", counter.name()))
+        })
+        .collect();
+    let signal = m
+        .rssi
+        .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
+    format!(
+        "{}  signal {signal}  {}",
+        counters.join("  "),
+        format::noise(m.noise)
+    )
+}
+
 pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> Result<()> {
     let now = Local::now();
     let from = s.minute_next.saturating_sub(minutes);
     for (index, m) in dev.minutes_between(from, s.minute_next)? {
         let at = wall_clock(now, s.uptime_ms, u64::from(index) * 60_000);
-        let signal = m
-            .rssi
-            .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
         println!(
-            "{}  packets {:5}  invalid {:3}  dropped {:3}  channels {:3}  losses {:3}  gaps {:3}  usb-retries {:3}  signal {signal}  {}",
+            "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S"),
-            m.packets,
-            m.invalid,
-            m.dropped,
-            m.channel_changes,
-            m.link_losses,
-            m.gaps,
-            m.usb_retries,
-            format::noise(m.noise)
+            minute_line(s.protocol, &m)
         );
     }
     Ok(())
@@ -561,6 +557,32 @@ mod tests {
                 "counters  packets 1000 invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
                 "history   1440 minutes, 512 events held",
             ]
+        );
+    }
+
+    fn minute() -> Minute {
+        Minute {
+            packets: 120,
+            invalid: 1,
+            dropped: 0,
+            channel_changes: 2,
+            link_losses: 3,
+            usb_retries: 5,
+            gaps: 4,
+            rssi: None,
+            noise: None,
+        }
+    }
+
+    #[test]
+    fn a_history_line_lists_the_counters_the_protocol_counts() {
+        assert_eq!(
+            minute_line(Protocol::Nuphy, &minute()),
+            "packets   120  invalid   1  dropped   0  channels   2  losses   3  gaps   4  usb-retries   5  signal -  noise -"
+        );
+        assert_eq!(
+            minute_line(Protocol::Unifying, &minute()),
+            "packets   120  invalid   1  dropped   0  channels   2  usb-retries   5  signal -  noise -"
         );
     }
 }
