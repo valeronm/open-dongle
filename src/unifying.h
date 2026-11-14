@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "chanmove.h"
 #include "pairwin.h"
 #include "reports.h"
 
@@ -29,11 +30,8 @@
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
 extern const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN];
+/* A paired MX Keys searches only these after an unacknowledged packet. */
 extern const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS];
-
-#define UNIFYING_NORMAL_CHANNELS 25
-/* The channels a paired keyboard hops after an unacknowledged packet. */
-extern const uint8_t unifying_normal_channels[UNIFYING_NORMAL_CHANNELS];
 
 /* What the receiver hands out in Pairing Response 1; base and wpid also enter the key. */
 struct unifying_receiver {
@@ -271,7 +269,7 @@ struct unifying_session {
 	uint64_t silent_since_ms;
 	bool connect_in_silence;
 	uint64_t deaf_until_ms;
-	/* After a noise move, silence detection and the release of held keys wait until this time or
+	/* After a move, silence detection and the release of held keys wait until this time or
 	 * until the keyboard is heard. */
 	uint64_t search_until_ms;
 };
@@ -298,9 +296,6 @@ struct unifying_out {
 	bool attempt_expired;
 	bool set_channel;
 	uint8_t channel;
-	/* set_channel came from a move for less noise, away from moved_from. */
-	bool noise_move;
-	uint8_t moved_from;
 	bool went_silent;
 	/* Time since the last frame when the silence was noticed. */
 	uint32_t silent_ms;
@@ -326,11 +321,13 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
 			    struct unifying_out *out);
 
-/* move_to is a channel chosen for less noise, or -1; it is taken only while
- * unifying_session_movable allows. */
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
-			   uint8_t host_leds, uint32_t taken_count, int move_to,
-			   struct unifying_out *out);
+			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out);
+
+/* Moves a paired session with pairing closed to channel, one of the pairing channels; the caller
+ * retunes the radio. */
+enum chanmove_result unifying_session_move(struct unifying_session *s, uint8_t channel,
+					   uint64_t now_ms);
 
 /* taken_count is sampled before the LED frame was queued. */
 void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count);

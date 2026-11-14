@@ -28,7 +28,7 @@ static uint32_t last_packet_ms;
 
 static int home(void)
 {
-	return link.own_known ? link.own[0] : CORE_NO_HOME;
+	return link.own_known ? link.home : CORE_NO_HOME;
 }
 
 static void radio_resumed(void)
@@ -74,9 +74,7 @@ static void apply(const struct link_out *out)
 		core_release_keys();
 	}
 	if (out->up) {
-		uint8_t kind = !link_was_lost ? HISTORY_UP_FIRST
-				: out->woke   ? HISTORY_UP_WOKE
-					      : HISTORY_UP_AGAIN;
+		uint8_t kind = link_was_lost ? HISTORY_UP_AGAIN : HISTORY_UP_FIRST;
 
 		core_log(HISTORY_LINK_UP, link.channel, (uint8_t)keyboard_rssi, kind,
 			 k_uptime_get_32() - link_down_ms);
@@ -232,10 +230,17 @@ static void serve_diag(const struct diag_request *req)
 	}
 }
 
+static enum chanmove_result move_on_request(uint8_t channel, uint8_t *from)
+{
+	*from = link.channel;
+	return link_move(&link, channel, k_uptime_get_32());
+}
+
 static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
 	.fill_status = fill_status,
+	.move = move_on_request,
 };
 
 FUNC_NORETURN void nuphy_run(int store_err)

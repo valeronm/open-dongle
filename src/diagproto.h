@@ -33,6 +33,8 @@ enum diag_command {
 	/* arg 0 reads; 1 or 2 sets. The reply is the running protocol, then 1 if the dongle
 	 * reboots to apply a changed protocol. */
 	DIAG_PROTOCOL,
+	/* arg is the channel; the reply is the channel the link was on. */
+	DIAG_MOVE,
 };
 
 enum diag_error {
@@ -41,6 +43,8 @@ enum diag_error {
 	DIAG_ERR_BAD_CHANNELS,
 	DIAG_ERR_STORE,
 	DIAG_ERR_WRONG_PROTOCOL,
+	DIAG_ERR_NOT_MOVABLE,
+	DIAG_ERR_KEY_HELD,
 };
 
 struct diag_request {

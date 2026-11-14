@@ -122,6 +122,17 @@ pub fn pair<T: Transport>(dev: &mut Device<T>, protocol: Protocol) -> Result<()>
     Ok(())
 }
 
+/// Moves the link and returns the line that reports it, with the dongle's refusals explained.
+pub fn move_link<T: Transport>(dev: &mut Device<T>, s: &Status, channel: u8) -> Result<String> {
+    let from = dev.move_to(channel).map_err(|err| {
+        match err.downcast_ref::<Refused>().map(|r| r.code) {
+            Some(Ok(ErrorCode::BadChannels)) => anyhow!(format::move_refused(s)),
+            _ => err,
+        }
+    })?;
+    Ok(format::moved(from, channel))
+}
+
 pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
     let (mut dev, before) = device::open(serial)?;
     let Some(want) = set else {
@@ -358,10 +369,10 @@ mod tests {
         assert!(parse_channels(&strings(&["auto", "52", "44"])).is_err());
     }
 
-    fn dongle_refusing_with(code: u8) -> Device<Fake> {
+    fn dongle_refusing_with(command: Command, code: u8) -> Device<Fake> {
         Device::new(
             Fake::new(move |req| {
-                assert_eq!(req[0], Command::ForceChannels as u8);
+                assert_eq!(req[0], command as u8);
                 vec![error_part(req[0], req[1], code)]
             }),
             0,
@@ -388,18 +399,89 @@ mod tests {
 
     #[test]
     fn refused_channels_name_the_rule() {
-        let err = channels(&mut dongle_refusing_with(3), Some([62, 50, 44]))
-            .unwrap_err()
-            .to_string();
+        let err = channels(
+            &mut dongle_refusing_with(Command::ForceChannels, 3),
+            Some([62, 50, 44]),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("pairing channel"), "{err}");
     }
 
     #[test]
     fn a_failed_save_says_nothing_changed() {
-        let err = channels(&mut dongle_refusing_with(4), None)
+        let err = channels(&mut dongle_refusing_with(Command::ForceChannels, 4), None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("nothing changed"), "{err}");
+    }
+
+    #[test]
+    fn a_move_sends_the_channel_and_reads_where_the_link_was() {
+        let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = sent.clone();
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                log.borrow_mut().push(req[..6].to_vec());
+                parts(req[0], req[1], &[62])
+            }),
+            0,
+        );
+        assert_eq!(dev.move_to(5).unwrap(), 62);
+        assert_eq!(*sent.borrow(), [vec![Command::Move as u8, 1, 5, 0, 0, 0]]);
+    }
+
+    fn status_in(protocol: Protocol) -> Status {
+        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
+            .unwrap()
+            .unwrap();
+        s.protocol = protocol;
+        s.own = Some([26, 30, 34]);
+        s
+    }
+
+    #[test]
+    fn a_refused_channel_names_the_keyboards_channels() {
+        let unifying = status_in(Protocol::Unifying);
+        let err = move_link(&mut dongle_refusing_with(Command::Move, 3), &unifying, 6)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.ends_with("give one of 5 8 17 32 35 41 44 62 65 71 74"),
+            "{err}"
+        );
+        let nuphy = status_in(Protocol::Nuphy);
+        let err = move_link(&mut dongle_refusing_with(Command::Move, 3), &nuphy, 6)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.ends_with("give one of 16 22 26 30 34 44 48 58 72 78"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_refused_move_says_what_it_needs() {
+        let err = move_link(
+            &mut dongle_refusing_with(Command::Move, 6),
+            &status_in(Protocol::Unifying),
+            5,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("pairing closed"), "{err}");
+    }
+
+    #[test]
+    fn a_move_refused_for_a_held_key_says_so() {
+        let err = move_link(
+            &mut dongle_refusing_with(Command::Move, 7),
+            &status_in(Protocol::Nuphy),
+            44,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("release every key"), "{err}");
     }
 
     #[test]

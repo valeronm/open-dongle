@@ -182,8 +182,29 @@ static void test_going_live_queues_each_kind_on_its_interface(void)
 	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 }
 
+static void test_a_key_modifier_or_media_usage_counts_as_held(void)
+{
+	struct report shift = {.kind = REPORT_KEYBOARD, .keyboard = {0x02}};
+	struct report volume = {.kind = REPORT_CONSUMER, .usage = 0xe9};
+
+	before();
+	CHECK(!reports_any_held(&r));
+	send_key(0x04);
+	CHECK(reports_any_held(&r));
+	send_key(0);
+	CHECK(!reports_any_held(&r));
+	reports_update(&r, &shift);
+	CHECK(reports_any_held(&r));
+	reports_release_all(&r);
+	reports_update(&r, &volume);
+	CHECK(reports_any_held(&r));
+	reports_release_all(&r);
+	CHECK(!reports_any_held(&r));
+}
+
 int main(void)
 {
+	RUN(test_a_key_modifier_or_media_usage_counts_as_held);
 	RUN(test_repeated_report_is_queued_once);
 	RUN(test_quick_tap_keeps_press_and_release_in_order);
 	RUN(test_media_report_carries_its_usage);

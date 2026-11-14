@@ -81,6 +81,11 @@ static uint8_t threshold_bucket(int8_t weakest_dbm)
 	return noise_bucket((int8_t)(t < NOISE_BUSY_DBM ? NOISE_BUSY_DBM : t));
 }
 
+void chanwatch_hold(struct chanwatch *w, uint64_t now_ms)
+{
+	w->hold_until_ms = now_ms + CHANWATCH_HOLD_MS;
+}
+
 bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
 		      struct chanwatch_move *out)
 {
@@ -134,6 +139,6 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	out->to = w->channels[best];
 	out->home_share = (uint16_t)(home_share * NOISE_SHARE_FULL + 0.5f);
 	out->to_share = (uint16_t)(best_share * NOISE_SHARE_FULL + 0.5f);
-	w->hold_until_ms = now_ms + CHANWATCH_HOLD_MS;
+	chanwatch_hold(w, now_ms);
 	return true;
 }

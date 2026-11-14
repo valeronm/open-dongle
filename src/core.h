@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <zephyr/kernel.h>
+#include "chanmove.h"
 #include "chanpick.h"
 #include "chanwatch.h"
 #include "diagproto.h"
@@ -40,9 +41,11 @@ struct core_loop {
 	/* The home channel while a noise move is allowed, or CORE_NO_HOME; required with
 	 * candidates. */
 	int (*movable)(void);
-	/* Runs after each scan round, which drops the replies queued on the radio; required with
-	 * candidates. */
+	/* Runs after each scan round or move, which drops the replies queued on the
+	 * radio; required with candidates. */
 	void (*replies_dropped)(void);
+	/* Moves the protocol state for a requested or noise move; *from is the channel before it. */
+	enum chanmove_result (*move)(uint8_t channel, uint8_t *from);
 };
 
 struct rx_item {
@@ -69,8 +72,6 @@ uint32_t core_usb_retries(void);
 uint32_t core_merges(void);
 /* Returns true once after each host LED change; *leds always receives the current LEDs. */
 bool core_take_leds(uint8_t *leds);
-/* Returns true once with each move chanwatch decided. */
-bool core_take_move(struct chanwatch_move *out);
 void core_watchdog_feed(void);
 /* A suspended host shows IND_SLEEP whatever the mode. */
 void core_show_state(enum indicator_mode mode);

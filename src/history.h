@@ -50,6 +50,7 @@ enum history_link_up {
 enum history_link_moved {
 	HISTORY_MOVED_TO_HOME,
 	HISTORY_MOVED_FOR_NOISE,
+	HISTORY_MOVED_ON_REQUEST,
 };
 
 struct history_event {

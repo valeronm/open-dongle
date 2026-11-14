@@ -165,6 +165,12 @@ impl<T: Transport> Device<T> {
             .map(drop)
     }
 
+    /// Returns the channel the link was on.
+    pub fn move_to(&mut self, channel: u8) -> Result<u8> {
+        let reply = self.call(Command::Move, channel.into(), TIMEOUT)?;
+        Reader::new(&reply).u8()
+    }
+
     pub fn pair(&mut self) -> Result<()> {
         self.call(Command::Pair, 0, TIMEOUT).map(drop)
     }

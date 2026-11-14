@@ -345,21 +345,6 @@ static void test_traffic_after_a_loss_reports_the_link_up(void)
 	CHECK(!out.up);
 }
 
-static void test_a_hello_that_brings_the_link_up_is_a_wake(void)
-{
-	init(home);
-	message(NUPHY_KEEPALIVE, 1, 10);
-	CHECK(out.up);
-	CHECK(!out.woke);
-	tick(1010);
-	CHECK(out.lost);
-	message(NUPHY_HELLO, 1, 5000);
-	CHECK(out.up);
-	CHECK(out.woke);
-	message(NUPHY_HELLO, 1, 5010);
-	CHECK(!out.woke);
-}
-
 static void test_a_confirmed_pairing_does_not_report_the_link_up(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, dongle_id);
@@ -431,6 +416,90 @@ static void test_a_keyboard_connecting_to_a_never_paired_dongle_leaves_pairing_o
 	tick(1010);
 	deliver(&request, 0, 100000);
 	CHECK(out.start_survey);
+}
+
+static enum chanmove_result move(uint8_t channel)
+{
+	return link_move(&l, channel, last_ms);
+}
+
+static void test_a_requested_move_holds_through_a_loss(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK_EQ(move(44), CHANMOVE_DONE);
+	CHECK_EQ(l.channel, 44);
+	message(NUPHY_KEEPALIVE, 1, 300);
+	CHECK_EQ(out.gap_ms, 290);
+	CHECK_EQ(out.gap_channel, 44);
+	tick(1300);
+	CHECK(out.lost);
+	CHECK_EQ(l.channel, 44);
+	tick(1700);
+	CHECK(!out.set_channel);
+	CHECK_EQ(l.channel, 44);
+}
+
+static void test_a_requested_move_takes_any_of_the_keyboards_channels(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK_EQ(move(home[2]), CHANMOVE_DONE);
+	CHECK_EQ(l.channel, home[2]);
+	CHECK_EQ(move(40), CHANMOVE_NOT_A_CHANNEL);
+	CHECK_EQ(move(2), CHANMOVE_NOT_A_CHANNEL);
+	CHECK_EQ(l.channel, home[2]);
+}
+
+static void test_a_requested_move_works_on_a_silent_paired_link(void)
+{
+	init(home);
+	tick(PAIRWIN_MS);
+	CHECK_EQ(l.channel, home[0]);
+	CHECK_EQ(move(44), CHANMOVE_DONE);
+	CHECK_EQ(l.channel, 44);
+	tick(PAIRWIN_MS + 400);
+	CHECK(!out.set_channel);
+	message(NUPHY_KEEPALIVE, 1, PAIRWIN_MS + 410);
+	CHECK(out.up);
+	CHECK_EQ(l.channel, 44);
+}
+
+static void test_a_requested_move_needs_a_paired_keyboard_and_pairing_closed(void)
+{
+	init(home);
+	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	hear_keyboard_on_the_pairing_channel(home);
+	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	init(NULL);
+	tick(PAIRWIN_MS);
+	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+}
+
+static void test_a_paired_dongle_waits_on_home_while_pairing_is_closed(void)
+{
+	init(home);
+	tick(PAIRWIN_MS - 100);
+	CHECK_EQ(l.channel, 2);
+	tick(PAIRWIN_MS);
+	CHECK(out.set_channel);
+	CHECK_EQ(out.channel, home[0]);
+	tick(PAIRWIN_MS + 400);
+	CHECK(!out.set_channel);
+	tick(PAIRWIN_MS + 800);
+	CHECK(!out.set_channel);
+	CHECK_EQ(l.channel, home[0]);
+}
+
+static void test_a_lost_link_waits_on_home_once_pairing_has_closed(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	tick(1010);
+	CHECK(out.lost);
+	CHECK_EQ(l.channel, home[0]);
+	tick(1410);
+	CHECK(!out.set_channel);
 }
 
 static void test_a_250_ms_silence_while_connected_is_a_gap(void)
@@ -615,7 +684,7 @@ static void test_a_paired_dongle_ignores_a_request_after_its_first_30_s(void)
 
 	init(home);
 	tick(30000);
-	CHECK_EQ(out.channel, 2);
+	CHECK_EQ(l.channel, home[0]);
 	deliver(&request, 0, 30010);
 	CHECK(!out.start_survey);
 	CHECK(!out.reply);
@@ -766,7 +835,6 @@ int main(void)
 	RUN(test_pipe0_traffic_does_not_keep_a_connected_link);
 	RUN(test_a_radio_pause_restarts_the_silence_timer);
 	RUN(test_traffic_after_a_loss_reports_the_link_up);
-	RUN(test_a_hello_that_brings_the_link_up_is_a_wake);
 	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
 	RUN(test_a_keyboard_heard_on_the_pairing_channel_is_moved_home);
 	RUN(test_silence_after_the_move_home_starts_loses_the_link);
@@ -797,5 +865,11 @@ int main(void)
 	RUN(test_pairing_running_out_is_reported_once);
 	RUN(test_pairing_running_out_mid_attempt_is_reported_when_the_attempt_ends);
 	RUN(test_a_pairing_with_no_confirm_expires);
+	RUN(test_a_requested_move_holds_through_a_loss);
+	RUN(test_a_requested_move_takes_any_of_the_keyboards_channels);
+	RUN(test_a_requested_move_works_on_a_silent_paired_link);
+	RUN(test_a_requested_move_needs_a_paired_keyboard_and_pairing_closed);
+	RUN(test_a_paired_dongle_waits_on_home_while_pairing_is_closed);
+	RUN(test_a_lost_link_waits_on_home_once_pairing_has_closed);
 	return TEST_EXIT();
 }

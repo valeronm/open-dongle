@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include "noise.h"
 
-#define CHANWATCH_MAX 25
+#define CHANWATCH_MAX 11
 #define CHANWATCH_DECAY_MS 300000
 #define CHANWATCH_HOLD_MS 60000
 #define CHANWATCH_MIN_SAMPLES 50
@@ -46,5 +46,8 @@ void chanwatch_home(struct chanwatch *w, uint8_t home, const struct noise_tally 
  */
 bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
 		      struct chanwatch_move *out);
+
+/* Starts the hold before the next move. */
+void chanwatch_hold(struct chanwatch *w, uint64_t now_ms);
 
 #endif

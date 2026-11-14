@@ -33,6 +33,22 @@ pub fn pairing_open(protocol: Protocol) -> &'static str {
     }
 }
 
+pub fn moved(from: u8, to: u8) -> String {
+    if from == to {
+        format!("the link is already on channel {to}")
+    } else {
+        format!("moved from channel {from} to channel {to}; the keyboard follows on its next send")
+    }
+}
+
+pub fn move_refused(s: &Status) -> String {
+    let channels: Vec<String> = s.keyboard_channels().iter().map(u8::to_string).collect();
+    format!(
+        "the keyboard does not use that channel: give one of {}",
+        channels.join(" ")
+    )
+}
+
 pub fn flash_question(state: State, serial: &str, file: &str) -> String {
     let state = match state {
         State::Dongle => "running OpenDongle",
@@ -337,6 +353,9 @@ pub fn describe_event(e: &Event, protocol: Protocol) -> String {
             share(e.value as u16),
             e.b
         ),
+        EventKind::LinkMoved if e.c == 2 => {
+            format!("moved from channel {} to channel {} on request", e.a, e.b)
+        }
         EventKind::LinkMoved => format!("moved from channel {} to channel {}", e.a, e.b),
         EventKind::LinkGap => format!(
             "gap of {} on channel {}, signal {} dBm before, {} dBm after, {}",
@@ -461,8 +480,21 @@ mod tests {
     }
 
     #[test]
-    fn a_noise_move_prints_both_shares() {
+    fn a_move_prints_why_it_moved() {
         use crate::protocol::{Event, EventKind};
+        let requested = Event {
+            time_ms: 0,
+            kind: EventKind::LinkMoved,
+            a: 41,
+            b: 5,
+            c: 2,
+            value: 0,
+            noise: None,
+        };
+        assert_eq!(
+            describe_event(&requested, Protocol::Unifying),
+            "moved from channel 41 to channel 5 on request"
+        );
         let moved = Event {
             time_ms: 0,
             kind: EventKind::LinkMoved,
@@ -604,7 +636,7 @@ mod tests {
     fn a_link_up_after_a_wake_says_the_keyboard_woke() {
         let woke = event(EventKind::LinkUp, 2, 0xc4, 2, 1_920_000);
         assert_eq!(
-            describe_event(&woke, Protocol::Nuphy),
+            describe_event(&woke, Protocol::Unifying),
             "keyboard woke after 32 min 0 s on channel 2, signal -60 dBm"
         );
     }

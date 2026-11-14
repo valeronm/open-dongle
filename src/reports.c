@@ -59,6 +59,18 @@ void reports_release_all(struct reports *r)
 	}
 }
 
+bool reports_any_held(const struct reports *r)
+{
+	for (int kind = 0; kind < REPORT_KINDS; kind++) {
+		struct report released = {.kind = kind};
+
+		if (!same_state(&r->current[kind], &released)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void reports_set_live(struct reports *r, bool live)
 {
 	if (live == r->live) {

@@ -75,6 +75,11 @@ enum Cmd {
     },
     /// Open pairing for 30 s
     Pair,
+    /// Move the link to one of the keyboard's channels until the dongle moves it again or reboots
+    Move {
+        /// One of the keyboard's channels
+        channel: u8,
+    },
     /// Restart the dongle firmware
     Reboot(Confirm),
     /// Reboot into the UF2 bootloader for flashing
@@ -123,6 +128,11 @@ fn main() -> Result<()> {
         Cmd::Pair => {
             let (mut dev, s) = device::open(serial)?;
             cli::pair(&mut dev, s.protocol)
+        }
+        Cmd::Move { channel } => {
+            let (mut dev, s) = device::open(serial)?;
+            println!("{}", cli::move_link(&mut dev, &s, channel)?);
+            Ok(())
         }
         Cmd::Reboot(c) => cli::action(&mut device::open(serial)?.0, Action::Reboot, c.yes),
         Cmd::Bootloader(c) => cli::action(

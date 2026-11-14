@@ -3,8 +3,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "chanmove.h"
 #include "nuphy.h"
 #include "pairwin.h"
+
+#define LINK_FIXED_CHANNELS 7
+/* The keyboard firmware fixes these channels besides the three it gets at pairing. */
+extern const uint8_t link_fixed_channels[LINK_FIXED_CHANNELS];
 
 enum link_state {
 	LINK_IDLE,
@@ -33,8 +38,6 @@ struct link_out {
 	bool save_channels;
 	bool lost;
 	bool up;
-	/* The packet that brought the link up was the keyboard's hello. */
-	bool woke;
 	bool moved;
 	uint8_t moved_from;
 	/* Nonzero when this packet ended a gap. */
@@ -58,6 +61,8 @@ struct link {
 	uint8_t keyboard_id[NUPHY_ID_LEN];
 	uint8_t own[3];
 	bool own_known;
+	/* The channel a paired dongle waits on: own[0] until a requested move. */
+	uint8_t home;
 	enum offer_kind next_offer_kind;
 	uint8_t next_offer[3];
 	uint32_t surveyed_ms;
@@ -103,5 +108,9 @@ void link_open_pairing(struct link *l, enum pairwin_cause cause, uint32_t now_ms
 /* A pair request starts a pairing only while this is true. */
 bool link_pairing_open(const struct link *l, uint32_t now_ms);
 enum link_led link_led(const struct link *l, uint32_t now_ms);
+
+/* Makes channel, one of the keyboard's non-pairing channels, the home of a paired link with
+ * pairing closed, connected or idle; the caller retunes the radio. */
+enum chanmove_result link_move(struct link *l, uint8_t channel, uint32_t now_ms);
 
 #endif

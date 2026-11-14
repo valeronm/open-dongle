@@ -46,6 +46,8 @@ void reports_init(struct reports *r);
 /* Returns true when next changed its kind's state. */
 bool reports_update(struct reports *r, const struct report *next);
 void reports_release_all(struct reports *r);
+/* Returns true while the host sees any key, modifier or media usage down. */
+bool reports_any_held(const struct reports *r);
 
 /*
  * While not live (USB suspended or unconfigured) only the current state is kept; going live

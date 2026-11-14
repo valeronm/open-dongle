@@ -77,6 +77,9 @@ between channels 44 and 35 in normal operation. The hop interval during pairing 
 **[UNVERIFIED]**. [VERIFIED on air] A receiver that steps through the pairing channels every 20 ms
 until a request arrives, then stays on that channel, catches the MX Keys; after pairing, and when
 it reconnects, the keyboard hops until it finds the receiver, so the receiver can hold one channel.
+[VERIFIED on air] After pairing, the MX Keys searches only the 11 pairing channels after an
+unacknowledged packet: a receiver moved to 41, 44, 62 or 71 was found within seconds of a key
+press, one moved to 38, 50 or 68 never.
 
 **ESB S1 / ACK-request bit (critical ESB-library gotcha).** [VERIFIED] dev.to-port. In raw ESB the
 9-bit packet-control field has an S1 bit that carries "no-ack". Logitech transmits with the ACK
@@ -356,9 +359,10 @@ The MX Keys sends `00 4f 06 01 00 00 00 00 00 aa`.
   (checksum `9a`), and `07 4f 07 00 00 00 00 00 00 a3`. Only once these are ACKed does it move to
   its device address, opening with `00 51 07 07 00 32 14 …` and continuing with keep-alives. A
   receiver that listens only on the device address hears nothing after pairing.
-- **Channel.** No source sets a fixed channel after pairing; both sides hop the 25 normal channels
-  and settle on one that ACKs. [VERIFIED] decrazyo `unifying.c` ("does not set a specific channel
-  after pairing"); dev.to-port saw a real receiver on 35/44.
+- **Channel.** No source sets a fixed channel after pairing. [VERIFIED] decrazyo `unifying.c` ("does
+  not set a specific channel after pairing"); dev.to-port saw a real receiver on 35/44. Its notion
+  that both sides hop the 25 normal channels does not hold for the MX Keys, which searches only the
+  pairing channels (see Channels).
 - **Device index assignment** (which slot 1–6 the device gets) is the receiver's bookkeeping and is
   reflected in the device octet it handed out. [INFERRED] — Newlin's increment policy.
 

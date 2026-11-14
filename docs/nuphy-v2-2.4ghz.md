@@ -20,7 +20,7 @@ code does not show:
 - Keyboard, consumer and system reports carry the current key state, not key events.
 - The keyboard gives every transmission a new sequence number, including a resend of the same
   report.
-- A hello means the keyboard woke up or reconnected.
+- A hello follows any recovery from failed sends, a wake included, so it does not mark a wake.
 - A pair request carries the ID of the dongle the keyboard was last paired with.
 - The keyboard passes a USB suspend message on to the keyboard's main controller, which runs QMK.
 - Name chunks, mouse reports and the NKRO bitmap are valid frames this firmware ignores.

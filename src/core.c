@@ -36,7 +36,14 @@ static bool usb_was_suspended;
 static bool usb_seen_live;
 static struct chanwatch watch;
 static int64_t last_scan_ms;
+/* The keyboard sends a release on the channel a move leaves, so a key down at a move stays down on
+ * the host until the keyboard finds the new one. */
+#define MOVE_KEY_WAIT_MS 1000
+
 static bool move_pending;
+static bool request_waiting;
+static struct diag_request waiting_request;
+static int64_t request_wait_until;
 static struct chanwatch_move pending_move;
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
@@ -254,14 +261,76 @@ static void scan(void)
 	}
 }
 
-bool core_take_move(struct chanwatch_move *out)
+static bool keys_held(void)
 {
-	if (!move_pending) {
-		return false;
+	bool held;
+
+	lock_reports();
+	held = reports_any_held(&reports);
+	unlock_reports(false);
+	return held;
+}
+
+static enum diag_error apply_move(uint8_t to, uint8_t reason, uint32_t value, uint8_t *from)
+{
+	enum chanmove_result result = loop->move(to, from);
+
+	if (result == CHANMOVE_NOT_A_CHANNEL) {
+		return DIAG_ERR_BAD_CHANNELS;
+	}
+	if (result == CHANMOVE_NOT_MOVABLE) {
+		return DIAG_ERR_NOT_MOVABLE;
+	}
+	if (to == *from) {
+		return 0;
+	}
+	if (core_set_channel(to) != 0) {
+		return DIAG_ERR_RADIO;
+	}
+	if (loop->replies_dropped != NULL) {
+		loop->replies_dropped();
+	}
+	/* A noise move decided before this one would undo it. */
+	move_pending = false;
+	chanwatch_hold(&watch, (uint64_t)k_uptime_get());
+	core_log(HISTORY_LINK_MOVED, *from, to, reason, value);
+	return 0;
+}
+
+static void poll_noise_move(void)
+{
+	uint8_t from;
+
+	if (!move_pending || keys_held()) {
+		return;
 	}
 	move_pending = false;
-	*out = pending_move;
-	return true;
+	apply_move(pending_move.to, HISTORY_MOVED_FOR_NOISE,
+		   (uint32_t)pending_move.home_share << 16 | pending_move.to_share, &from);
+}
+
+static void poll_move_request(void)
+{
+	enum diag_error err;
+	uint8_t from;
+
+	if (!request_waiting) {
+		return;
+	}
+	if (keys_held()) {
+		if (k_uptime_get() >= request_wait_until) {
+			request_waiting = false;
+			diag_reply_error(&waiting_request, DIAG_ERR_KEY_HELD, 0);
+		}
+		return;
+	}
+	request_waiting = false;
+	err = apply_move((uint8_t)waiting_request.arg, HISTORY_MOVED_ON_REQUEST, 0, &from);
+	if (err != 0) {
+		diag_reply_error(&waiting_request, err, 0);
+	} else {
+		diag_reply(&waiting_request, &from, 1, DIAG_AFTER_NONE);
+	}
 }
 
 void core_poll(void)
@@ -278,6 +347,8 @@ void core_poll(void)
 	}
 	take_noise();
 	scan();
+	poll_noise_move();
+	poll_move_request();
 	t = totals();
 	history_tick(&history, k_uptime_get(), &t);
 }
@@ -495,6 +566,18 @@ static void serve_protocol(const struct diag_request *req)
 	diag_reply(req, reply, sizeof(reply), DIAG_AFTER_REBOOT);
 }
 
+static void serve_move(const struct diag_request *req)
+{
+	if (req->arg > UINT8_MAX) {
+		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS, 0);
+		return;
+	}
+	waiting_request = *req;
+	request_waiting = true;
+	request_wait_until = k_uptime_get() + MOVE_KEY_WAIT_MS;
+	poll_move_request();
+}
+
 bool core_take_request(struct diag_request *out)
 {
 	static uint8_t payload[DIAG_PAYLOAD_MAX];
@@ -530,6 +613,9 @@ bool core_take_request(struct diag_request *out)
 			break;
 		case DIAG_CLEAR:
 			clear(out);
+			break;
+		case DIAG_MOVE:
+			serve_move(out);
 			break;
 		default:
 			return true;

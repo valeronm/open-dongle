@@ -8,7 +8,16 @@
 - The history, events and noise map work in Unifying mode as well as NuPhy mode. A silence there is
   logged but not counted as a link loss, because an idle MX Keys sleeps after a few minutes.
 - In Unifying mode the dongle moves to a quieter channel on its own, judging noise at the
-  keyboard's signal level, and logs each move with the noise on both channels.
+  keyboard's signal level, and logs each move with the noise on both channels. It moves only among
+  the pairing channels, the only ones the keyboard searches after a failed send.
+- `open-dongle move`, or `[` and `]` in the live view, moves the link to one of the keyboard's
+  channels in either mode while a keyboard is paired and pairing is closed, for testing how the
+  keyboard follows and how the dongle moves away from noise.
+- A channel move, requested or for noise, waits until no key is held, since a release sent on the
+  channel just left reaches the host only once the keyboard finds the new one.
+- A paired NuPhy dongle that loses its keyboard waits on its channel while pairing is closed,
+  instead of spending every other 400 ms on pairing channel 2: the keyboard sweeps its channels
+  within milliseconds of a failed send.
 - The event that starts a silence records the minutes since the last key, and the event that ends it
   records whether the keyboard woke.
 - The live view's `p` key switches the protocol after asking, which restarts the history, and `a`

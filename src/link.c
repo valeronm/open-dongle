@@ -13,8 +13,7 @@
 /* The keyboard pairs on channel 2 and only rarely visits its other pairing channels, 50 and 80. */
 #define PAIRING_CHANNEL 2
 static const uint8_t pairing_channels[] = {PAIRING_CHANNEL, 50, 80};
-/* The keyboard firmware fixes these channels besides the three it gets at pairing. */
-static const uint8_t fixed_channels[] = {16, 22, 44, 48, 58, 72, 78};
+const uint8_t link_fixed_channels[LINK_FIXED_CHANNELS] = {16, 22, 44, 48, 58, 72, 78};
 
 static bool connected(const struct link *l)
 {
@@ -28,12 +27,19 @@ static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 	out->channel = channel;
 }
 
+static void set_own(struct link *l, const uint8_t own[3])
+{
+	memcpy(l->own, own, sizeof(l->own));
+	l->own_known = true;
+	l->home = own[0];
+}
+
 static uint8_t slot_channel(const struct link *l)
 {
 	if (l->on_pairing_channel) {
 		return PAIRING_CHANNEL;
 	}
-	return l->own_known ? l->own[0] : fixed_channels[l->fixed_next];
+	return l->own_known ? l->home : link_fixed_channels[l->fixed_next];
 }
 
 static void go_idle(struct link *l, uint32_t now_ms, struct link_out *out)
@@ -72,8 +78,7 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint
 	memset(l, 0, sizeof(*l));
 	memcpy(l->dongle_id, dongle_id, NUPHY_ID_LEN);
 	if (own != NULL) {
-		memcpy(l->own, own, sizeof(l->own));
-		l->own_known = true;
+		set_own(l, own);
 	}
 	go_idle(l, now_ms, out);
 }
@@ -120,8 +125,7 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 	}
 	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_PAIRING && same_keyboard &&
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
-		memcpy(l->own, l->offered, sizeof(l->own));
-		l->own_known = true;
+		set_own(l, l->offered);
 		pairwin_paired(&l->window);
 		out->save_channels = true;
 		l->state = LINK_CONFIRMED;
@@ -145,7 +149,7 @@ static void on_connected_message(struct link *l, uint32_t now_ms, struct link_ou
 static void move_home(struct link *l, uint32_t now_ms, struct link_out *out)
 {
 	l->state = LINK_CONNECTED;
-	set_channel(l, l->own[0], out);
+	set_channel(l, l->home, out);
 	reply_status(l, now_ms, out);
 }
 
@@ -187,7 +191,6 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		l->state = (l->on_pairing_channel && l->own_known) ? LINK_MOVING_HOME
 								   : LINK_CONNECTED;
 		out->up = true;
-		out->woke = m->kind == NUPHY_HELLO;
 		pairwin_link_up(&l->window);
 		reply_status(l, now_ms, out);
 		break;
@@ -235,10 +238,16 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 		}
 		break;
 	case LINK_IDLE:
-		if (now_ms - l->slot_start_ms >= SLOT_MS) {
+		/* A keyboard that fails a send sweeps its channels within milliseconds. */
+		if (l->own_known && !link_pairing_open(l, now_ms)) {
+			if (l->on_pairing_channel) {
+				l->on_pairing_channel = false;
+				set_channel(l, slot_channel(l), out);
+			}
+		} else if (now_ms - l->slot_start_ms >= SLOT_MS) {
 			l->on_pairing_channel = !l->on_pairing_channel;
 			if (!l->on_pairing_channel && !l->own_known) {
-				l->fixed_next = (l->fixed_next + 1) % sizeof(fixed_channels);
+				l->fixed_next = (l->fixed_next + 1) % sizeof(link_fixed_channels);
 			}
 			l->slot_start_ms = now_ms;
 			set_channel(l, slot_channel(l), out);
@@ -291,12 +300,7 @@ enum link_led link_led(const struct link *l, uint32_t now_ms)
 
 static bool is_pairing_channel(uint8_t ch)
 {
-	for (size_t i = 0; i < sizeof(pairing_channels); i++) {
-		if (ch == pairing_channels[i]) {
-			return true;
-		}
-	}
-	return false;
+	return memchr(pairing_channels, ch, sizeof(pairing_channels)) != NULL;
 }
 
 bool link_channels_allowed(const uint8_t channels[3])
@@ -333,4 +337,20 @@ bool link_force_channels(struct link *l, const uint8_t *channels)
 const uint8_t *link_forced_channels(const struct link *l)
 {
 	return l->next_offer_kind == OFFER_FORCED ? l->next_offer : NULL;
+}
+
+enum chanmove_result link_move(struct link *l, uint8_t channel, uint32_t now_ms)
+{
+	if (memchr(l->own, channel, sizeof(l->own)) == NULL &&
+	    memchr(link_fixed_channels, channel, sizeof(link_fixed_channels)) == NULL) {
+		return CHANMOVE_NOT_A_CHANNEL;
+	}
+	if (!l->own_known || link_pairing_open(l, now_ms) ||
+	    (l->state != LINK_CONNECTED && l->state != LINK_IDLE)) {
+		return CHANMOVE_NOT_MOVABLE;
+	}
+	l->home = channel;
+	l->on_pairing_channel = false;
+	l->channel = channel;
+	return CHANMOVE_DONE;
 }

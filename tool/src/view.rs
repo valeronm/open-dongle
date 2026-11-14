@@ -22,7 +22,9 @@ use crate::format::{
     link_state_name, noise_level, noise_ruler, paired, pairing_open, share, switch_question,
     unifying_state_name, uptime, usb_state, wall_clock, wpid,
 };
-use crate::protocol::{Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status};
+use crate::protocol::{
+    Action, BUSY_DBM, Event, Minute, NoiseChannel, Protocol, Status, Step, step_channel,
+};
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
 const EVENTS_KEPT: usize = 200;
@@ -479,6 +481,11 @@ impl<T: Transport> App<T> {
     }
 
     fn press(&mut self, c: char) {
+        match c {
+            '[' => return self.step(Step::Down),
+            ']' => return self.step(Step::Up),
+            _ => {}
+        }
         match self.key(c) {
             Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
             Some(Key::Pair) => self.pair(),
@@ -493,6 +500,23 @@ impl<T: Transport> App<T> {
         };
         self.message = match dev.pair() {
             Ok(()) => pairing_open(self.protocol()).into(),
+            Err(e) => format!("failed: {}", error_text(&e)),
+        };
+    }
+
+    fn step(&mut self, step: Step) {
+        let (Some(dev), Some(status)) = (self.device.as_mut(), self.history.status.as_mut()) else {
+            self.message = "disconnected".into();
+            return;
+        };
+        let Some(to) = step_channel(&status.keyboard_channels(), status.channel, step) else {
+            return;
+        };
+        self.message = match crate::cli::move_link(dev, status, to) {
+            Ok(line) => {
+                status.channel = to;
+                line
+            }
             Err(e) => format!("failed: {}", error_text(&e)),
         };
     }
@@ -589,7 +613,14 @@ impl<T: Transport> App<T> {
                         .map(|(key, label, _)| format!("{key} {label}"));
                     let hints: Vec<_> = actions
                         .chain(
-                            ["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from),
+                            [
+                                "[/] channel",
+                                "←/→ history",
+                                "↑/↓ events",
+                                "esc back",
+                                "q quit",
+                            ]
+                            .map(String::from),
                         )
                         .collect();
                     flow(hints.iter().map(String::as_str), "  ", width)
@@ -1019,9 +1050,12 @@ mod tests {
         let rows = screen(&terminal);
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history"
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel"
         );
-        assert_eq!(rows[23].trim_end(), "↑/↓ events  esc back  q quit");
+        assert_eq!(
+            rows[23].trim_end(),
+            "←/→ history  ↑/↓ events  esc back  q quit"
+        );
         let text = rows.join("\n");
         for part in ["OpenDongle", "signal dBm", "events"] {
             assert!(text.contains(part), "{part} missing from {text}");
@@ -1089,9 +1123,10 @@ mod tests {
             "{text}"
         );
         assert_eq!(
-            rows[23].trim_end(),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history  ↑/↓ events  esc back  q quit"
+            rows[22].trim_end(),
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel  ←/→ history  ↑/↓ events"
         );
+        assert_eq!(rows[23].trim_end(), "esc back  q quit");
     }
 
     #[test]
@@ -1116,6 +1151,7 @@ mod tests {
             "r reboot",
             "b bootloader",
             "c clear",
+            "[/] channel",
             "←/→ history",
             "↑/↓ events",
             "esc back",
@@ -1187,6 +1223,57 @@ mod tests {
         );
     }
 
+    fn app_moving_from(status: Status) -> (App<Fake>, std::rc::Rc<std::cell::Cell<Option<u32>>>) {
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = sent.clone();
+        let from = status.channel;
+        let mut app = App::new(None);
+        app.history.status = Some(status);
+        app.device = Some(Device::new(
+            Fake::new(move |req| {
+                assert_eq!(req[0], Command::Move as u8);
+                seen.set(Some(u32::from_le_bytes(req[2..6].try_into().unwrap())));
+                parts(req[0], req[1], &[from])
+            }),
+            0,
+        ));
+        (app, sent)
+    }
+
+    #[test]
+    fn the_bracket_keys_move_to_the_neighbouring_channel() {
+        let mut status = unifying_status();
+        status.channel = 62;
+        let (mut app, sent) = app_moving_from(status);
+        app.press(']');
+        assert_eq!(sent.get(), Some(65));
+        assert_eq!(
+            footer(&mut app),
+            "moved from channel 62 to channel 65; the keyboard follows on its next send"
+        );
+        assert_eq!(app.history.status.as_ref().unwrap().channel, 65);
+        let mut status = nuphy_status();
+        status.own = Some([26, 30, 34]);
+        status.channel = 16;
+        let (mut app, sent) = app_moving_from(status);
+        app.press('[');
+        assert_eq!(sent.get(), Some(78));
+    }
+
+    #[test]
+    fn a_refused_move_shows_why() {
+        let mut app = App::new(None);
+        app.history.status = Some(unifying_status());
+        app.device = Some(Device::new(
+            Fake::new(|req| vec![error_part(req[0], req[1], ErrorCode::NotMovable as u8)]),
+            0,
+        ));
+        app.press(']');
+        assert!(footer(&mut app).starts_with(
+            "failed: the dongle refused Move: it moves the link only with a keyboard paired"
+        ));
+    }
+
     #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
         let mut app: App = App::new(None);
@@ -1249,7 +1336,7 @@ mod tests {
         assert_eq!(app.message, "");
         assert_eq!(
             footer(&mut app),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history\n↑/↓ events  esc back  q quit"
+            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel\n←/→ history  ↑/↓ events  esc back  q quit"
         );
     }
 

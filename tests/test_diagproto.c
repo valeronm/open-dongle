@@ -3,7 +3,9 @@
 #include "chanpick.h"
 #include "diagproto.h"
 #include "history.h"
+#include "link.h"
 #include "protocol.h"
+#include "unifying.h"
 
 static size_t load_fixture(const char *name, uint8_t *out, size_t max)
 {
@@ -201,7 +203,7 @@ static void test_command_numbers_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
 			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS,
-			       DIAG_PAIR, DIAG_PROTOCOL};
+			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -228,12 +230,24 @@ static void test_event_type_numbers_match_fixture(void)
 static void test_error_codes_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
-			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL};
+			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL, DIAG_ERR_NOT_MOVABLE,
+			       DIAG_ERR_KEY_HELD};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
 
 	CHECK_EQ(want_len, sizeof(got));
 	CHECK_MEM(got, want, sizeof(got));
+}
+
+static void test_keyboard_channel_tables_match_fixtures(void)
+{
+	uint8_t want[UNIFYING_PAIRING_CHANNELS + 1];
+
+	CHECK_EQ(load_fixture("nuphy-fixed-channels.hex", want, sizeof(want)), LINK_FIXED_CHANNELS);
+	CHECK_MEM(link_fixed_channels, want, LINK_FIXED_CHANNELS);
+	CHECK_EQ(load_fixture("unifying-channels.hex", want, sizeof(want)),
+		 UNIFYING_PAIRING_CHANNELS);
+	CHECK_MEM(unifying_pairing_channels, want, UNIFYING_PAIRING_CHANNELS);
 }
 
 static void test_force_channels_arg_carries_three_channels_or_none(void)
@@ -259,12 +273,14 @@ static void test_a_command_belongs_to_one_protocol_or_to_all(void)
 	CHECK_EQ(diag_command_protocol(DIAG_BOOTLOADER), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_PROTOCOL), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_MOVE), 0);
 	CHECK_EQ(diag_command_protocol(0), 0);
 	CHECK_EQ(diag_command_protocol(200), 0);
 }
 
 int main(void)
 {
+	RUN(test_keyboard_channel_tables_match_fixtures);
 	RUN(test_request_carries_command_seq_and_arg);
 	RUN(test_status_matches_fixture);
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);

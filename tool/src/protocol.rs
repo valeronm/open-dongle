@@ -42,6 +42,7 @@ pub enum Command {
     ForceChannels,
     Pair,
     Protocol,
+    Move,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +53,8 @@ pub enum ErrorCode {
     BadChannels,
     Store,
     WrongProtocol,
+    NotMovable,
+    KeyHeld,
 }
 
 impl ErrorCode {
@@ -62,6 +65,8 @@ impl ErrorCode {
             3 => Some(Self::BadChannels),
             4 => Some(Self::Store),
             5 => Some(Self::WrongProtocol),
+            6 => Some(Self::NotMovable),
+            7 => Some(Self::KeyHeld),
             _ => None,
         }
     }
@@ -73,6 +78,10 @@ impl ErrorCode {
             Self::BadChannels => "channels not allowed",
             Self::Store => "saving to flash failed",
             Self::WrongProtocol => "not available in the protocol the dongle runs",
+            Self::NotMovable => "it moves the link only with a keyboard paired and pairing closed",
+            Self::KeyHeld => {
+                "a key stayed down for a second, and a move then would lose its release: release every key and move again"
+            }
         }
     }
 }
@@ -251,6 +260,51 @@ pub struct Status {
     pub events_oldest: u32,
     pub protocol: Protocol,
     pub pairing_open: bool,
+}
+
+/// The channels a NuPhy keyboard looks for its dongle on besides the three it gets at pairing.
+pub const NUPHY_FIXED_CHANNELS: [u8; 7] = [16, 22, 44, 48, 58, 72, 78];
+
+/// The channels a Unifying keyboard searches after a failed send, its pairing channels.
+pub const UNIFYING_CHANNELS: [u8; 11] = [5, 8, 17, 32, 35, 41, 44, 62, 65, 71, 74];
+
+impl Status {
+    /// The channels a move can send the link to, ascending.
+    pub fn keyboard_channels(&self) -> Vec<u8> {
+        let mut channels: Vec<u8> = match self.protocol {
+            Protocol::Unifying => UNIFYING_CHANNELS.to_vec(),
+            Protocol::Nuphy => NUPHY_FIXED_CHANNELS
+                .into_iter()
+                .chain(self.own.into_iter().flatten())
+                .collect(),
+        };
+        channels.sort_unstable();
+        channels.dedup();
+        channels
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum Step {
+    Up,
+    Down,
+}
+
+/// The nearest of `channels` (ascending) above or below `from`, wrapping around at either end.
+pub fn step_channel(channels: &[u8], from: u8, step: Step) -> Option<u8> {
+    match step {
+        Step::Up => channels
+            .iter()
+            .find(|&&c| c > from)
+            .or(channels.first())
+            .copied(),
+        Step::Down => channels
+            .iter()
+            .rev()
+            .find(|&&c| c < from)
+            .or(channels.last())
+            .copied(),
+    }
 }
 
 /// Fails on a reply too short for its layout or carrying an unknown [`Protocol`] code; a reply in
@@ -519,6 +573,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn keyboard_channel_tables_match_fixtures() {
+        assert_eq!(fixture("nuphy-fixed-channels.hex"), NUPHY_FIXED_CHANNELS);
+        assert_eq!(fixture("unifying-channels.hex"), UNIFYING_CHANNELS);
+    }
+
+    #[test]
+    fn a_keyboard_listens_on_its_protocols_channels() {
+        let mut s = read_status(&fixture("status.hex")).unwrap().unwrap();
+        s.own = Some([30, 26, 44]);
+        assert_eq!(s.keyboard_channels(), [16, 22, 26, 30, 44, 48, 58, 72, 78]);
+        s.own = None;
+        assert_eq!(s.keyboard_channels(), NUPHY_FIXED_CHANNELS);
+        s.protocol = Protocol::Unifying;
+        assert_eq!(s.keyboard_channels(), UNIFYING_CHANNELS);
+    }
+
+    #[test]
+    fn stepping_wraps_around_the_channels() {
+        let channels = [5, 8, 11];
+        assert_eq!(step_channel(&channels, 5, Step::Up), Some(8));
+        assert_eq!(step_channel(&channels, 11, Step::Up), Some(5));
+        assert_eq!(step_channel(&channels, 5, Step::Down), Some(11));
+        assert_eq!(step_channel(&channels, 9, Step::Down), Some(8));
+        assert_eq!(step_channel(&channels, 9, Step::Up), Some(11));
+        assert_eq!(step_channel(&[], 9, Step::Up), None);
+    }
+
+    #[test]
     fn an_all_zero_keyboard_id_reads_as_none() {
         let mut payload = fixture("status.hex");
         payload[24..28].fill(0);
@@ -739,6 +821,7 @@ pub(crate) mod tests {
             Command::ForceChannels,
             Command::Pair,
             Command::Protocol,
+            Command::Move,
         ];
         assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
     }
@@ -751,6 +834,8 @@ pub(crate) mod tests {
             ErrorCode::BadChannels,
             ErrorCode::Store,
             ErrorCode::WrongProtocol,
+            ErrorCode::NotMovable,
+            ErrorCode::KeyHeld,
         ];
         assert_eq!(fixture("error-codes.hex"), all.map(|c| c as u8));
         assert_eq!(all.map(|c| ErrorCode::from_code(c as u8)), all.map(Some));

@@ -109,6 +109,18 @@ static void test_a_second_move_waits_for_the_hold(void)
 	CHECK_EQ(m.to, 5);
 }
 
+static void test_a_requested_move_starts_the_hold(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	with_home(&w, &home);
+	chanwatch_hold(&w, 1000);
+	CHECK(!rounds_until_move(&w, CHANWATCH_MIN_SAMPLES, 0, 1000 + CHANWATCH_HOLD_MS - 1, &m));
+	CHECK(rounds_until_move(&w, 1, 0, 1000 + CHANWATCH_HOLD_MS, &m));
+}
+
 static void test_only_noise_near_the_keyboard_signal_counts(void)
 {
 	struct chanwatch w;
@@ -159,6 +171,7 @@ int main(void)
 	RUN(test_a_quiet_looking_candidate_needs_evidence_beyond_its_luck);
 	RUN(test_nearly_equal_channels_do_not_trade_places);
 	RUN(test_a_second_move_waits_for_the_hold);
+	RUN(test_a_requested_move_starts_the_hold);
 	RUN(test_only_noise_near_the_keyboard_signal_counts);
 	RUN(test_noise_older_than_the_decay_time_stops_counting);
 	RUN(test_no_decision_off_the_candidate_list);

@@ -22,9 +22,6 @@
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
 const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
 								      44, 62, 65, 71, 74};
-const uint8_t unifying_normal_channels[UNIFYING_NORMAL_CHANNELS] = {
-	5,  8,  11, 14, 17, 20, 23, 26, 29, 32, 35, 38, 41,
-	44, 47, 50, 53, 56, 59, 62, 65, 68, 71, 74, 77};
 
 void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIFYING_ADDRESS_LEN])
 {
@@ -601,8 +598,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
-			   uint8_t host_leds, uint32_t taken_count, int move_to,
-			   struct unifying_out *out)
+			   uint8_t host_leds, uint32_t taken_count, struct unifying_out *out)
 {
 	uint8_t step = (uint8_t)s->pairing.attempt.state;
 	bool open = unifying_pairing_window_open(&s->pairing, now_ms);
@@ -642,14 +638,6 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 			out->channel = next;
 			s->channel = next;
 		}
-	} else if (move_to >= 0 && unifying_session_movable(s, now_ms) >= 0 &&
-		   move_to != s->channel) {
-		out->set_channel = true;
-		out->channel = (uint8_t)move_to;
-		out->noise_move = true;
-		out->moved_from = s->channel;
-		s->channel = (uint8_t)move_to;
-		s->search_until_ms = now_ms + UNIFYING_MOVE_SEARCH_MS;
 	}
 }
 
@@ -698,4 +686,20 @@ int unifying_session_home(const struct unifying_session *s, uint64_t now_ms)
 int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms)
 {
 	return attempting(&s->pairing) ? -1 : unifying_session_home(s, now_ms);
+}
+
+enum chanmove_result unifying_session_move(struct unifying_session *s, uint8_t channel,
+					   uint64_t now_ms)
+{
+	if (memchr(unifying_pairing_channels, channel, UNIFYING_PAIRING_CHANNELS) == NULL) {
+		return CHANMOVE_NOT_A_CHANNEL;
+	}
+	if (unifying_session_movable(s, now_ms) < 0) {
+		return CHANMOVE_NOT_MOVABLE;
+	}
+	if (channel != s->channel) {
+		s->channel = channel;
+		s->search_until_ms = now_ms + UNIFYING_MOVE_SEARCH_MS;
+	}
+	return CHANMOVE_DONE;
 }
