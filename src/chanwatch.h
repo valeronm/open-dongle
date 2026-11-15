@@ -14,14 +14,6 @@
  * 2 Mbps. */
 #define CHANWATCH_MARGIN_DB 10
 
-struct chanwatch {
-	uint8_t channels[CHANWATCH_MAX];
-	float weight[CHANWATCH_MAX][NOISE_BUCKETS];
-	size_t count;
-	uint64_t decayed_ms;
-	uint64_t hold_until_ms;
-};
-
 /* Shares are in hundredths of a percent of the readings at or above the threshold. */
 struct chanwatch_move {
 	uint8_t to;
@@ -29,25 +21,41 @@ struct chanwatch_move {
 	uint16_t to_share;
 };
 
-/* Takes at most CHANWATCH_MAX channels. */
-void chanwatch_init(struct chanwatch *w, const uint8_t *channels, size_t n, uint64_t now_ms);
+/* Zeroed, it watches no channels. */
+struct chanwatch {
+	uint8_t channels[CHANWATCH_MAX];
+	float weight[CHANWATCH_MAX][NOISE_BUCKETS];
+	size_t count;
+	uint64_t decayed_ms;
+	uint64_t hold_until_ms;
+	bool move_waiting;
+	struct chanwatch_move move;
+};
 
-/* dbm holds one reading per channel in the order given to chanwatch_init; home's is skipped, since
- * a scan of the home channel reads the keyboard's own packets as noise. */
+/* Returns true, after dropping the noise heard and any move waiting, when the channels differ from
+ * the ones w holds; the hold before the next move stays. Takes at most CHANWATCH_MAX. */
+bool chanwatch_set_channels(struct chanwatch *w, const uint8_t *channels, size_t n,
+			    uint64_t now_ms);
+
+/* dbm holds one reading per channel in the order given to chanwatch_set_channels; home's is
+ * skipped, since a scan of the home channel reads the keyboard's own packets as noise. */
 void chanwatch_round(struct chanwatch *w, const int8_t *dbm, uint8_t home, uint64_t now_ms);
 
 /* Adds readings taken between keyboard packets on home. */
 void chanwatch_home(struct chanwatch *w, uint8_t home, const struct noise_tally *t);
 
 /*
- * Returns true with the channel to move to when one is clearly quieter than home at the keyboard's
- * level, weakest_dbm being its weakest recent packet; a true return starts the hold before the next
- * move.
+ * Returns true when a channel is clearly quieter than home at the keyboard's level, weakest_dbm
+ * being its weakest recent packet; the move then waits in w, and the hold before the next move
+ * starts.
  */
-bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
-		      struct chanwatch_move *out);
+bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms);
 
-/* Starts the hold before the next move. */
+/* Returns true once with the move that waits. */
+bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out);
+
+/* Starts the hold before the next move and drops a move that waits, which would undo the one just
+ * made. */
 void chanwatch_hold(struct chanwatch *w, uint64_t now_ms);
 
 #endif

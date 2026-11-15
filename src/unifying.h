@@ -332,8 +332,8 @@ enum chanmove_result unifying_session_move(struct unifying_session *s, uint8_t c
 /* taken_count is sampled before the LED frame was queued. */
 void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count);
 
-/* The radio moved to out->channel, dropping any queued replies. */
-void unifying_session_channel_moved(struct unifying_session *s);
+/* The replies queued on the radio were dropped. */
+void unifying_session_replies_dropped(struct unifying_session *s);
 
 void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_cause cause,
 				    uint64_t now_ms);
@@ -343,10 +343,15 @@ void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
 
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms);
 
-/* The channel whose noise counts as home's; -1 while pairing is open or no keyboard is paired. */
+/* Points *out at the channels unifying_session_move accepts and returns how many. */
+size_t unifying_session_channels(const uint8_t **out);
+
+/* The channel whose noise counts as home's; CHANMOVE_NO_HOME while pairing is open or no keyboard
+ * is paired. */
 int unifying_session_home(const struct unifying_session *s, uint64_t now_ms);
 
-/* The home channel while a noise move may leave it; -1 also while a handshake runs. */
+/* The home channel while a noise move may leave it; CHANMOVE_NO_HOME also while a handshake
+ * runs. */
 int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms);
 
 #endif

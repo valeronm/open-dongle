@@ -78,7 +78,9 @@ impl ErrorCode {
             Self::BadChannels => "channels not allowed",
             Self::Store => "saving to flash failed",
             Self::WrongProtocol => "not available in the protocol the dongle runs",
-            Self::NotMovable => "it moves the link only with a keyboard paired and pairing closed",
+            Self::NotMovable => {
+                "it moves the link only with a keyboard paired, pairing closed and the host awake"
+            }
             Self::KeyHeld => {
                 "a key stayed down for a second, and a move then would lose its release: release every key and move again"
             }

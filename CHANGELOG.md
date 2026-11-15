@@ -7,12 +7,14 @@
   in; a NuPhy dongle used to accept pairing whenever it had no link.
 - The history, events and noise map work in Unifying mode as well as NuPhy mode. A silence there is
   logged but not counted as a link loss, because an idle MX Keys sleeps after a few minutes.
-- In Unifying mode the dongle moves to a quieter channel on its own, judging noise at the
-  keyboard's signal level, and logs each move with the noise on both channels. It moves only among
-  the pairing channels, the only ones the keyboard searches after a failed send.
+- The dongle moves to a quieter channel on its own, judging noise at the keyboard's signal level,
+  and logs each move with the noise on both channels. A Unifying dongle moves only among the
+  pairing channels, the only ones the keyboard searches after a failed send; a NuPhy dongle moves
+  among the keyboard's three paired and seven fixed channels.
 - `open-dongle move`, or `[` and `]` in the live view, moves the link to one of the keyboard's
   channels in either mode while a keyboard is paired and pairing is closed, for testing how the
-  keyboard follows and how the dongle moves away from noise.
+  keyboard follows and how the dongle moves away from noise. A NuPhy dongle does not move while
+  the PC is suspended.
 - A channel move, requested or for noise, waits until no key is held, since a release sent on the
   channel just left reaches the host only once the keyboard finds the new one.
 - A paired NuPhy dongle that loses its keyboard waits on its channel while pairing is closed,

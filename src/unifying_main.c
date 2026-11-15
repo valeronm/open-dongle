@@ -164,8 +164,8 @@ static void apply_tick(const struct unifying_out *out)
 	if (out->window_closed) {
 		core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
 	}
-	if (out->set_channel && core_set_channel(out->channel) == 0) {
-		unifying_session_channel_moved(&session);
+	if (out->set_channel) {
+		core_set_channel(out->channel);
 	}
 }
 
@@ -189,21 +189,17 @@ static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_
 
 static int home(void)
 {
-	int channel = unifying_session_home(&session, (uint64_t)k_uptime_get());
-
-	return channel < 0 ? CORE_NO_HOME : channel;
+	return unifying_session_home(&session, (uint64_t)k_uptime_get());
 }
 
 static int movable(void)
 {
-	int channel = unifying_session_movable(&session, (uint64_t)k_uptime_get());
-
-	return channel < 0 ? CORE_NO_HOME : channel;
+	return unifying_session_movable(&session, (uint64_t)k_uptime_get());
 }
 
 static void replies_dropped(void)
 {
-	unifying_session_channel_moved(&session);
+	unifying_session_replies_dropped(&session);
 }
 
 static enum chanmove_result move_on_request(uint8_t channel, uint8_t *from)
@@ -215,7 +211,6 @@ static enum chanmove_result move_on_request(uint8_t channel, uint8_t *from)
 static void radio_resumed(void)
 {
 	unifying_session_radio_resumed(&session, (uint64_t)k_uptime_get());
-	replies_dropped();
 }
 
 static void show_state(uint64_t now)
@@ -261,13 +256,14 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	}
 }
 
+BUILD_ASSERT(UNIFYING_PAIRING_CHANNELS <= CHANWATCH_MAX);
+
 static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
 	.fill_status = fill_status,
-	.candidates = unifying_pairing_channels,
-	.candidates_len = UNIFYING_PAIRING_CHANNELS,
 	.movable = movable,
+	.candidates = unifying_session_channels,
 	.replies_dropped = replies_dropped,
 	.move = move_on_request,
 };

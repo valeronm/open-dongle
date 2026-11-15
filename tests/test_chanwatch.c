@@ -2,6 +2,7 @@
 #include "chanwatch.h"
 
 static const uint8_t two[] = {5, 8};
+static const uint8_t other[] = {5, 9};
 
 static struct noise_tally home_noise(uint32_t harmful, uint32_t total)
 {
@@ -13,9 +14,16 @@ static struct noise_tally home_noise(uint32_t harmful, uint32_t total)
 	return t;
 }
 
+static bool decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
+		   struct chanwatch_move *m)
+{
+	return chanwatch_decide(w, home, weakest_dbm, now_ms) && chanwatch_take_move(w, m);
+}
+
 static void with_home(struct chanwatch *w, const struct noise_tally *home)
 {
-	chanwatch_init(w, two, 2, 0);
+	*w = (struct chanwatch){0};
+	chanwatch_set_channels(w, two, 2, 0);
 	chanwatch_home(w, 5, home);
 }
 
@@ -34,7 +42,7 @@ static bool rounds_until_move(struct chanwatch *w, int rounds, int every, uint64
 		int8_t dbm[2] = {0, every != 0 && i % every == 0 ? -80 : -95};
 
 		chanwatch_round(w, dbm, 5, now);
-		if (chanwatch_decide(w, 5, -70, now, m)) {
+		if (decide(w, 5, -70, now, m)) {
 			return true;
 		}
 	}
@@ -104,8 +112,8 @@ static void test_a_second_move_waits_for_the_hold(void)
 
 		chanwatch_round(&w, dbm, 8, 0);
 	}
-	CHECK(!chanwatch_decide(&w, 8, -70, CHANWATCH_HOLD_MS - 1, &m));
-	CHECK(chanwatch_decide(&w, 8, -70, CHANWATCH_HOLD_MS, &m));
+	CHECK(!decide(&w, 8, -70, CHANWATCH_HOLD_MS - 1, &m));
+	CHECK(decide(&w, 8, -70, CHANWATCH_HOLD_MS, &m));
 	CHECK_EQ(m.to, 5);
 }
 
@@ -131,9 +139,9 @@ static void test_only_noise_near_the_keyboard_signal_counts(void)
 		noise_add(&home, i < 40 ? -70 : -95);
 	}
 	primed(&w, &home, -80);
-	CHECK(!chanwatch_decide(&w, 5, -40, 0, &m));
-	CHECK(!chanwatch_decide(&w, 5, -80, 0, &m));
-	CHECK(chanwatch_decide(&w, 5, -60, 0, &m));
+	CHECK(!decide(&w, 5, -40, 0, &m));
+	CHECK(!decide(&w, 5, -80, 0, &m));
+	CHECK(decide(&w, 5, -60, 0, &m));
 }
 
 static void test_noise_older_than_the_decay_time_stops_counting(void)
@@ -161,7 +169,84 @@ static void test_no_decision_off_the_candidate_list(void)
 	struct noise_tally home = home_noise(46, 100);
 
 	primed(&w, &home, -95);
-	CHECK(!chanwatch_decide(&w, 38, -70, 0, &m));
+	CHECK(!decide(&w, 38, -70, 0, &m));
+}
+
+static void test_the_same_channels_keep_the_noise_heard(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	primed(&w, &home, -95);
+	CHECK(!chanwatch_set_channels(&w, two, 2, 0));
+	CHECK(decide(&w, 5, -70, 0, &m));
+}
+
+static void test_other_channels_drop_the_noise_heard(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	primed(&w, &home, -95);
+	CHECK(chanwatch_set_channels(&w, other, 2, 0));
+	CHECK(!decide(&w, 5, -70, 0, &m));
+	chanwatch_home(&w, 5, &home);
+	CHECK(rounds_until_move(&w, CHANWATCH_MIN_SAMPLES, 0, 0, &m));
+	CHECK_EQ(m.to, 9);
+}
+
+static void test_other_channels_keep_the_hold(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	with_home(&w, &home);
+	chanwatch_hold(&w, 1000);
+	CHECK(chanwatch_set_channels(&w, other, 2, 2000));
+	chanwatch_home(&w, 5, &home);
+	CHECK(!rounds_until_move(&w, CHANWATCH_MIN_SAMPLES, 0, 1000 + CHANWATCH_HOLD_MS - 1, &m));
+	CHECK(rounds_until_move(&w, 1, 0, 1000 + CHANWATCH_HOLD_MS, &m));
+}
+
+static void test_a_decided_move_is_taken_once(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	primed(&w, &home, -95);
+	CHECK(!chanwatch_take_move(&w, &m));
+	CHECK(chanwatch_decide(&w, 5, -70, 0));
+	CHECK(chanwatch_take_move(&w, &m));
+	CHECK_EQ(m.to, 8);
+	CHECK(!chanwatch_take_move(&w, &m));
+}
+
+static void test_another_move_drops_the_one_that_waits(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	primed(&w, &home, -95);
+	CHECK(chanwatch_decide(&w, 5, -70, 0));
+	chanwatch_hold(&w, 0);
+	CHECK(!chanwatch_take_move(&w, &m));
+}
+
+static void test_other_channels_drop_the_move_that_waits(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(46, 100);
+
+	primed(&w, &home, -95);
+	CHECK(chanwatch_decide(&w, 5, -70, 0));
+	CHECK(chanwatch_set_channels(&w, other, 2, 0));
+	CHECK(!chanwatch_take_move(&w, &m));
 }
 
 int main(void)
@@ -175,5 +260,11 @@ int main(void)
 	RUN(test_only_noise_near_the_keyboard_signal_counts);
 	RUN(test_noise_older_than_the_decay_time_stops_counting);
 	RUN(test_no_decision_off_the_candidate_list);
+	RUN(test_the_same_channels_keep_the_noise_heard);
+	RUN(test_other_channels_drop_the_noise_heard);
+	RUN(test_other_channels_keep_the_hold);
+	RUN(test_a_decided_move_is_taken_once);
+	RUN(test_another_move_drops_the_one_that_waits);
+	RUN(test_other_channels_drop_the_move_that_waits);
 	return TEST_EXIT();
 }

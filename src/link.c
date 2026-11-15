@@ -27,11 +27,23 @@ static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 	out->channel = channel;
 }
 
-static void set_own(struct link *l, const uint8_t own[3])
+static void list_channels(struct link *l)
+{
+	memcpy(l->channels, link_fixed_channels, sizeof(link_fixed_channels));
+	l->channel_count = sizeof(link_fixed_channels);
+	for (size_t i = 0; l->own_known && i < sizeof(l->own); i++) {
+		if (memchr(l->channels, l->own[i], l->channel_count) == NULL) {
+			l->channels[l->channel_count++] = l->own[i];
+		}
+	}
+}
+
+static void set_own(struct link *l, const uint8_t own[LINK_OWN_CHANNELS])
 {
 	memcpy(l->own, own, sizeof(l->own));
 	l->own_known = true;
 	l->home = own[0];
+	list_channels(l);
 }
 
 static uint8_t slot_channel(const struct link *l)
@@ -79,6 +91,8 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint
 	memcpy(l->dongle_id, dongle_id, NUPHY_ID_LEN);
 	if (own != NULL) {
 		set_own(l, own);
+	} else {
+		list_channels(l);
 	}
 	go_idle(l, now_ms, out);
 }
@@ -202,7 +216,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 	}
 }
 
-void link_on_survey(struct link *l, const uint8_t channels[3], uint32_t now_ms,
+void link_on_survey(struct link *l, const uint8_t channels[LINK_OWN_CHANNELS], uint32_t now_ms,
 		    struct link_out *out)
 {
 	if (l->state != LINK_SURVEY) {
@@ -264,6 +278,11 @@ void link_radio_resumed(struct link *l, uint32_t now_ms)
 	l->last_rx_ms = now_ms;
 }
 
+void link_replies_dropped(struct link *l, uint32_t now_ms)
+{
+	l->last_status_ms = now_ms - STATUS_EVERY_MS;
+}
+
 void link_set_host_leds(struct link *l, uint8_t leds)
 {
 	l->host_leds = leds;
@@ -303,9 +322,9 @@ static bool is_pairing_channel(uint8_t ch)
 	return memchr(pairing_channels, ch, sizeof(pairing_channels)) != NULL;
 }
 
-bool link_channels_allowed(const uint8_t channels[3])
+bool link_channels_allowed(const uint8_t channels[LINK_OWN_CHANNELS])
 {
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < LINK_OWN_CHANNELS; i++) {
 		if (!chan_in_range(channels[i]) || is_pairing_channel(channels[i])) {
 			return false;
 		}
@@ -339,18 +358,39 @@ const uint8_t *link_forced_channels(const struct link *l)
 	return l->next_offer_kind == OFFER_FORCED ? l->next_offer : NULL;
 }
 
+/* A retune drops the replies queued on the radio, and the suspend frame is queued once. */
+static bool movable(const struct link *l, uint32_t now_ms)
+{
+	return l->own_known && !link_pairing_open(l, now_ms) && !l->host_suspended &&
+	       (l->state == LINK_CONNECTED || l->state == LINK_IDLE);
+}
+
 enum chanmove_result link_move(struct link *l, uint8_t channel, uint32_t now_ms)
 {
-	if (memchr(l->own, channel, sizeof(l->own)) == NULL &&
-	    memchr(link_fixed_channels, channel, sizeof(link_fixed_channels)) == NULL) {
+	if (memchr(l->channels, channel, l->channel_count) == NULL) {
 		return CHANMOVE_NOT_A_CHANNEL;
 	}
-	if (!l->own_known || link_pairing_open(l, now_ms) ||
-	    (l->state != LINK_CONNECTED && l->state != LINK_IDLE)) {
+	if (!movable(l, now_ms)) {
 		return CHANMOVE_NOT_MOVABLE;
 	}
 	l->home = channel;
 	l->on_pairing_channel = false;
 	l->channel = channel;
 	return CHANMOVE_DONE;
+}
+
+int link_home(const struct link *l)
+{
+	return l->own_known ? l->home : CHANMOVE_NO_HOME;
+}
+
+int link_movable(const struct link *l, uint32_t now_ms)
+{
+	return movable(l, now_ms) ? l->home : CHANMOVE_NO_HOME;
+}
+
+size_t link_channels(const struct link *l, const uint8_t **out)
+{
+	*out = l->channels;
+	return l->channel_count;
 }

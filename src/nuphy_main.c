@@ -28,7 +28,7 @@ static uint32_t last_packet_ms;
 
 static int home(void)
 {
-	return link.own_known ? link.home : CORE_NO_HOME;
+	return link_home(&link);
 }
 
 static void radio_resumed(void)
@@ -45,6 +45,23 @@ static void show_state(void)
 	};
 
 	core_show_state(by_link[link_led(&link, k_uptime_get_32())]);
+}
+
+BUILD_ASSERT(LINK_CHANNELS_MAX <= CHANWATCH_MAX);
+
+static int movable(void)
+{
+	return link_movable(&link, k_uptime_get_32());
+}
+
+static size_t candidates(const uint8_t **channels)
+{
+	return link_channels(&link, channels);
+}
+
+static void replies_dropped(void)
+{
+	link_replies_dropped(&link, k_uptime_get_32());
 }
 
 static void apply(const struct link_out *out)
@@ -95,7 +112,7 @@ static void apply(const struct link_out *out)
 static void run_survey(void)
 {
 	const struct chan_survey *survey;
-	uint8_t picked[3];
+	uint8_t picked[LINK_OWN_CHANNELS];
 	struct link_out out = {0};
 
 	core_count(CORE_SURVEYS);
@@ -189,7 +206,7 @@ static void print_counters(void)
 
 static void force_channels(const struct diag_request *req)
 {
-	uint8_t channels[3];
+	uint8_t channels[LINK_OWN_CHANNELS];
 	const uint8_t *forced = diag_channels_arg(req->arg, channels) ? channels : NULL;
 	int err;
 
@@ -240,6 +257,9 @@ static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
 	.fill_status = fill_status,
+	.movable = movable,
+	.candidates = candidates,
+	.replies_dropped = replies_dropped,
 	.move = move_on_request,
 };
 
@@ -248,8 +268,8 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
 	uint8_t id[4];
-	uint8_t own[3];
-	uint8_t forced[3];
+	uint8_t own[LINK_OWN_CHANNELS];
+	uint8_t forced[LINK_OWN_CHANNELS];
 	struct link_out out = {0};
 	bool paired;
 

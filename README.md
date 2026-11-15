@@ -78,12 +78,14 @@ A Unifying keyboard pairs when switched off and on while pairing is open. On a k
 Easy-Switch keys, such as the MX Keys, first enter pairing mode by holding an Easy-Switch key until
 it blinks fast. A new keyboard replaces the one paired before.
 
-In Unifying mode the dongle keeps checking the noise on every channel the keyboard can use, a few
-milliseconds at a time, and moves to a clearly quieter one; the keyboard finds it again within
-about a second. Those are the 11 pairing channels: after a failed send the MX Keys searches only
-them, never the other normal channels. Only noise strong enough to matter at the keyboard's current signal counts, so a
-keyboard close to the dongle rarely causes a move, and one across the room moves away from Wi-Fi
-that would not trouble the close one. `open-dongle events` logs each move with both channels' noise.
+The dongle keeps checking the noise on every channel the keyboard can use, a few milliseconds at a
+time, and moves to a clearly quieter one; the keyboard finds it again within about a second. For a
+NuPhy keyboard those are the three channels from pairing and seven its firmware fixes. For a
+Unifying keyboard they are the 11 pairing channels: after a failed send the MX Keys searches only
+them, never the other normal channels. Only noise strong enough to matter at the keyboard's current
+signal counts, so a keyboard close to the dongle rarely causes a move, and one across the room
+moves away from Wi-Fi that would not trouble the close one. `open-dongle events` logs each move
+with both channels' noise. A restarted dongle returns to the channel it had after pairing.
 
 ## LED
 

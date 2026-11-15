@@ -1,7 +1,7 @@
 #include <string.h>
 #include "chanwatch.h"
 
-void chanwatch_init(struct chanwatch *w, const uint8_t *channels, size_t n, uint64_t now_ms)
+static void init(struct chanwatch *w, const uint8_t *channels, size_t n, uint64_t now_ms)
 {
 	memset(w, 0, sizeof(*w));
 	w->count = n < CHANWATCH_MAX ? n : CHANWATCH_MAX;
@@ -9,6 +9,23 @@ void chanwatch_init(struct chanwatch *w, const uint8_t *channels, size_t n, uint
 		memcpy(w->channels, channels, w->count);
 	}
 	w->decayed_ms = now_ms;
+}
+
+bool chanwatch_set_channels(struct chanwatch *w, const uint8_t *channels, size_t n,
+			    uint64_t now_ms)
+{
+	uint64_t hold_until_ms;
+
+	if (n > CHANWATCH_MAX) {
+		n = CHANWATCH_MAX;
+	}
+	if (n == w->count && (n == 0 || memcmp(w->channels, channels, n) == 0)) {
+		return false;
+	}
+	hold_until_ms = w->hold_until_ms;
+	init(w, channels, n, now_ms);
+	w->hold_until_ms = hold_until_ms;
+	return true;
 }
 
 static int index_of(const struct chanwatch *w, uint8_t channel)
@@ -84,10 +101,20 @@ static uint8_t threshold_bucket(int8_t weakest_dbm)
 void chanwatch_hold(struct chanwatch *w, uint64_t now_ms)
 {
 	w->hold_until_ms = now_ms + CHANWATCH_HOLD_MS;
+	w->move_waiting = false;
 }
 
-bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
-		      struct chanwatch_move *out)
+bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out)
+{
+	if (!w->move_waiting) {
+		return false;
+	}
+	w->move_waiting = false;
+	*out = w->move;
+	return true;
+}
+
+bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms)
 {
 	int h = index_of(w, home);
 	uint8_t from = threshold_bucket(weakest_dbm);
@@ -136,9 +163,12 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	if (gap <= 0.0f || best_n * gap * gap <= 9.0f * limit * (1.0f - limit)) {
 		return false;
 	}
-	out->to = w->channels[best];
-	out->home_share = (uint16_t)(home_share * NOISE_SHARE_FULL + 0.5f);
-	out->to_share = (uint16_t)(best_share * NOISE_SHARE_FULL + 0.5f);
 	chanwatch_hold(w, now_ms);
+	w->move = (struct chanwatch_move){
+		.to = w->channels[best],
+		.home_share = (uint16_t)(home_share * NOISE_SHARE_FULL + 0.5f),
+		.to_share = (uint16_t)(best_share * NOISE_SHARE_FULL + 0.5f),
+	};
+	w->move_waiting = true;
 	return true;
 }

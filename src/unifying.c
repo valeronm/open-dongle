@@ -646,7 +646,7 @@ void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint3
 	unifying_led_sent(&s->led, leds, taken_count);
 }
 
-void unifying_session_channel_moved(struct unifying_session *s)
+void unifying_session_replies_dropped(struct unifying_session *s)
 {
 	unifying_led_dropped(&s->led);
 }
@@ -680,21 +680,30 @@ int unifying_session_home(const struct unifying_session *s, uint64_t now_ms)
 	bool home = unifying_has_device(&s->pairing) &&
 		    !unifying_pairing_window_open(&s->pairing, now_ms);
 
-	return home ? s->channel : -1;
+	return home ? s->channel : CHANMOVE_NO_HOME;
 }
 
 int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms)
 {
-	return attempting(&s->pairing) ? -1 : unifying_session_home(s, now_ms);
+	return attempting(&s->pairing) ? CHANMOVE_NO_HOME : unifying_session_home(s, now_ms);
+}
+
+size_t unifying_session_channels(const uint8_t **out)
+{
+	*out = unifying_pairing_channels;
+	return UNIFYING_PAIRING_CHANNELS;
 }
 
 enum chanmove_result unifying_session_move(struct unifying_session *s, uint8_t channel,
 					   uint64_t now_ms)
 {
-	if (memchr(unifying_pairing_channels, channel, UNIFYING_PAIRING_CHANNELS) == NULL) {
+	const uint8_t *channels;
+	size_t n = unifying_session_channels(&channels);
+
+	if (memchr(channels, channel, n) == NULL) {
 		return CHANMOVE_NOT_A_CHANNEL;
 	}
-	if (unifying_session_movable(s, now_ms) < 0) {
+	if (unifying_session_movable(s, now_ms) == CHANMOVE_NO_HOME) {
 		return CHANMOVE_NOT_MOVABLE;
 	}
 	if (channel != s->channel) {

@@ -40,11 +40,9 @@ static int64_t last_scan_ms;
  * the host until the keyboard finds the new one. */
 #define MOVE_KEY_WAIT_MS 1000
 
-static bool move_pending;
 static bool request_waiting;
 static struct diag_request waiting_request;
 static int64_t request_wait_until;
-static struct chanwatch_move pending_move;
 
 static const struct device *const wdt = DEVICE_DT_GET(DT_ALIAS(watchdog0));
 static int wdt_channel = -1;
@@ -183,7 +181,7 @@ static void take_noise(void)
 	struct noise_tally t;
 	uint8_t channel = radio_noise_take(&t);
 	int home = loop->home();
-	bool on_home = home != CORE_NO_HOME && channel == home;
+	bool on_home = home != CHANMOVE_NO_HOME && channel == home;
 
 	history_noise(&history, &t, on_home);
 	if (on_home) {
@@ -194,7 +192,6 @@ static void take_noise(void)
 void core_start_history(const struct core_loop *l)
 {
 	loop = l;
-	chanwatch_init(&watch, l->candidates, l->candidates_len, k_uptime_get());
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
 	log_event(HISTORY_BOOT, 0, 0, 0, boot_reset_cause);
 }
@@ -235,29 +232,31 @@ uint8_t core_minutes_since_key(void)
 static void scan(void)
 {
 	int64_t now = k_uptime_get();
-	size_t n = MIN(loop->candidates_len, CHANWATCH_MAX);
+	const uint8_t *channels;
 	int8_t dbm[CHANWATCH_MAX];
 	int8_t weakest;
+	size_t n;
 	int home;
 
-	if (n == 0 || now - last_scan_ms < SCAN_PERIOD_MS) {
-		return;
-	}
-	home = loop->movable();
-	if (home == CORE_NO_HOME) {
+	if (now - last_scan_ms < SCAN_PERIOD_MS) {
 		return;
 	}
 	last_scan_ms = now;
+	n = loop->candidates(&channels);
+	chanwatch_set_channels(&watch, channels, n, (uint64_t)now);
+	home = loop->movable();
+	if (home == CHANMOVE_NO_HOME || watch.count == 0) {
+		return;
+	}
 	/* Stopping the receiver drops the noise readings not yet taken. */
 	take_noise();
-	if (radio_sample(loop->candidates, n, dbm) != 0) {
+	if (radio_sample(watch.channels, watch.count, dbm) != 0) {
 		return;
 	}
 	loop->replies_dropped();
 	chanwatch_round(&watch, dbm, (uint8_t)home, (uint64_t)now);
-	if (history_weakest(&history, &weakest) &&
-	    chanwatch_decide(&watch, (uint8_t)home, weakest, (uint64_t)now, &pending_move)) {
-		move_pending = true;
+	if (history_weakest(&history, &weakest)) {
+		chanwatch_decide(&watch, (uint8_t)home, weakest, (uint64_t)now);
 	}
 }
 
@@ -287,11 +286,6 @@ static enum diag_error apply_move(uint8_t to, uint8_t reason, uint32_t value, ui
 	if (core_set_channel(to) != 0) {
 		return DIAG_ERR_RADIO;
 	}
-	if (loop->replies_dropped != NULL) {
-		loop->replies_dropped();
-	}
-	/* A noise move decided before this one would undo it. */
-	move_pending = false;
 	chanwatch_hold(&watch, (uint64_t)k_uptime_get());
 	core_log(HISTORY_LINK_MOVED, *from, to, reason, value);
 	return 0;
@@ -299,14 +293,14 @@ static enum diag_error apply_move(uint8_t to, uint8_t reason, uint32_t value, ui
 
 static void poll_noise_move(void)
 {
+	struct chanwatch_move m;
 	uint8_t from;
 
-	if (!move_pending || keys_held()) {
+	if (!watch.move_waiting || keys_held() || !chanwatch_take_move(&watch, &m)) {
 		return;
 	}
-	move_pending = false;
-	apply_move(pending_move.to, HISTORY_MOVED_FOR_NOISE,
-		   (uint32_t)pending_move.home_share << 16 | pending_move.to_share, &from);
+	apply_move(m.to, HISTORY_MOVED_FOR_NOISE, (uint32_t)m.home_share << 16 | m.to_share,
+		   &from);
 }
 
 static void poll_move_request(void)
@@ -361,6 +355,7 @@ int core_set_channel(uint8_t channel)
 	err = radio_set_channel(channel);
 	if (err == 0) {
 		core_count(CORE_CHANNEL_CHANGES);
+		loop->replies_dropped();
 	}
 	return err;
 }
@@ -371,7 +366,11 @@ const struct chan_survey *core_survey(void)
 
 	take_noise();
 	core_watchdog_feed();
-	return radio_survey(&survey) == 0 ? &survey : NULL;
+	if (radio_survey(&survey) != 0) {
+		return NULL;
+	}
+	loop->replies_dropped();
+	return &survey;
 }
 
 static void clear(const struct diag_request *req)

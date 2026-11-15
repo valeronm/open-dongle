@@ -15,8 +15,6 @@
 #include "radio.h"
 #include "reports.h"
 
-#define CORE_NO_HOME (-1)
-
 enum core_counter {
 	CORE_PACKETS,
 	CORE_INVALID,
@@ -29,20 +27,18 @@ enum core_counter {
 
 /* What the core asks of the running protocol loop. */
 struct core_loop {
-	/* The channel whose noise counts toward the minute, or CORE_NO_HOME. */
+	/* The channel whose noise counts toward the minute, or CHANMOVE_NO_HOME. */
 	int (*home)(void);
 	/* Runs after each survey that answers a noise request, which keeps the receiver off. */
 	void (*radio_resumed)(void);
 	void (*fill_status)(struct diag_status *st);
-	/* Channels the dongle may move to for less noise; empty for a protocol that does not
-	 * move. */
-	const uint8_t *candidates;
-	size_t candidates_len;
-	/* The home channel while a noise move is allowed, or CORE_NO_HOME; required with
-	 * candidates. */
+	/* The home channel while a noise move is allowed, or CHANMOVE_NO_HOME. */
 	int (*movable)(void);
-	/* Runs after each scan round or move, which drops the replies queued on the
-	 * radio; required with candidates. */
+	/* Points *channels at the channels a noise move may go to and returns how many, at most
+	 * CHANWATCH_MAX; a change in them drops the noise heard so far. */
+	size_t (*candidates)(const uint8_t **channels);
+	/* Runs after each channel change, scan round or survey, which drops the replies queued on
+	 * the radio. */
 	void (*replies_dropped)(void);
 	/* Moves the protocol state for a requested or noise move; *from is the channel before it. */
 	enum chanmove_result (*move)(uint8_t channel, uint8_t *from);

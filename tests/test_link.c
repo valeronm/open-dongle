@@ -250,6 +250,20 @@ static void test_rebooted_dongle_connects_on_home_and_sends_status_every_100_ms(
 	expect_status(2, 0);
 }
 
+static void test_a_status_dropped_from_the_radio_goes_out_on_the_next_packet(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	expect_status(1, 0);
+	link_replies_dropped(&l, 20);
+	message(NUPHY_KEEPALIVE, 1, 50);
+	expect_status(2, 0);
+	message(NUPHY_KEEPALIVE, 1, 90);
+	CHECK(!out.reply);
+	message(NUPHY_KEEPALIVE, 1, 150);
+	expect_status(3, 0);
+}
+
 static void test_status_carries_host_leds(void)
 {
 	init(home);
@@ -465,15 +479,86 @@ static void test_a_requested_move_works_on_a_silent_paired_link(void)
 	CHECK_EQ(l.channel, 44);
 }
 
-static void test_a_requested_move_needs_a_paired_keyboard_and_pairing_closed(void)
+static int movable(void)
+{
+	return link_movable(&l, last_ms);
+}
+
+static void test_a_move_needs_a_paired_keyboard_and_pairing_closed(void)
 {
 	init(home);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
 	hear_keyboard_on_the_pairing_channel(home);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
 	init(NULL);
 	tick(PAIRWIN_MS);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
+}
+
+static void test_a_movable_link_reports_its_home_through_a_move_and_a_loss(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK_EQ(movable(), home[0]);
+	CHECK_EQ(move(44), CHANMOVE_DONE);
+	CHECK_EQ(movable(), 44);
+	tick(1010);
+	CHECK(out.lost);
+	CHECK_EQ(movable(), 44);
+}
+
+static void test_a_paired_dongle_has_a_home_while_it_cannot_move(void)
+{
+	init(NULL);
+	CHECK_EQ(link_home(&l), CHANMOVE_NO_HOME);
+	init(home);
+	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
+	CHECK_EQ(link_home(&l), home[0]);
+}
+
+static void test_no_move_while_the_host_is_suspended(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	link_set_host_suspended(&l, true);
+	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
+	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
+	CHECK_EQ(l.channel, home[0]);
+	link_set_host_suspended(&l, false);
+	CHECK_EQ(movable(), home[0]);
+	CHECK_EQ(move(44), CHANMOVE_DONE);
+}
+
+static void check_channels(const uint8_t *own, const uint8_t *expected, size_t n)
+{
+	const uint8_t *channels;
+
+	init(own);
+	CHECK_EQ(link_channels(&l, &channels), n);
+	CHECK_MEM(channels, expected, n);
+}
+
+static void test_the_keyboards_channels_are_the_fixed_ones_and_the_paired_three(void)
+{
+	static const uint8_t expected[] = {16, 22, 44, 48, 58, 72, 78, 26, 30, 34};
+
+	check_channels(home, expected, sizeof(expected));
+}
+
+static void test_a_paired_channel_that_is_also_fixed_is_listed_once(void)
+{
+	static const uint8_t own[3] = {44, 54, 64};
+	static const uint8_t expected[] = {16, 22, 44, 48, 58, 72, 78, 54, 64};
+
+	check_channels(own, expected, sizeof(expected));
+}
+
+static void test_a_never_paired_dongle_lists_the_fixed_channels(void)
+{
+	check_channels(NULL, link_fixed_channels, LINK_FIXED_CHANNELS);
 }
 
 static void test_a_paired_dongle_waits_on_home_while_pairing_is_closed(void)
@@ -826,6 +911,7 @@ int main(void)
 	RUN(test_a_request_10_s_after_a_survey_surveys_again);
 	RUN(test_failed_survey_returns_to_idle);
 	RUN(test_rebooted_dongle_connects_on_home_and_sends_status_every_100_ms);
+	RUN(test_a_status_dropped_from_the_radio_goes_out_on_the_next_packet);
 	RUN(test_status_carries_host_leds);
 	RUN(test_suspend_goes_out_on_the_next_packet_then_status_resumes);
 	RUN(test_suspend_is_resent_after_a_reconnect);
@@ -868,7 +954,13 @@ int main(void)
 	RUN(test_a_requested_move_holds_through_a_loss);
 	RUN(test_a_requested_move_takes_any_of_the_keyboards_channels);
 	RUN(test_a_requested_move_works_on_a_silent_paired_link);
-	RUN(test_a_requested_move_needs_a_paired_keyboard_and_pairing_closed);
+	RUN(test_a_move_needs_a_paired_keyboard_and_pairing_closed);
+	RUN(test_a_movable_link_reports_its_home_through_a_move_and_a_loss);
+	RUN(test_a_paired_dongle_has_a_home_while_it_cannot_move);
+	RUN(test_no_move_while_the_host_is_suspended);
+	RUN(test_the_keyboards_channels_are_the_fixed_ones_and_the_paired_three);
+	RUN(test_a_paired_channel_that_is_also_fixed_is_listed_once);
+	RUN(test_a_never_paired_dongle_lists_the_fixed_channels);
 	RUN(test_a_paired_dongle_waits_on_home_while_pairing_is_closed);
 	RUN(test_a_lost_link_waits_on_home_once_pairing_has_closed);
 	return TEST_EXIT();
