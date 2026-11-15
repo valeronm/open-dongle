@@ -13,6 +13,11 @@
 
 #define TICK_MS 10
 
+_Static_assert(sizeof(((struct diag_status *)0)->keyboard_name) >= UNIFYING_NAME_MAX,
+	       "status name");
+_Static_assert(sizeof(((struct diag_status *)0)->keyboard_serial) == UNIFYING_SERIAL_LEN,
+	       "status serial");
+
 static struct unifying_session session;
 static uint8_t next_nonce[UNIFYING_NONCE_LEN];
 
@@ -64,14 +69,14 @@ static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, s
 	switch (event) {
 	case UNIFYING_RX_ANSWERED_1:
 		printk("request 1: id %02x wpid %02x%02x type %02x caps %02x\n", a->id,
-		       a->dev.wpid[0], a->dev.wpid[1], a->device_type, a->caps);
+		       a->dev.wpid[0], a->dev.wpid[1], a->dev.type, a->caps);
 		print_hex("reply", reply, n);
 		break;
 	case UNIFYING_RX_ANSWERED_2:
 		printk("request 2: id %02x\n", a->id);
 		break;
 	case UNIFYING_RX_PAIRED:
-		printk("request 3: name \"%.*s\", paired\n", a->name_len, a->name);
+		printk("request 3: name \"%.*s\", paired\n", UNIFYING_NAME_MAX, a->dev.name);
 		break;
 	default:
 		break;
@@ -237,7 +242,12 @@ static void fill_status(struct diag_status *st)
 	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)
 					   : UINT32_MAX;
 	if (unifying_has_device(&session.pairing)) {
-		memcpy(st->keyboard_id, session.pairing.device.wpid, UNIFYING_WPID_LEN);
+		const struct unifying_device *d = &session.pairing.device;
+
+		memcpy(st->keyboard_id, d->wpid, sizeof(d->wpid));
+		memcpy(st->keyboard_serial, d->serial, sizeof(st->keyboard_serial));
+		st->keyboard_type = d->type;
+		memcpy(st->keyboard_name, d->name, sizeof(d->name));
 	}
 }
 

@@ -10,10 +10,10 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    keyboard_id, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name, uptime,
-    usb_state, version, wall_clock, wpid,
+    hex, keyboard_id, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name,
+    unifying_kind, uptime, usb_state, version, wall_clock, wpid,
 };
-use crate::protocol::{Action, Counter, ErrorCode, Minute, Protocol, Status};
+use crate::protocol::{Action, Counter, ErrorCode, Keyboard, Minute, Protocol, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
@@ -36,6 +36,8 @@ fn status_lines(s: &Status) -> Vec<String> {
             paired(s.own),
             keyboard_id(s.keyboard_id)
         )
+    } else if s.keyboard.is_some() {
+        String::new()
     } else {
         format!(", keyboard {}", wpid(s.keyboard_id))
     };
@@ -44,6 +46,17 @@ fn status_lines(s: &Status) -> Vec<String> {
         state_name(s),
         s.channel
     ));
+    match &s.keyboard {
+        Some(Keyboard::Unifying { name, serial, kind }) => lines.push(format!(
+            "keyboard  {}, serial {}, WPID {}, type {}",
+            name.as_deref().unwrap_or("unnamed"),
+            hex(serial),
+            wpid(s.keyboard_id),
+            unifying_kind(*kind)
+        )),
+        Some(Keyboard::Nuphy { name }) => lines.push(format!("keyboard  {name}")),
+        None => {}
+    }
     lines.push(format!(
         "signal    {} dBm, {}",
         s.last_rssi,
@@ -428,10 +441,8 @@ mod tests {
     }
 
     fn status_in(protocol: Protocol) -> Status {
-        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
-            .unwrap()
-            .unwrap();
-        s.protocol = protocol;
+        let payload = crate::protocol::tests::status_running(protocol as u8);
+        let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
         s.own = Some([26, 30, 34]);
         s
     }
@@ -517,6 +528,7 @@ mod tests {
                 "firmware  1.2.3",
                 "protocol  NuPhy",
                 "link      connected on channel 26 (paired 26 30 34), keyboard 7015a329",
+                "keyboard  MX Keys",
                 "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open, offers channels 62 52 44, set by hand",
                 "usb       live",
@@ -549,7 +561,8 @@ mod tests {
             [
                 "firmware  1.2.3",
                 "protocol  Unifying",
-                "link      connected on channel 26, keyboard 7015",
+                "link      connected on channel 26",
+                "keyboard  MX Keys, serial b8bcd5b3, WPID 7015, type keyboard",
                 "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open",
                 "usb       live",
@@ -557,6 +570,28 @@ mod tests {
                 "counters  packets 1000 invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
                 "history   1440 minutes, 512 events held",
             ]
+        );
+    }
+
+    #[test]
+    fn a_status_has_no_keyboard_line_when_the_keyboard_reported_nothing() {
+        let mut s = status_in(Protocol::Unifying);
+        s.keyboard = None;
+        let lines = status_lines(&s);
+        assert!(!lines.iter().any(|l| l.starts_with("keyboard")));
+        assert!(lines[2].ends_with(", keyboard 7015"), "{}", lines[2]);
+    }
+
+    #[test]
+    fn a_keyboard_without_a_name_prints_as_unnamed() {
+        let mut s = status_in(Protocol::Unifying);
+        if let Some(Keyboard::Unifying { name, .. }) = &mut s.keyboard {
+            *name = None;
+        }
+        assert!(
+            status_lines(&s).contains(
+                &"keyboard  unnamed, serial b8bcd5b3, WPID 7015, type keyboard".to_string()
+            )
         );
     }
 

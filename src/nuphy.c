@@ -12,12 +12,15 @@
 #define TYPE_PAIR_REPLY 0x32
 #define TYPE_SUSPEND 0x34
 #define TYPE_HELLO 0x35
+#define TYPE_NAME 0x56
 #define TYPE_KEEPALIVE 0x57
 #define TYPE_KEYBOARD 0x61
 #define TYPE_CONSUMER 0x63
 #define TYPE_SYSTEM 0x64
 #define TYPE_PAIR_REQUEST 0x80
 #define TYPE_PAIR_CONFIRM 0x81
+
+#define DESCRIPTOR_STRING 3
 
 static uint8_t sum8(const uint8_t *p, size_t n)
 {
@@ -27,6 +30,11 @@ static uint8_t sum8(const uint8_t *p, size_t n)
 		s += *p++;
 	}
 	return s;
+}
+
+static uint16_t le16(const uint8_t *p)
+{
+	return (uint16_t)(p[0] | (p[1] << 8));
 }
 
 struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
@@ -54,7 +62,7 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 	case TYPE_CONSUMER:
 	case TYPE_SYSTEM:
 		m.kind = buf[1] == TYPE_CONSUMER ? NUPHY_CONSUMER : NUPHY_SYSTEM;
-		m.usage = (uint16_t)(buf[2] | (buf[3] << 8));
+		m.usage = le16(&buf[2]);
 		break;
 	case TYPE_PAIR_REQUEST:
 	case TYPE_PAIR_CONFIRM:
@@ -64,6 +72,10 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 		break;
 	case TYPE_HELLO:
 		m.kind = NUPHY_HELLO;
+		break;
+	case TYPE_NAME:
+		m.kind = NUPHY_NAME;
+		memcpy(m.name_chunk, &buf[2], NUPHY_NAME_CHUNK);
 		break;
 	default:
 		m.kind = NUPHY_IGNORED;
@@ -91,6 +103,36 @@ bool nuphy_report(const struct nuphy_msg *m, struct report *out)
 	default:
 		return false;
 	}
+}
+
+static bool starts_descriptor(const uint8_t *chunk)
+{
+	return chunk[1] == DESCRIPTOR_STRING && chunk[0] >= NUPHY_NAME_HEADER &&
+	       chunk[0] <= NUPHY_NAME_BLOCK_MAX && chunk[0] % 2 == 0;
+}
+
+void nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK])
+{
+	uint8_t *out = n->name;
+
+	if (starts_descriptor(chunk)) {
+		n->held = 0;
+	} else if (n->held == 0) {
+		return;
+	}
+	memcpy(&n->block[n->held], chunk, NUPHY_NAME_CHUNK);
+	n->held += NUPHY_NAME_CHUNK;
+	if (n->held < n->block[0]) {
+		return;
+	}
+
+	memset(n->name, 0, sizeof(n->name));
+	for (size_t i = NUPHY_NAME_HEADER; i < n->block[0]; i += 2) {
+		uint16_t unit = le16(&n->block[i]);
+
+		*out++ = unit >= 0x20 && unit <= 0x7e ? (uint8_t)unit : '?';
+	}
+	n->held = 0;
 }
 
 /* The keyboard drops an ACK payload whose sequence byte is 0. */

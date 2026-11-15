@@ -26,6 +26,8 @@ static bool link_was_lost;
 static bool heard;
 static uint32_t last_packet_ms;
 
+_Static_assert(sizeof(((struct diag_status *)0)->keyboard_name) >= NUPHY_NAME_MAX, "status name");
+
 static int home(void)
 {
 	return link_home(&link);
@@ -187,6 +189,7 @@ static void fill_status(struct diag_status *s)
 		memcpy(s->forced, forced, sizeof(s->forced));
 	}
 	memcpy(s->keyboard_id, link.keyboard_id, sizeof(s->keyboard_id));
+	memcpy(s->keyboard_name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
 }
 
 static void print_counters(void)

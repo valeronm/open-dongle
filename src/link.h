@@ -62,6 +62,8 @@ struct link {
 	enum link_state state;
 	uint8_t dongle_id[NUPHY_ID_LEN];
 	uint8_t keyboard_id[NUPHY_ID_LEN];
+	/* Empty until the paired keyboard sends its name. */
+	struct nuphy_name keyboard_name;
 	uint8_t own[LINK_OWN_CHANNELS];
 	bool own_known;
 	/* The fixed channels, then each of own that is not among them. */

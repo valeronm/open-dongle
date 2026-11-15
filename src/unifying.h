@@ -24,8 +24,7 @@
 #define UNIFYING_COUNTER_WINDOW 16
 #define UNIFYING_ATTACK_MS 5000
 #define UNIFYING_KEYSTROKE_REPORTS 2
-#define UNIFYING_WPID_LEN 2
-#define UNIFYING_RECORD_LEN (UNIFYING_WPID_LEN + UNIFYING_KEY_LEN)
+#define UNIFYING_SERIAL_LEN 4
 #define UNIFYING_COUNTER_LIMIT (0x100000000ULL - (1ULL << 20))
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
@@ -46,23 +45,26 @@ enum unifying_state {
 	UNIFYING_ANSWERED_2,
 };
 
+/* The flash record is these bytes in this order. */
 struct unifying_device {
 	uint8_t wpid[2];
 	uint8_t key[UNIFYING_KEY_LEN];
+	uint8_t serial[UNIFYING_SERIAL_LEN];
+	uint8_t type;
+	/* Padded with zeros. */
+	uint8_t name[UNIFYING_NAME_MAX];
 };
+
+#define UNIFYING_RECORD_LEN sizeof(struct unifying_device)
 
 struct unifying_attempt {
 	enum unifying_state state;
 	uint8_t id;
 	uint64_t last_ms;
 	struct unifying_device dev;
-	uint8_t device_type;
 	uint8_t caps;
 	uint8_t device_nonce[UNIFYING_NONCE_LEN];
 	uint8_t dongle_nonce[UNIFYING_NONCE_LEN];
-	uint8_t serial[4];
-	uint8_t name[UNIFYING_NAME_MAX];
-	uint8_t name_len;
 };
 
 struct unifying_pairing {
@@ -226,7 +228,6 @@ void unifying_led_sent(struct unifying_led *led, uint8_t leds, uint32_t taken_co
 /* An outstanding frame that left the queue untaken is sent again. */
 void unifying_led_dropped(struct unifying_led *led);
 
-/* The record is the wpid followed by the key. */
 void unifying_record_of(const struct unifying_pairing *p, uint8_t out[UNIFYING_RECORD_LEN]);
 
 /* Discards whatever state p holds and pairs the recorded device. */

@@ -28,6 +28,9 @@
   and the paired ones marked) and the dongle, colors the link state and signal, and names the
   protocol in its title. The history panel charts channel changes per minute. In Unifying mode,
   which counts no losses or gaps, the panel and `open-dongle history` leave them out.
+- In Unifying mode `open-dongle status` shows the name, serial and device type the keyboard
+  reported when it paired, and the live view's title names the keyboard. In NuPhy mode both show
+  the name the keyboard sends each time it connects.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.

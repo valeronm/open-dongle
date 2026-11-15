@@ -177,6 +177,50 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 	CHECK_EQ(led(), LINK_LED_CONNECTED);
 }
 
+static const uint8_t name_chunks[][NUPHY_NAME_CHUNK] = {
+	{0x2c, 0x03, 'N', 0, 'u', 0, 'P', 0, 'h', 0, 'y', 0, ' ', 0, 'A', 0, 'i', 0, 'r', 0},
+	{'7', 0, '5', 0, ' ', 0, 'V', 0, '2', 0, ' ', 0, 'D', 0, 'o', 0, 'n', 0, 'g', 0},
+	{'l', 0, 'e', 0},
+};
+static const uint8_t no_name[NUPHY_NAME_MAX];
+
+static void send_name(uint8_t pipe, uint32_t now)
+{
+	for (size_t i = 0; i < sizeof(name_chunks) / sizeof(name_chunks[0]); i++) {
+		struct nuphy_msg m = {.kind = NUPHY_NAME};
+
+		memcpy(m.name_chunk, name_chunks[i], NUPHY_NAME_CHUNK);
+		deliver(&m, pipe, now + (uint32_t)i);
+	}
+}
+
+static void test_the_paired_keyboard_sends_its_name_on_pipe_1(void)
+{
+	static const uint8_t expected[NUPHY_NAME_MAX] = "NuPhy Air75 V2 Dongle";
+
+	init(home);
+	send_name(0, 10);
+	CHECK_MEM(l.keyboard_name.name, no_name, sizeof(no_name));
+	send_name(1, 20);
+	CHECK_MEM(l.keyboard_name.name, expected, sizeof(expected));
+}
+
+static void test_a_confirmed_pairing_forgets_the_name(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(home);
+	send_name(1, 10);
+	tick(1100);
+	open_pairing(1200);
+	deliver(&request, 0, 1250);
+	survey(surveyed, 2000);
+	deliver(&confirm, 0, 2040);
+	CHECK(out.save_channels);
+	CHECK_MEM(l.keyboard_name.name, no_name, sizeof(no_name));
+}
+
 static void test_confirm_for_another_dongle_is_ignored(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -944,6 +988,8 @@ int main(void)
 	RUN(test_pairing_running_out_is_reported_once);
 	RUN(test_pairing_running_out_mid_attempt_is_reported_when_the_attempt_ends);
 	RUN(test_a_pairing_with_no_confirm_expires);
+	RUN(test_the_paired_keyboard_sends_its_name_on_pipe_1);
+	RUN(test_a_confirmed_pairing_forgets_the_name);
 	RUN(test_a_requested_move_holds_through_a_loss);
 	RUN(test_a_requested_move_takes_any_of_the_keyboards_channels);
 	RUN(test_a_requested_move_works_on_a_silent_paired_link);

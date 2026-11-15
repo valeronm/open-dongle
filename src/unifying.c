@@ -115,7 +115,7 @@ static size_t response_1(const struct unifying_attempt *a, const struct unifying
 	out[7] = r->device_octet;
 	out[8] = 0x08;
 	memcpy(&out[9], r->wpid, 2);
-	out[13] = a->device_type;
+	out[13] = a->dev.type;
 	out[14] = a->caps;
 	return seal(out, UNIFYING_FRAME_MAX);
 }
@@ -127,7 +127,7 @@ static size_t response_2(const struct unifying_attempt *a, const uint8_t *reques
 	out[1] = MARKER_RESPONSE;
 	out[2] = 0x02;
 	memcpy(&out[3], a->dongle_nonce, UNIFYING_NONCE_LEN);
-	memcpy(&out[7], a->serial, 4);
+	memcpy(&out[7], a->dev.serial, UNIFYING_SERIAL_LEN);
 	memcpy(&out[11], &request[11], 2);
 	return seal(out, UNIFYING_FRAME_MAX);
 }
@@ -165,8 +165,7 @@ static size_t start(struct unifying_attempt *a, const struct unifying_receiver *
 		.state = UNIFYING_ANSWERED_1,
 		.id = frame[0],
 		.last_ms = now_ms,
-		.dev.wpid = {frame[9], frame[10]},
-		.device_type = frame[13],
+		.dev = {.wpid = {frame[9], frame[10]}, .type = frame[13]},
 		.caps = frame[14],
 	};
 	memcpy(a->dongle_nonce, nonce, UNIFYING_NONCE_LEN);
@@ -191,7 +190,7 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 	}
 	if (step == 2 && a->state == UNIFYING_ANSWERED_1 && frame[0] == a->id) {
 		memcpy(a->device_nonce, &frame[3], UNIFYING_NONCE_LEN);
-		memcpy(a->serial, &frame[7], 4);
+		memcpy(a->dev.serial, &frame[7], UNIFYING_SERIAL_LEN);
 		unifying_derive_key(a->dev.key, r->base, a->dev.wpid, r->wpid, a->device_nonce,
 				    a->dongle_nonce);
 		a->state = UNIFYING_ANSWERED_2;
@@ -201,8 +200,8 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 	}
 	/* Request 3 carries 0x00 in the id byte, not the attempt's id. */
 	if (step == 3 && a->state == UNIFYING_ANSWERED_2) {
-		a->name_len = frame[4] < UNIFYING_NAME_MAX ? frame[4] : UNIFYING_NAME_MAX;
-		memcpy(a->name, &frame[5], a->name_len);
+		memcpy(a->dev.name, &frame[5],
+		       frame[4] < UNIFYING_NAME_MAX ? frame[4] : UNIFYING_NAME_MAX);
 		a->state = UNIFYING_IDLE;
 		p->has_device = true;
 		p->device = a->dev;
@@ -492,23 +491,16 @@ bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms)
 	return silent;
 }
 
-#define RECORD_KEY_OFFSET UNIFYING_WPID_LEN
-
-_Static_assert(sizeof(((struct unifying_device *)0)->wpid) == UNIFYING_WPID_LEN, "record wpid");
-_Static_assert(sizeof(((struct unifying_device *)0)->key) == UNIFYING_KEY_LEN, "record key");
-
 void unifying_record_of(const struct unifying_pairing *p, uint8_t out[UNIFYING_RECORD_LEN])
 {
-	memcpy(out, p->device.wpid, UNIFYING_WPID_LEN);
-	memcpy(&out[RECORD_KEY_OFFSET], p->device.key, UNIFYING_KEY_LEN);
+	memcpy(out, &p->device, UNIFYING_RECORD_LEN);
 }
 
 void unifying_record_restore(struct unifying_pairing *p, const uint8_t in[UNIFYING_RECORD_LEN])
 {
 	struct unifying_device d;
 
-	memcpy(d.wpid, in, UNIFYING_WPID_LEN);
-	memcpy(d.key, &in[RECORD_KEY_OFFSET], UNIFYING_KEY_LEN);
+	memcpy(&d, in, UNIFYING_RECORD_LEN);
 	unifying_pairing_restore(p, &d);
 }
 

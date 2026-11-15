@@ -310,6 +310,31 @@ impl Counters {
     }
 }
 
+// Equal to the firmware's `DIAG_NAME_MAX`.
+const NAME_MAX: usize = 24;
+
+/// A name holds printable ASCII only.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Keyboard {
+    Unifying {
+        name: Option<String>,
+        serial: [u8; 4],
+        kind: u8,
+    },
+    Nuphy {
+        name: String,
+    },
+}
+
+impl Keyboard {
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Unifying { name, .. } => name.as_deref(),
+            Self::Nuphy { name } => Some(name),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub firmware_version: [u8; 3],
@@ -333,6 +358,7 @@ pub struct Status {
     pub events_oldest: u32,
     pub protocol: Protocol,
     pub pairing_open: bool,
+    pub keyboard: Option<Keyboard>,
 }
 
 /// The channels a NuPhy keyboard looks for its dongle on besides the three it gets at pairing.
@@ -415,6 +441,12 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         merges: r.u32()?,
         surveys: r.u32()?,
     };
+    let [minute_next, minute_oldest, events_total, events_oldest] =
+        [r.u32()?, r.u32()?, r.u32()?, r.u32()?];
+    let protocol = Protocol::from_code(r.u8()?)
+        .ok_or_else(|| anyhow::anyhow!("the dongle reports a protocol this tool does not know"))?;
+    let pairing_open = r.u8()? != 0;
+    let keyboard = read_keyboard(&mut r, protocol)?;
     Ok(Ok(Status {
         firmware_version,
         uptime_ms,
@@ -429,15 +461,40 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         usb_live: usb & 1 != 0,
         usb_suspended: usb & 2 != 0,
         counters,
-        minute_next: r.u32()?,
-        minute_oldest: r.u32()?,
-        events_total: r.u32()?,
-        events_oldest: r.u32()?,
-        protocol: Protocol::from_code(r.u8()?).ok_or_else(|| {
-            anyhow::anyhow!("the dongle reports a protocol this tool does not know")
-        })?,
-        pairing_open: r.u8()? != 0,
+        minute_next,
+        minute_oldest,
+        events_total,
+        events_oldest,
+        protocol,
+        pairing_open,
+        keyboard,
     }))
+}
+
+fn read_keyboard(r: &mut Reader, protocol: Protocol) -> Result<Option<Keyboard>> {
+    let serial = r.bytes::<4>()?;
+    let kind = r.u8()?;
+    let name = r.bytes::<NAME_MAX>()?;
+    let name: String = name
+        .iter()
+        .take_while(|&&b| b != 0)
+        .map(|&b| {
+            if b.is_ascii_graphic() || b == b' ' {
+                char::from(b)
+            } else {
+                '?'
+            }
+        })
+        .collect();
+    let name = (!name.is_empty()).then_some(name);
+    Ok(match protocol {
+        Protocol::Unifying => (name.is_some() || serial != [0; 4] || kind != 0)
+            .then_some(Keyboard::Unifying { name, serial, kind }),
+        // A NuPhy keyboard sends the name its dongle should show on USB.
+        Protocol::Nuphy => name.map(|name| Keyboard::Nuphy {
+            name: name.strip_suffix(" Dongle").unwrap_or(&name).into(),
+        }),
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -645,14 +702,18 @@ pub(crate) mod tests {
             .collect()
     }
 
+    pub(crate) const PROTOCOL_AT: usize = 86;
+    const PAIRING_AT: usize = PROTOCOL_AT + 1;
+    const KEYBOARD_AT: usize = PAIRING_AT + 1;
+    const NAME_AT: usize = KEYBOARD_AT + 5;
+
     pub(crate) fn fixture(name: &str) -> Vec<u8> {
         parse_hex(&fixture_text(name))
     }
 
     pub(crate) fn status_running(code: u8) -> Vec<u8> {
         let mut payload = fixture("status.hex");
-        let at = payload.len() - 2;
-        payload[at] = code;
+        payload[PROTOCOL_AT] = code;
         payload
     }
 
@@ -741,13 +802,78 @@ pub(crate) mod tests {
         assert_eq!((s.events_total, s.events_oldest), (600, 88));
         assert_eq!(s.protocol, Protocol::Nuphy);
         assert!(s.pairing_open);
+        assert_eq!(
+            s.keyboard,
+            Some(Keyboard::Nuphy {
+                name: "MX Keys".into()
+            })
+        );
+        let unifying = read_status(&status_running(Protocol::Unifying as u8))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            unifying.keyboard,
+            Some(Keyboard::Unifying {
+                name: Some("MX Keys".into()),
+                serial: [0xb8, 0xbc, 0xd5, 0xb3],
+                kind: 1
+            })
+        );
     }
 
     #[test]
     fn a_zero_pairing_byte_reads_as_closed() {
         let mut payload = fixture("status.hex");
-        *payload.last_mut().unwrap() = 0;
+        payload[PAIRING_AT] = 0;
         assert!(!read_status(&payload).unwrap().unwrap().pairing_open);
+    }
+
+    #[test]
+    fn a_keyboard_that_reported_nothing_reads_as_none() {
+        let mut payload = fixture("status.hex");
+        payload[KEYBOARD_AT..].fill(0);
+        assert_eq!(read_status(&payload).unwrap().unwrap().keyboard, None);
+    }
+
+    fn keyboard_named(protocol: Protocol, name: &[u8]) -> Option<Keyboard> {
+        let mut payload = status_running(protocol as u8);
+        payload[NAME_AT..].fill(0);
+        payload[NAME_AT..][..name.len()].copy_from_slice(name);
+        read_status(&payload).unwrap().unwrap().keyboard
+    }
+
+    #[test]
+    fn a_keyboard_name_keeps_only_printable_ascii() {
+        let keyboard = keyboard_named(Protocol::Unifying, b"MX\x1b[2J\xffKeys").unwrap();
+        assert_eq!(keyboard.name(), Some("MX?[2J?Keys"));
+    }
+
+    #[test]
+    fn a_keyboard_name_can_fill_its_field() {
+        let keyboard = keyboard_named(Protocol::Nuphy, b"Twenty-four letters long").unwrap();
+        assert_eq!(keyboard.name(), Some("Twenty-four letters long"));
+    }
+
+    #[test]
+    fn only_a_nuphy_name_loses_its_dongle_suffix() {
+        for (protocol, shown) in [
+            (Protocol::Nuphy, "NuPhy Air75 V2"),
+            (Protocol::Unifying, "NuPhy Air75 V2 Dongle"),
+        ] {
+            let keyboard = keyboard_named(protocol, b"NuPhy Air75 V2 Dongle").unwrap();
+            assert_eq!(keyboard.name(), Some(shown));
+        }
+    }
+
+    #[test]
+    fn a_unifying_keyboard_without_a_name_has_none() {
+        let keyboard = keyboard_named(Protocol::Unifying, b"").unwrap();
+        assert_eq!(keyboard.name(), None);
+    }
+
+    #[test]
+    fn the_status_fixture_ends_with_the_keyboard_name() {
+        assert_eq!(fixture("status.hex").len(), NAME_AT + NAME_MAX);
     }
 
     #[test]

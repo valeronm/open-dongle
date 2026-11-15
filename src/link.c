@@ -140,6 +140,7 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_PAIRING && same_keyboard &&
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		set_own(l, l->offered);
+		l->keyboard_name = (struct nuphy_name){0};
 		pairwin_paired(&l->window);
 		out->save_channels = true;
 		l->state = LINK_CONFIRMED;
@@ -185,6 +186,9 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		out->gap_channel = l->channel;
 	}
 	l->last_rx_ms = now_ms;
+	if (m->kind == NUPHY_NAME) {
+		nuphy_name_add(&l->keyboard_name, m->name_chunk);
+	}
 	switch (l->state) {
 	case LINK_CONFIRMED:
 		/* This packet's ACK carried the status queued on entering this state. */

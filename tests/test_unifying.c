@@ -9,6 +9,7 @@ static const struct unifying_receiver receiver = {
 };
 static const uint8_t nonce[4] = {0x11, 0x22, 0x33, 0x44};
 static const uint8_t other_nonce[4] = {0x99, 0x99, 0x99, 0x99};
+static const uint8_t mx_keys[UNIFYING_NAME_MAX] = "MX Keys";
 
 static void seal(uint8_t *frame, size_t len)
 {
@@ -51,7 +52,7 @@ static void request_3(uint8_t *f, uint8_t id)
 	f[2] = 0x03;
 	f[3] = 0x01;
 	f[4] = 7;
-	memcpy(&f[5], "MX Keys", 7);
+	memcpy(&f[5], mx_keys, 7);
 	seal(f, UNIFYING_FRAME_MAX);
 }
 
@@ -177,7 +178,6 @@ static void test_request_1_is_answered_with_the_assigned_address(void)
 	CHECK_EQ(n, UNIFYING_FRAME_MAX);
 	CHECK_EQ(p.attempt.state, UNIFYING_ANSWERED_1);
 	CHECK_MEM(reply, want, UNIFYING_FRAME_MAX);
-	CHECK_EQ(p.attempt.device_type, 0x01);
 	CHECK_EQ(p.attempt.caps, 0x05);
 	CHECK_EQ(p.attempt.dev.wpid[0], 0x40);
 	CHECK_EQ(p.attempt.dev.wpid[1], 0x8b);
@@ -238,8 +238,31 @@ static void test_request_3_gets_the_final_response_and_completes(void)
 	CHECK(unifying_has_device(&p));
 	CHECK_MEM(p.device.key, p.attempt.dev.key, UNIFYING_KEY_LEN);
 	CHECK_EQ(p.attempt.state, UNIFYING_IDLE);
-	CHECK_EQ(p.attempt.name_len, 7);
-	CHECK_MEM(p.attempt.name, "MX Keys", 7);
+}
+
+static void test_a_paired_device_holds_what_the_keyboard_reported_about_itself(void)
+{
+	static const uint8_t serial[UNIFYING_SERIAL_LEN] = {0x51, 0x52, 0x53, 0x54};
+	struct unifying_pairing p = open_pairing();
+
+	pair_fully(&p);
+	CHECK_MEM(p.device.serial, serial, sizeof(serial));
+	CHECK_EQ(p.device.type, 0x01);
+	CHECK_MEM(p.device.name, mx_keys, sizeof(mx_keys));
+}
+
+static void test_a_name_longer_than_the_frame_holds_is_cut(void)
+{
+	struct unifying_pairing p = open_pairing();
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+
+	pair_through_request_2(&p);
+	request_3(f, 0x00);
+	f[4] = 200;
+	memset(&f[5], 'A', UNIFYING_NAME_MAX);
+	seal(f, UNIFYING_FRAME_MAX);
+	feed(&p, f, sizeof(f), 20, reply);
+	CHECK_MEM(p.device.name, "AAAAAAAAAAAAAAAA", UNIFYING_NAME_MAX);
 }
 
 static void test_request_3_is_accepted_though_its_id_byte_is_zero(void)
@@ -251,7 +274,6 @@ static void test_request_3_is_accepted_though_its_id_byte_is_zero(void)
 	request_3(f, 0x00);
 	CHECK_EQ(feed(&p, f, sizeof(f), 20, reply), 10);
 	CHECK(unifying_has_device(&p));
-	CHECK_MEM(p.attempt.name, "MX Keys", 7);
 }
 
 static void test_a_repeated_request_gets_no_second_reply(void)
@@ -1410,17 +1432,20 @@ static void test_a_known_counter_refuses_counters_below_it_and_bounds_the_window
 	CHECK(receive_keystroke(&l, 5000, press_a, &r));
 }
 
-static void test_the_record_is_the_wpid_then_the_key(void)
+static void test_the_record_is_the_wpid_the_key_then_the_keyboards_own_report(void)
 {
 	struct unifying_pairing p;
 	struct unifying_device d;
 	uint8_t rec[UNIFYING_RECORD_LEN];
 
-	CHECK_EQ(UNIFYING_RECORD_LEN, 18);
+	CHECK_EQ(UNIFYING_RECORD_LEN, 39);
 	restore_paired(&p, &d);
 	unifying_record_of(&p, rec);
 	CHECK_MEM(&rec[0], d.wpid, 2);
 	CHECK_MEM(&rec[2], d.key, UNIFYING_KEY_LEN);
+	CHECK_MEM(&rec[18], d.serial, UNIFYING_SERIAL_LEN);
+	CHECK_EQ(rec[22], d.type);
+	CHECK_MEM(&rec[23], mx_keys, sizeof(mx_keys));
 }
 
 static void test_a_restored_record_pairs_the_device(void)
@@ -2318,6 +2343,8 @@ int main(void)
 	RUN(test_request_1_without_the_unifying_bit_is_refused);
 	RUN(test_request_2_is_answered_with_the_nonce_and_derives_the_key);
 	RUN(test_request_3_gets_the_final_response_and_completes);
+	RUN(test_a_paired_device_holds_what_the_keyboard_reported_about_itself);
+	RUN(test_a_name_longer_than_the_frame_holds_is_cut);
 	RUN(test_request_3_is_accepted_though_its_id_byte_is_zero);
 	RUN(test_a_repeated_request_gets_no_second_reply);
 	RUN(test_a_request_out_of_order_or_with_another_id_is_ignored);
@@ -2394,7 +2421,7 @@ int main(void)
 	RUN(test_nothing_held_is_never_silent);
 	RUN(test_a_release_report_clears_the_held_state);
 	RUN(test_a_known_counter_refuses_counters_below_it_and_bounds_the_window);
-	RUN(test_the_record_is_the_wpid_then_the_key);
+	RUN(test_the_record_is_the_wpid_the_key_then_the_keyboards_own_report);
 	RUN(test_a_restored_record_pairs_the_device);
 	RUN(test_no_led_frame_is_due_before_a_change_or_resend);
 	RUN(test_an_led_change_is_sent_at_once);

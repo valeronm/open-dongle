@@ -11,9 +11,18 @@ static const uint8_t pair_confirm[] = {
 static const uint8_t hello[] = {
 	0x18, 0x35, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0xa7};
-static const uint8_t name[] = {
-	0x24, 0x56, 0x2c, 0x03, 0x4e, 0x00, 0x75, 0x00, 0x50, 0x00, 0x68, 0x00, 0x79, 0x00, 0x20,
-	0x00, 0x41, 0x00, 0x69, 0x00, 0x72, 0x00, 0x5a, 0x33};
+static const uint8_t name_1[] = {
+	0x41, 0x56, 0x2c, 0x03, 0x4e, 0x00, 0x75, 0x00, 0x50, 0x00, 0x68, 0x00, 0x79, 0x00, 0x20,
+	0x00, 0x41, 0x00, 0x69, 0x00, 0x72, 0x00, 0x5a, 0x50};
+static const uint8_t name_2[] = {
+	0x42, 0x56, 0x37, 0x00, 0x35, 0x00, 0x20, 0x00, 0x56, 0x00, 0x32, 0x00, 0x20, 0x00, 0x44,
+	0x00, 0x6f, 0x00, 0x6e, 0x00, 0x67, 0x00, 0x5a, 0xae};
+static const uint8_t name_3[] = {
+	0x43, 0x56, 0x6c, 0x00, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0xc4};
+static const uint8_t mouse[] = {
+	0x5b, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x15};
 static const uint8_t keyboard_f[] = {
 	0x7e, 0x61, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x42};
@@ -76,7 +85,65 @@ static void test_short_frame_is_a_keepalive(void)
 static void test_hello_and_other_valid_types(void)
 {
 	CHECK_EQ(nuphy_parse(hello, sizeof(hello)).kind, NUPHY_HELLO);
-	CHECK_EQ(nuphy_parse(name, sizeof(name)).kind, NUPHY_IGNORED);
+	CHECK_EQ(nuphy_parse(name_1, sizeof(name_1)).kind, NUPHY_NAME);
+	CHECK_EQ(nuphy_parse(mouse, sizeof(mouse)).kind, NUPHY_IGNORED);
+}
+
+static const uint8_t no_name[NUPHY_NAME_MAX];
+static const uint8_t air75_name[NUPHY_NAME_MAX] = "NuPhy Air75 V2 Dongle";
+
+static void add(struct nuphy_name *n, const uint8_t *frame, size_t len)
+{
+	struct nuphy_msg m = nuphy_parse(frame, len);
+
+	nuphy_name_add(n, m.name_chunk);
+}
+
+static void test_the_chunks_of_a_string_descriptor_make_the_name(void)
+{
+	struct nuphy_name n = {0};
+
+	add(&n, name_1, sizeof(name_1));
+	add(&n, name_2, sizeof(name_2));
+	CHECK_MEM(n.name, no_name, sizeof(no_name));
+	add(&n, name_3, sizeof(name_3));
+	CHECK_MEM(n.name, air75_name, sizeof(air75_name));
+}
+
+static void test_a_first_chunk_starts_the_name_over(void)
+{
+	struct nuphy_name n = {0};
+
+	add(&n, name_1, sizeof(name_1));
+	add(&n, name_2, sizeof(name_2));
+	add(&n, name_1, sizeof(name_1));
+	add(&n, name_2, sizeof(name_2));
+	CHECK_MEM(n.name, no_name, sizeof(no_name));
+	add(&n, name_3, sizeof(name_3));
+	CHECK_MEM(n.name, air75_name, sizeof(air75_name));
+}
+
+static void test_a_chunk_with_no_name_started_is_dropped(void)
+{
+	struct nuphy_name n = {0};
+
+	add(&n, name_2, sizeof(name_2));
+	add(&n, name_3, sizeof(name_3));
+	CHECK_MEM(n.name, no_name, sizeof(no_name));
+	add(&n, name_1, sizeof(name_1));
+	add(&n, name_2, sizeof(name_2));
+	add(&n, name_3, sizeof(name_3));
+	CHECK_MEM(n.name, air75_name, sizeof(air75_name));
+}
+
+static void test_a_name_character_outside_ascii_becomes_a_question_mark(void)
+{
+	static const uint8_t expected[NUPHY_NAME_MAX] = "A?";
+	static const uint8_t chunk[NUPHY_NAME_CHUNK] = {6, 3, 'A', 0, 0xe9, 0x03};
+	struct nuphy_name n = {0};
+
+	nuphy_name_add(&n, chunk);
+	CHECK_MEM(n.name, expected, sizeof(expected));
 }
 
 static void test_bad_checksum_or_length_is_invalid(void)
@@ -180,6 +247,10 @@ int main(void)
 	RUN(test_other_messages_carry_no_report);
 	RUN(test_short_frame_is_a_keepalive);
 	RUN(test_hello_and_other_valid_types);
+	RUN(test_the_chunks_of_a_string_descriptor_make_the_name);
+	RUN(test_a_first_chunk_starts_the_name_over);
+	RUN(test_a_chunk_with_no_name_started_is_dropped);
+	RUN(test_a_name_character_outside_ascii_becomes_a_question_mark);
 	RUN(test_bad_checksum_or_length_is_invalid);
 	RUN(test_status_frame);
 	RUN(test_status_keeps_only_the_three_lock_bits);

@@ -24,7 +24,8 @@ use crate::format::{
     switch_question, uptime, usb_state, wall_clock, wpid,
 };
 use crate::protocol::{
-    Action, BUSY_DBM, Counter, Event, Minute, NoiseChannel, Protocol, Status, Step, step_channel,
+    Action, BUSY_DBM, Counter, Event, Keyboard, Minute, NoiseChannel, Protocol, Status, Step,
+    step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -664,7 +665,11 @@ impl<T: Transport> App<T> {
 
     fn draw(&mut self, f: &mut Frame) {
         let title = match &self.history.status {
-            Some(s) => format!("OpenDongle · {}", s.protocol.name()),
+            Some(s) => ["OpenDongle", s.protocol.name()]
+                .into_iter()
+                .chain(s.keyboard.as_ref().and_then(Keyboard::name))
+                .collect::<Vec<_>>()
+                .join(" · "),
             None => "OpenDongle".into(),
         };
         let status = Paragraph::new(self.status_lines()).block(Block::bordered().title(title));
@@ -1587,8 +1592,7 @@ mod tests {
     fn status_payload(uptime_ms: u64, minute_next: u32, minute_oldest: u32) -> Vec<u8> {
         let mut p = fixture("status.hex");
         p[4..12].copy_from_slice(&uptime_ms.to_le_bytes());
-        // The protocol and pairing bytes follow the event counts.
-        let n = p.len() - 2;
+        let n = crate::protocol::tests::PROTOCOL_AT;
         p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
         p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
         p[n - 8..n - 4].copy_from_slice(&0u32.to_le_bytes());
@@ -1698,7 +1702,11 @@ mod tests {
         let s = nuphy_status();
         let terminal = status_box(&s);
         let rows = screen(&terminal);
-        assert!(rows[0].starts_with("┌OpenDongle · NuPhy"), "{}", rows[0]);
+        assert!(
+            rows[0].starts_with("┌OpenDongle · NuPhy · MX Keys"),
+            "{}",
+            rows[0]
+        );
         assert_eq!(
             inside_box(&rows[1]),
             "link      connected on 26   -71 dBm   last packet 12 ms ago"
@@ -1718,11 +1726,15 @@ mod tests {
     }
 
     #[test]
-    fn a_unifying_link_row_names_the_keyboard() {
+    fn a_unifying_status_box_names_the_keyboard_in_its_title() {
         let s = unifying_status();
         let terminal = status_box(&s);
         let rows = screen(&terminal);
-        assert!(rows[0].starts_with("┌OpenDongle · Unifying"), "{}", rows[0]);
+        assert!(
+            rows[0].starts_with("┌OpenDongle · Unifying · MX Keys"),
+            "{}",
+            rows[0]
+        );
         assert!(
             inside_box(&rows[1]).starts_with(&format!(
                 "link      connected on {}, keyboard {}   {} dBm",
@@ -1737,6 +1749,16 @@ mod tests {
             inside_box(&rows[2]),
             "channels  5 8 17 32 35 41 44 62 65 71 74"
         );
+    }
+
+    #[test]
+    fn the_title_ends_at_the_protocol_before_the_keyboard_sent_its_name() {
+        let unnamed = Status {
+            keyboard: None,
+            ..nuphy_status()
+        };
+        let rows = screen(&status_box(&unnamed));
+        assert!(rows[0].starts_with("┌OpenDongle · NuPhy─"), "{}", rows[0]);
     }
 
     #[test]

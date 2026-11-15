@@ -165,10 +165,12 @@ pub fn paired(own: Option<[u8; 3]>) -> String {
     })
 }
 
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
-    id.map_or("not seen since boot".into(), |id| {
-        id.iter().map(|b| format!("{b:02x}")).collect()
-    })
+    id.map_or("not seen since boot".into(), |id| hex(&id))
 }
 
 pub fn state_name(s: &Status) -> &'static str {
@@ -204,8 +206,25 @@ fn unifying_state_name(state: u8) -> &'static str {
     }
 }
 
+pub fn unifying_kind(kind: u8) -> String {
+    match kind {
+        0x01 => "keyboard",
+        0x02 => "mouse",
+        0x03 => "numpad",
+        0x04 => "presenter",
+        0x07 => "remote",
+        0x08 => "trackball",
+        0x09 => "touchpad",
+        0x0a => "tablet",
+        0x0b => "gamepad",
+        0x0c => "joystick",
+        _ => return format!("{kind:#04x}"),
+    }
+    .into()
+}
+
 pub fn wpid(id: Option<[u8; 4]>) -> String {
-    id.map_or("none".into(), |id| format!("{:02x}{:02x}", id[0], id[1]))
+    id.map_or("none".into(), |id| hex(&id[..2]))
 }
 
 pub fn duration(ms: u32) -> String {
@@ -827,6 +846,13 @@ mod tests {
         assert_eq!(unifying_state_name(1), "connected");
         assert_eq!(unifying_state_name(2), "silent");
         assert_eq!(unifying_state_name(9), "unknown");
+    }
+
+    #[test]
+    fn a_unifying_device_type_prints_its_name_or_its_number() {
+        assert_eq!(unifying_kind(1), "keyboard");
+        assert_eq!(unifying_kind(2), "mouse");
+        assert_eq!(unifying_kind(0x7f), "0x7f");
     }
 
     #[test]

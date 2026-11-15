@@ -19,6 +19,7 @@
 #define DIAG_PAYLOAD_MAX 704
 #define DIAG_MINUTES_PER_PAGE 40
 #define DIAG_EVENTS_PER_PAGE 32
+#define DIAG_NAME_MAX 24
 
 enum diag_command {
 	DIAG_STATUS = 1,
@@ -76,6 +77,10 @@ struct diag_status {
 	uint32_t events_oldest;
 	uint8_t protocol;
 	bool pairing_open;
+	/* The name is padded with zeros. */
+	uint8_t keyboard_serial[4];
+	uint8_t keyboard_type;
+	uint8_t keyboard_name[DIAG_NAME_MAX];
 };
 
 /* Returns false for a report shorter than DIAG_REQUEST_LEN. */

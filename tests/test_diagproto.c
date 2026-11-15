@@ -69,6 +69,9 @@ static void test_status_matches_fixture(void)
 		.events_oldest = 88,
 		.protocol = PROTOCOL_NUPHY,
 		.pairing_open = true,
+		.keyboard_serial = {0xb8, 0xbc, 0xd5, 0xb3},
+		.keyboard_type = 1,
+		.keyboard_name = "MX Keys",
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];
