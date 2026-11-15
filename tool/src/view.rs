@@ -291,7 +291,8 @@ fn role_color(role: ChannelRole) -> Color {
     }
 }
 
-/// The dongle's status and history as last fetched, kept in step with its indexes.
+/// The dongle's status and history as last fetched, and the view's place in them, kept in step
+/// with its indexes.
 pub(crate) struct History {
     pub(crate) status: Status,
     pub(crate) boot: DateTime<Local>,
@@ -299,6 +300,8 @@ pub(crate) struct History {
     pub(crate) events: Vec<(u32, Event)>,
     /// The number of the event shown at the top of the events list, or `None` to follow the newest.
     pub(crate) events_top: Option<u32>,
+    /// The minutes the chart's right edge sits before the newest one.
+    pub(crate) minutes_back: usize,
 }
 
 fn boot_time(s: &Status) -> DateTime<Local> {
@@ -313,18 +316,36 @@ impl History {
             minutes: Vec::new(),
             events: Vec::new(),
             events_top: None,
+            minutes_back: 0,
         }
+    }
+
+    /// `minutes_back` clamped so the chart stays full.
+    fn scrolled(&self, width: usize) -> usize {
+        self.minutes_back
+            .min(self.minutes.len().saturating_sub(width))
+    }
+
+    fn scroll_older(&mut self, width: usize) {
+        self.minutes_back = self.scrolled(width) + HISTORY_STEP_MINUTES;
+        self.minutes_back = self.scrolled(width);
+    }
+
+    fn scroll_newer(&mut self, width: usize) {
+        self.minutes_back = self.scrolled(width).saturating_sub(HISTORY_STEP_MINUTES);
+    }
+
+    fn scroll_events(&mut self, step: EventsMove, rows: usize) {
+        self.events_top = scrolled_top(&self.events, self.events_top, rows, step);
     }
 
     /// Keeps `s` even when a fetch fails.
     pub(crate) fn refresh<T: Transport>(&mut self, dev: &mut Device<T>, s: Status) -> Result<()> {
         if s.uptime_ms < self.status.uptime_ms {
-            self.minutes.clear();
-            self.events.clear();
-            self.events_top = None;
-            self.boot = boot_time(&s);
+            *self = History::new(s);
+        } else {
+            self.status = s;
         }
-        self.status = s;
         let s = &self.status;
         self.minutes
             .retain(|(i, _)| *i >= s.minute_oldest && *i < s.minute_next);
@@ -463,7 +484,6 @@ struct Session<T: Transport> {
     noise: Option<Vec<NoiseChannel>>,
     prompt: Option<Prompt>,
     message: String,
-    scroll: usize,
 }
 
 #[expect(
@@ -542,14 +562,14 @@ impl App {
                 KeyCode::Char('q') => return Ok(()),
                 KeyCode::Char(c) => session.press(c),
                 KeyCode::Esc => session.noise = None,
-                KeyCode::Left if let Some(width) = width => session.scroll_older(width),
-                KeyCode::Right if let Some(width) = width => session.scroll_newer(width),
-                KeyCode::Up => session.scroll_events(EventsMove::Newer(1), rows),
-                KeyCode::Down => session.scroll_events(EventsMove::Older(1), rows),
-                KeyCode::PageUp => session.scroll_events(EventsMove::Newer(rows), rows),
-                KeyCode::PageDown => session.scroll_events(EventsMove::Older(rows), rows),
-                KeyCode::Home => session.scroll_events(EventsMove::Newest, rows),
-                KeyCode::End => session.scroll_events(EventsMove::Oldest, rows),
+                KeyCode::Left if let Some(width) = width => session.history.scroll_older(width),
+                KeyCode::Right if let Some(width) = width => session.history.scroll_newer(width),
+                KeyCode::Up => session.history.scroll_events(EventsMove::Newer(1), rows),
+                KeyCode::Down => session.history.scroll_events(EventsMove::Older(1), rows),
+                KeyCode::PageUp => session.history.scroll_events(EventsMove::Newer(rows), rows),
+                KeyCode::PageDown => session.history.scroll_events(EventsMove::Older(rows), rows),
+                KeyCode::Home => session.history.scroll_events(EventsMove::Newest, rows),
+                KeyCode::End => session.history.scroll_events(EventsMove::Oldest, rows),
                 _ => {}
             }
         }
@@ -582,7 +602,6 @@ impl<T: Transport> Session<T> {
             noise: None,
             prompt: None,
             message: String::new(),
-            scroll: 0,
         }
     }
 
@@ -629,26 +648,6 @@ impl<T: Transport> Session<T> {
             }
             Err(e) => format!("failed: {}", error_text(&e)),
         };
-    }
-
-    /// `scroll` clamped so the chart stays full.
-    fn scrolled(&self, width: usize) -> usize {
-        self.scroll
-            .min(self.history.minutes.len().saturating_sub(width))
-    }
-
-    fn scroll_older(&mut self, width: usize) {
-        self.scroll = self.scrolled(width) + HISTORY_STEP_MINUTES;
-        self.scroll = self.scrolled(width);
-    }
-
-    fn scroll_newer(&mut self, width: usize) {
-        self.scroll = self.scrolled(width).saturating_sub(HISTORY_STEP_MINUTES);
-    }
-
-    fn scroll_events(&mut self, step: EventsMove, rows: usize) {
-        let history = &mut self.history;
-        history.events_top = scrolled_top(&history.events, history.events_top, rows, step);
     }
 
     /// Returns the error that lost the dongle.
@@ -860,7 +859,7 @@ fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Sessio
     let (shown, boot): (&[(u32, Minute)], _) = match session {
         Some(session) => {
             let minutes = &session.history.minutes;
-            let end = minutes.len() - session.scrolled(width);
+            let end = minutes.len() - session.history.scrolled(width);
             (
                 &minutes[end.saturating_sub(width)..end],
                 Some(session.history.boot),
@@ -1780,18 +1779,17 @@ mod tests {
 
     #[test]
     fn the_history_scroll_stops_where_the_chart_is_still_full() {
-        let mut app = app_with(status_of(Protocol::Nuphy));
-        let s = session(&mut app);
-        s.history.minutes = (0..130).map(|i| (i, quiet())).collect();
+        let mut h = History::new(status_of(Protocol::Nuphy));
+        h.minutes = (0..130).map(|i| (i, quiet())).collect();
         for _ in 0..20 {
-            s.scroll_older(50);
+            h.scroll_older(50);
         }
-        assert_eq!(s.scroll, 80);
-        s.scroll_newer(50);
-        assert_eq!(s.scroll, 70);
-        s.history.minutes.truncate(60);
-        s.scroll_newer(50);
-        assert_eq!(s.scroll, 0);
+        assert_eq!(h.minutes_back, 80);
+        h.scroll_newer(50);
+        assert_eq!(h.minutes_back, 70);
+        h.minutes.truncate(60);
+        h.scroll_newer(50);
+        assert_eq!(h.minutes_back, 0);
     }
 
     #[test]
@@ -1829,8 +1827,10 @@ mod tests {
     fn a_reboot_starts_the_history_over() {
         let mut h = fetched(dongle(1, 200 * 60_000, 130, 0));
         h.events_top = Some(0);
+        h.minutes_back = 30;
         catch_up(&mut h, dongle(2, 3 * 60_000, 2, 0)).unwrap();
         assert_eq!(h.events_top, None);
+        assert_eq!(h.minutes_back, 0);
         assert_eq!(
             h.minutes
                 .iter()
