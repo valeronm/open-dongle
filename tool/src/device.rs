@@ -179,9 +179,7 @@ impl<T: Transport> Device<T> {
     pub fn protocol(&mut self, set: Option<Protocol>) -> Result<(Protocol, bool)> {
         let reply = self.call(Command::Protocol, set.map_or(0, |p| p as u32), TIMEOUT)?;
         let mut r = Reader::new(&reply);
-        let running = Protocol::from_code(r.u8()?).ok_or_else(|| {
-            anyhow::anyhow!("the dongle reports a protocol this tool does not know")
-        })?;
+        let running = Protocol::read(&mut r)?;
         Ok((running, r.u8()? != 0))
     }
 
@@ -430,7 +428,7 @@ pub(crate) mod tests {
             }),
             0,
         );
-        assert_eq!(dev.status().unwrap().link_state, 4);
+        assert_eq!(dev.status().unwrap().channel, 26);
     }
 
     #[test]

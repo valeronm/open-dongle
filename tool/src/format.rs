@@ -3,8 +3,8 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Event, EventKind, Keyboard, Noise, Protocol, STRONG_DBM, Status,
-    UNIFYING_NOT_PAIRED, VersionMismatch,
+    Action, BUSY_DBM, Event, EventKind, Link, Noise, NuphyState, Protocol, STRONG_DBM, Status,
+    UnifyingState, VersionMismatch,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -79,7 +79,7 @@ impl ChannelRole {
 pub fn channel_role(channel: u8, s: &Status) -> ChannelRole {
     if channel == s.channel {
         ChannelRole::Current
-    } else if s.own.is_some_and(|o| o.contains(&channel)) {
+    } else if matches!(&s.link, Link::Nuphy(n) if n.own.is_some_and(|o| o.contains(&channel))) {
         ChannelRole::Paired
     } else {
         ChannelRole::Other
@@ -177,9 +177,20 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 pub fn state_name(s: &Status) -> &'static str {
-    match s.protocol() {
-        Protocol::Nuphy => link_state_name(s.link_state),
-        Protocol::Unifying => unifying_state_name(s.link_state),
+    match &s.link {
+        Link::Nuphy(nuphy) => match nuphy.state {
+            NuphyState::Searching => "searching",
+            NuphyState::Surveying => "surveying",
+            NuphyState::Pairing => "pairing",
+            NuphyState::PairingConfirmed => "pairing confirmed",
+            NuphyState::Connected => "connected",
+            NuphyState::MovingHome => "moving home",
+        },
+        Link::Unifying(None) => "not paired",
+        Link::Unifying(Some(unifying)) => match unifying.state {
+            UnifyingState::Connected => "connected",
+            UnifyingState::Silent => "silent",
+        },
     }
 }
 
@@ -192,20 +203,19 @@ pub enum LinkHealth {
 }
 
 pub fn link_health(s: &Status) -> LinkHealth {
-    match (s.protocol(), s.link_state) {
-        (Protocol::Unifying, 1) | (Protocol::Nuphy, 4) => LinkHealth::Connected,
-        (Protocol::Unifying, UNIFYING_NOT_PAIRED) => LinkHealth::NotPaired,
-        (Protocol::Nuphy, 1..=3) => LinkHealth::Pairing,
-        _ => LinkHealth::Waiting,
-    }
-}
-
-fn unifying_state_name(state: u8) -> &'static str {
-    match state {
-        UNIFYING_NOT_PAIRED => "not paired",
-        1 => "connected",
-        2 => "silent",
-        _ => "unknown",
+    match &s.link {
+        Link::Nuphy(nuphy) => match nuphy.state {
+            NuphyState::Connected => LinkHealth::Connected,
+            NuphyState::Surveying | NuphyState::Pairing | NuphyState::PairingConfirmed => {
+                LinkHealth::Pairing
+            }
+            NuphyState::Searching | NuphyState::MovingHome => LinkHealth::Waiting,
+        },
+        Link::Unifying(None) => LinkHealth::NotPaired,
+        Link::Unifying(Some(unifying)) => match unifying.state {
+            UnifyingState::Connected => LinkHealth::Connected,
+            UnifyingState::Silent => LinkHealth::Waiting,
+        },
     }
 }
 
@@ -239,18 +249,6 @@ pub fn last_packet(age_ms: Option<u32>) -> String {
     age_ms.map_or("no packet since boot".into(), |ms| {
         format!("last packet {} ago", duration(ms))
     })
-}
-
-fn link_state_name(state: u8) -> &'static str {
-    match state {
-        0 => "searching",
-        1 => "surveying",
-        2 => "pairing",
-        3 => "pairing confirmed",
-        4 => "connected",
-        5 => "moving home",
-        _ => "unknown",
-    }
 }
 
 const RESET_CAUSES: [&str; 17] = [
@@ -350,8 +348,8 @@ fn saving(err: u32) -> String {
     }
 }
 
-pub fn describe_event(e: &Event, keyboard: &Keyboard) -> String {
-    let protocol = keyboard.protocol();
+pub fn describe_event(e: &Event, link: &Link) -> String {
+    let protocol = link.protocol();
     match e.kind {
         EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
         EventKind::Paired => format!(
@@ -418,8 +416,8 @@ pub fn describe_event(e: &Event, keyboard: &Keyboard) -> String {
         ),
         EventKind::UnifyingPaired => {
             let wpid = [e.a, e.b];
-            let name = match keyboard {
-                Keyboard::Unifying(Some(k)) if k.wpid == wpid => k.name.as_deref(),
+            let name = match link {
+                Link::Unifying(Some(u)) if u.wpid == wpid => u.name.as_deref(),
                 _ => None,
             };
             let kind = unifying_kind(e.c).unwrap_or("device");
@@ -450,16 +448,19 @@ pub fn describe_event(e: &Event, keyboard: &Keyboard) -> String {
 mod tests {
     use super::*;
     use crate::protocol::{
-        UnifyingKeyboard, read_status,
-        tests::{fixture, status_in_protocol},
+        NuphyLink, read_status,
+        tests::{fixture, status_in_protocol, status_of, unifying},
     };
     use chrono::TimeZone;
 
-    const NUPHY: Keyboard = Keyboard::Nuphy {
-        id: None,
-        name: None,
-    };
-    const UNIFYING: Keyboard = Keyboard::Unifying(None);
+    const NUPHY: Link = Link::Nuphy(NuphyLink {
+        state: NuphyState::Connected,
+        own: None,
+        forced: None,
+        keyboard_id: None,
+        keyboard_name: None,
+    });
+    const UNIFYING: Link = Link::Unifying(None);
 
     #[test]
     fn the_flash_question_names_the_file_the_board_and_its_state() {
@@ -703,18 +704,13 @@ mod tests {
 
     #[test]
     fn a_pairing_event_names_the_device_when_it_is_the_one_paired_now() {
-        let mx_keys = Keyboard::Unifying(Some(UnifyingKeyboard {
-            wpid: [0x40, 0x8a],
-            name: Some("MX Keys".into()),
-            serial: [0xb8, 0xbc, 0xd5, 0xb3],
-            kind: 1,
-        }));
+        let mx_keys = status_of(Protocol::Unifying).link;
         assert_eq!(
             describe_event(
-                &event(EventKind::UnifyingPaired, 0x40, 0x8a, 1, 0),
+                &event(EventKind::UnifyingPaired, 0x70, 0x15, 1, 0),
                 &mx_keys
             ),
-            "paired keyboard MX Keys, WPID 408a"
+            "paired keyboard MX Keys, WPID 7015"
         );
         assert_eq!(
             describe_event(
@@ -878,10 +874,12 @@ mod tests {
 
     #[test]
     fn unifying_states_have_names() {
-        assert_eq!(unifying_state_name(0), "not paired");
-        assert_eq!(unifying_state_name(1), "connected");
-        assert_eq!(unifying_state_name(2), "silent");
-        assert_eq!(unifying_state_name(9), "unknown");
+        let mut s = status_of(Protocol::Unifying);
+        assert_eq!(state_name(&s), "connected");
+        unifying(&mut s).state = UnifyingState::Silent;
+        assert_eq!(state_name(&s), "silent");
+        s.link = Link::Unifying(None);
+        assert_eq!(state_name(&s), "not paired");
     }
 
     #[test]

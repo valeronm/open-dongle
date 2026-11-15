@@ -13,7 +13,7 @@ use crate::format::{
     hex, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name, status_label,
     unifying_kind, uptime, usb_state, version, wall_clock,
 };
-use crate::protocol::{Action, Counter, ErrorCode, Keyboard, Minute, Protocol, Status};
+use crate::protocol::{Action, Counter, ErrorCode, Link, Minute, Protocol, Status};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
@@ -25,10 +25,10 @@ pub fn status(s: &Status) -> Result<()> {
 
 fn status_lines(s: &Status) -> Vec<String> {
     let c = s.counters;
-    let name = s.keyboard.name().unwrap_or("unnamed");
-    let (link, offer, keyboard) = match &s.keyboard {
-        Keyboard::Unifying(k) => {
-            let row = k.as_ref().map(|k| {
+    let name = s.link.keyboard_name().unwrap_or("unnamed");
+    let (link, offer, keyboard) = match &s.link {
+        Link::Unifying(unifying) => {
+            let row = unifying.as_ref().map(|k| {
                 let (label, kind) = match unifying_kind(k.kind) {
                     Some(kind) => (kind, String::new()),
                     None => ("device", format!(", type {:#04x}", k.kind)),
@@ -42,13 +42,13 @@ fn status_lines(s: &Status) -> Vec<String> {
             });
             (String::new(), String::new(), row)
         }
-        Keyboard::Nuphy { id, name: known } => {
-            let id = id.map(|id| format!(", ID {}", hex(&id)));
-            let row = (known.is_some() || id.is_some())
+        Link::Nuphy(nuphy) => {
+            let id = nuphy.keyboard_id.map(|id| format!(", ID {}", hex(&id)));
+            let row = (nuphy.keyboard_name.is_some() || id.is_some())
                 .then(|| ("keyboard", format!("{name}{}", id.unwrap_or_default())));
             (
-                format!(" ({})", paired(s.own)),
-                format!(", {}", pairing_offer(s.forced)),
+                format!(" ({})", paired(nuphy.own)),
+                format!(", {}", pairing_offer(nuphy.forced)),
                 row,
             )
         }
@@ -211,7 +211,7 @@ pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Resu
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e, &s.keyboard)
+            describe_event(&e, &s.link)
         );
     }
     Ok(())
@@ -365,8 +365,8 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::tests::status_of;
-    use crate::protocol::{Command, Protocol, UNIFYING_NOT_PAIRED};
+    use crate::protocol::tests::{nuphy, status_of, unifying};
+    use crate::protocol::{Command, Protocol};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
@@ -566,8 +566,7 @@ mod tests {
     #[test]
     fn a_unifying_status_with_no_keyboard_paired_has_no_keyboard_line() {
         let mut s = status_of(Protocol::Unifying);
-        s.keyboard = Keyboard::Unifying(None);
-        s.link_state = UNIFYING_NOT_PAIRED;
+        s.link = Link::Unifying(None);
         let lines = status_lines(&s);
         assert!(!lines.iter().any(|l| l.starts_with("keyboard")));
         assert_eq!(lines[2], "link      not paired on channel 62");
@@ -586,10 +585,8 @@ mod tests {
             (None, None, None),
         ] {
             let mut s = status_of(Protocol::Nuphy);
-            s.keyboard = Keyboard::Nuphy {
-                id,
-                name: name.map(String::from),
-            };
+            nuphy(&mut s).keyboard_id = id;
+            nuphy(&mut s).keyboard_name = name.map(String::from);
             let lines = status_lines(&s);
             let keyboard = lines.iter().find(|l| l.starts_with("keyboard"));
             assert_eq!(keyboard.map(String::as_str), line);
@@ -607,9 +604,7 @@ mod tests {
             ),
         ] {
             let mut s = status_of(Protocol::Unifying);
-            if let Keyboard::Unifying(Some(keyboard)) = &mut s.keyboard {
-                keyboard.kind = kind;
-            }
+            unifying(&mut s).kind = kind;
             assert_eq!(status_lines(&s)[3], line);
         }
     }
@@ -617,9 +612,7 @@ mod tests {
     #[test]
     fn a_keyboard_without_a_name_prints_as_unnamed() {
         let mut s = status_of(Protocol::Unifying);
-        if let Keyboard::Unifying(Some(keyboard)) = &mut s.keyboard {
-            keyboard.name = None;
-        }
+        unifying(&mut s).name = None;
         assert!(
             status_lines(&s).contains(&"keyboard  unnamed, serial b8bcd5b3, WPID 7015".to_string())
         );
