@@ -3,7 +3,8 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Event, EventKind, Noise, Protocol, STRONG_DBM, Status, VersionMismatch,
+    Action, BUSY_DBM, Event, EventKind, Noise, Protocol, STRONG_DBM, Status, UNIFYING_NOT_PAIRED,
+    VersionMismatch,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -165,16 +166,18 @@ pub fn paired(own: Option<[u8; 3]>) -> String {
     })
 }
 
+const STATUS_LABEL_WIDTH: usize = 10;
+
+pub fn status_label(label: &str) -> String {
+    format!("{:<STATUS_LABEL_WIDTH$}", format!("{label} "))
+}
+
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub fn keyboard_id(id: Option<[u8; 4]>) -> String {
-    id.map_or("not seen since boot".into(), |id| hex(&id))
-}
-
 pub fn state_name(s: &Status) -> &'static str {
-    match s.protocol {
+    match s.protocol() {
         Protocol::Nuphy => link_state_name(s.link_state),
         Protocol::Unifying => unifying_state_name(s.link_state),
     }
@@ -189,9 +192,9 @@ pub enum LinkHealth {
 }
 
 pub fn link_health(s: &Status) -> LinkHealth {
-    match (s.protocol, s.link_state) {
+    match (s.protocol(), s.link_state) {
         (Protocol::Unifying, 1) | (Protocol::Nuphy, 4) => LinkHealth::Connected,
-        (Protocol::Unifying, 0) => LinkHealth::NotPaired,
+        (Protocol::Unifying, UNIFYING_NOT_PAIRED) => LinkHealth::NotPaired,
         (Protocol::Nuphy, 1..=3) => LinkHealth::Pairing,
         _ => LinkHealth::Waiting,
     }
@@ -199,15 +202,15 @@ pub fn link_health(s: &Status) -> LinkHealth {
 
 fn unifying_state_name(state: u8) -> &'static str {
     match state {
-        0 => "not paired",
+        UNIFYING_NOT_PAIRED => "not paired",
         1 => "connected",
         2 => "silent",
         _ => "unknown",
     }
 }
 
-pub fn unifying_kind(kind: u8) -> String {
-    match kind {
+pub fn unifying_kind(kind: u8) -> Option<&'static str> {
+    Some(match kind {
         0x01 => "keyboard",
         0x02 => "mouse",
         0x03 => "numpad",
@@ -218,13 +221,8 @@ pub fn unifying_kind(kind: u8) -> String {
         0x0a => "tablet",
         0x0b => "gamepad",
         0x0c => "joystick",
-        _ => return format!("{kind:#04x}"),
-    }
-    .into()
-}
-
-pub fn wpid(id: Option<[u8; 4]>) -> String {
-    id.map_or("none".into(), |id| hex(&id[..2]))
+        _ => return None,
+    })
 }
 
 pub fn duration(ms: u32) -> String {
@@ -779,12 +777,6 @@ mod tests {
     }
 
     #[test]
-    fn a_keyboard_id_prints_in_hex_or_as_not_seen() {
-        assert_eq!(keyboard_id(Some([0x70, 0x15, 0xa3, 0x29])), "7015a329");
-        assert_eq!(keyboard_id(None), "not seen since boot");
-    }
-
-    #[test]
     fn a_version_prints_dotted() {
         assert_eq!(version([0, 12, 3]), "0.12.3");
     }
@@ -849,16 +841,10 @@ mod tests {
     }
 
     #[test]
-    fn a_unifying_device_type_prints_its_name_or_its_number() {
-        assert_eq!(unifying_kind(1), "keyboard");
-        assert_eq!(unifying_kind(2), "mouse");
-        assert_eq!(unifying_kind(0x7f), "0x7f");
-    }
-
-    #[test]
-    fn a_wpid_prints_its_two_bytes_or_none() {
-        assert_eq!(wpid(Some([0x40, 0x8a, 0, 0])), "408a");
-        assert_eq!(wpid(None), "none");
+    fn a_unifying_device_type_has_a_name_when_the_tool_knows_it() {
+        assert_eq!(unifying_kind(1), Some("keyboard"));
+        assert_eq!(unifying_kind(2), Some("mouse"));
+        assert_eq!(unifying_kind(0x7f), None);
     }
 
     #[test]

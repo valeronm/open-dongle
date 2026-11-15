@@ -21,11 +21,10 @@ use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, action_question, channel_role, describe_event,
     last_packet, link_health, noise_level, noise_ruler, paired, pairing_open, share, state_name,
-    switch_question, uptime, usb_state, wall_clock, wpid,
+    status_label, switch_question, uptime, usb_state, wall_clock,
 };
 use crate::protocol::{
-    Action, BUSY_DBM, Counter, Event, Keyboard, Minute, NoiseChannel, Protocol, Status, Step,
-    step_channel,
+    Action, BUSY_DBM, Counter, Event, Minute, NoiseChannel, Protocol, Status, Step, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -34,7 +33,6 @@ const EVENT_ROWS: usize = 8;
 const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
 const STATUS_ROWS: u16 = 3;
-const STATUS_LABEL_WIDTH: usize = 10;
 const SEPARATOR: &str = "   ";
 /// A link that averaged -70 dBm had no gaps, and gaps followed packets at -78 dBm or weaker.
 const SIGNAL_GOOD_DBM: i8 = -70;
@@ -136,9 +134,7 @@ fn history_min_rows(protocol: Protocol) -> u16 {
 }
 
 fn status_row(label: &str, spans: impl IntoIterator<Item = Span<'static>>) -> Line<'static> {
-    Line::from_iter(
-        std::iter::once(Span::raw(format!("{label:<STATUS_LABEL_WIDTH$}"))).chain(spans),
-    )
+    Line::from_iter(std::iter::once(Span::raw(status_label(label))).chain(spans))
 }
 
 fn link_color(health: LinkHealth) -> Color {
@@ -167,8 +163,12 @@ fn role_style(role: ChannelRole) -> Style {
 }
 
 fn channel_spans(s: &Status) -> Vec<Span<'static>> {
+    let mut channels = s.keyboard_channels();
+    if let Err(at) = channels.binary_search(&s.channel) {
+        channels.insert(at, s.channel);
+    }
     let mut spans = Vec::new();
-    for channel in s.keyboard_channels() {
+    for channel in channels {
         if !spans.is_empty() {
             spans.push(Span::raw(" "));
         }
@@ -552,7 +552,7 @@ impl<T: Transport> App<T> {
         self.history
             .status
             .as_ref()
-            .map_or(Protocol::Nuphy, |s| s.protocol)
+            .map_or(Protocol::Nuphy, |s| s.protocol())
     }
 
     fn key(&self, c: char) -> Option<Key> {
@@ -665,9 +665,9 @@ impl<T: Transport> App<T> {
 
     fn draw(&mut self, f: &mut Frame) {
         let title = match &self.history.status {
-            Some(s) => ["OpenDongle", s.protocol.name()]
+            Some(s) => ["OpenDongle", s.protocol().name()]
                 .into_iter()
-                .chain(s.keyboard.as_ref().and_then(Keyboard::name))
+                .chain(s.keyboard.name())
                 .collect::<Vec<_>>()
                 .join(" · "),
             None => "OpenDongle".into(),
@@ -722,17 +722,13 @@ impl<T: Transport> App<T> {
         let Some(s) = &self.history.status else {
             return vec![Line::from("disconnected")];
         };
-        let keyboard = match s.protocol {
-            Protocol::Unifying => format!(", keyboard {}", wpid(s.keyboard_id)),
-            Protocol::Nuphy => String::new(),
-        };
         let signal_style = match s.last_rx_age_ms {
             Some(_) => Style::new().fg(signal_color(s.last_rssi)),
             None => Style::new(),
         };
         let link = vec![
             Span::styled(state_name(s), Style::new().fg(link_color(link_health(s)))),
-            Span::raw(format!(" on {}{keyboard}{SEPARATOR}", s.channel)),
+            Span::raw(SEPARATOR),
             Span::styled(format!("{} dBm", s.last_rssi), signal_style),
             Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
         ];
@@ -914,9 +910,9 @@ impl<T: Transport> App<T> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::REPORT_LEN;
-    use crate::protocol::tests::fixture;
-    use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
+    use crate::protocol::tests::{fixture, status_of};
+    use crate::protocol::{Command, ErrorCode, EventKind, Keyboard, Noise, Protocol, Rssi};
+    use crate::protocol::{REPORT_LEN, UNIFYING_NOT_PAIRED};
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -1048,10 +1044,7 @@ mod tests {
 
     fn panel_in(protocol: Protocol, marked: Minute, height: u16) -> Vec<String> {
         let mut app: App = App::new(None);
-        app.history.status = Some(Status {
-            protocol,
-            ..nuphy_status()
-        });
+        app.history.status = Some(status_of(protocol));
         app.history.boot = Some(boot());
         app.history.minutes = (0..10).map(|i| (i, quiet())).collect();
         app.history.minutes[4].1 = marked;
@@ -1140,7 +1133,7 @@ mod tests {
     #[test]
     fn the_unifying_footer_flows_onto_the_last_rows_of_an_80_column_screen() {
         let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         app.history.boot = Some(boot());
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
@@ -1177,29 +1170,11 @@ mod tests {
         assert_eq!(app.history.minutes.len(), 1);
     }
 
-    fn unifying_payload() -> Vec<u8> {
-        crate::protocol::tests::status_running(Protocol::Unifying as u8)
-    }
-
-    fn nuphy_status() -> Status {
-        crate::protocol::read_status(&fixture("status.hex"))
-            .unwrap()
-            .unwrap()
-    }
-
-    fn unifying_status() -> Status {
-        let mut s = crate::protocol::read_status(&unifying_payload())
-            .unwrap()
-            .unwrap();
-        s.link_state = 1;
-        s
-    }
-
     #[test]
     fn a_unifying_dongle_fetches_its_history() {
         let mut dev = dongle(1, 200 * 60_000, 130, 0);
         let mut s = dev.status().unwrap();
-        s.protocol = Protocol::Unifying;
+        s.keyboard = Keyboard::Unifying(None);
         let mut h = History::default();
         h.refresh(&mut dev, s).unwrap();
         assert_eq!(h.minutes.len(), 130);
@@ -1208,7 +1183,7 @@ mod tests {
     #[test]
     fn a_unifying_dongle_draws_the_full_layout_and_its_keys() {
         let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         app.history.boot = Some(boot());
         let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
@@ -1229,7 +1204,7 @@ mod tests {
     #[test]
     fn a_terminal_too_short_for_the_unifying_layout_still_draws() {
         let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         app.history.boot = Some(boot());
         let mut terminal = Terminal::new(TestBackend::new(80, 10)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
@@ -1239,7 +1214,7 @@ mod tests {
     #[test]
     fn the_nuphy_footer_is_one_line_of_hints() {
         let mut app: App = App::new(None);
-        app.history.status = Some(nuphy_status());
+        app.history.status = Some(status_of(Protocol::Nuphy));
         assert_eq!(app.protocol(), Protocol::Nuphy);
         let hints = [
             "n noise",
@@ -1260,13 +1235,13 @@ mod tests {
     #[test]
     fn each_mode_offers_switching_to_the_other() {
         let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         assert!(matches!(
             app.key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Nuphy)))
         ));
         assert!(matches!(app.key('a'), Some(Key::Pair)));
-        app.history.status.as_mut().unwrap().protocol = Protocol::Nuphy;
+        app.history.status = Some(status_of(Protocol::Nuphy));
         assert!(matches!(
             app.key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
@@ -1303,7 +1278,7 @@ mod tests {
         let sent = std::rc::Rc::new(std::cell::Cell::new(None));
         let seen = sent.clone();
         let mut app = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         app.device = Some(Device::new(
             Fake::new(move |req| {
                 seen.set(Some(req[0]));
@@ -1339,9 +1314,7 @@ mod tests {
 
     #[test]
     fn the_bracket_keys_move_to_the_neighbouring_channel() {
-        let mut status = unifying_status();
-        status.channel = 62;
-        let (mut app, sent) = app_moving_from(status);
+        let (mut app, sent) = app_moving_from(status_of(Protocol::Unifying));
         app.press(']');
         assert_eq!(sent.get(), Some(65));
         assert_eq!(
@@ -1349,8 +1322,7 @@ mod tests {
             "moved from channel 62 to channel 65; the keyboard follows on its next send"
         );
         assert_eq!(app.history.status.as_ref().unwrap().channel, 65);
-        let mut status = nuphy_status();
-        status.own = Some([26, 30, 34]);
+        let mut status = status_of(Protocol::Nuphy);
         status.channel = 16;
         let (mut app, sent) = app_moving_from(status);
         app.press('[');
@@ -1360,7 +1332,7 @@ mod tests {
     #[test]
     fn a_refused_move_shows_why() {
         let mut app = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         app.device = Some(Device::new(
             Fake::new(|req| vec![error_part(req[0], req[1], ErrorCode::NotMovable as u8)]),
             0,
@@ -1374,13 +1346,13 @@ mod tests {
     #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
         let mut app: App = App::new(None);
-        app.history.status = Some(unifying_status());
+        app.history.status = Some(status_of(Protocol::Unifying));
         assert!(
             app.status_lines()[2]
                 .to_string()
                 .ends_with("   pairing open")
         );
-        app.history.status = Some(nuphy_status());
+        app.history.status = Some(status_of(Protocol::Nuphy));
         assert!(
             app.status_lines()[2]
                 .to_string()
@@ -1393,7 +1365,7 @@ mod tests {
     #[test]
     fn the_pair_key_in_nuphy_mode_says_to_hold_fn_4() {
         let mut app = app_showing("");
-        app.history.status = Some(nuphy_status());
+        app.history.status = Some(status_of(Protocol::Nuphy));
         app.press('a');
         assert_eq!(
             footer(&mut app),
@@ -1402,8 +1374,7 @@ mod tests {
     }
 
     fn refreshed_with_pairing(app: &mut App<Fake>, protocol: Protocol, open: bool) {
-        let mut s = unifying_status();
-        s.protocol = protocol;
+        let mut s = status_of(protocol);
         s.pairing_open = open;
         s.minute_next = s.minute_oldest;
         s.events_total = s.events_oldest;
@@ -1699,7 +1670,7 @@ mod tests {
 
     #[test]
     fn the_status_box_holds_a_row_each_for_link_channels_and_dongle() {
-        let s = nuphy_status();
+        let s = status_of(Protocol::Nuphy);
         let terminal = status_box(&s);
         let rows = screen(&terminal);
         assert!(
@@ -1709,7 +1680,7 @@ mod tests {
         );
         assert_eq!(
             inside_box(&rows[1]),
-            "link      connected on 26   -71 dBm   last packet 12 ms ago"
+            "link      connected   -71 dBm   last packet 12 ms ago"
         );
         assert_eq!(
             inside_box(&rows[2]),
@@ -1727,23 +1698,12 @@ mod tests {
 
     #[test]
     fn a_unifying_status_box_names_the_keyboard_in_its_title() {
-        let s = unifying_status();
-        let terminal = status_box(&s);
+        let terminal = status_box(&status_of(Protocol::Unifying));
         let rows = screen(&terminal);
         assert!(
             rows[0].starts_with("┌OpenDongle · Unifying · MX Keys"),
             "{}",
             rows[0]
-        );
-        assert!(
-            inside_box(&rows[1]).starts_with(&format!(
-                "link      connected on {}, keyboard {}   {} dBm",
-                s.channel,
-                wpid(s.keyboard_id),
-                s.last_rssi
-            )),
-            "{}",
-            rows[1]
         );
         assert_eq!(
             inside_box(&rows[2]),
@@ -1754,8 +1714,11 @@ mod tests {
     #[test]
     fn the_title_ends_at_the_protocol_before_the_keyboard_sent_its_name() {
         let unnamed = Status {
-            keyboard: None,
-            ..nuphy_status()
+            keyboard: Keyboard::Nuphy {
+                id: None,
+                name: None,
+            },
+            ..status_of(Protocol::Nuphy)
         };
         let rows = screen(&status_box(&unnamed));
         assert!(rows[0].starts_with("┌OpenDongle · NuPhy─"), "{}", rows[0]);
@@ -1763,13 +1726,26 @@ mod tests {
 
     #[test]
     fn a_never_paired_nuphy_dongle_says_so_on_the_channels_row() {
-        let mut s = nuphy_status();
+        let mut s = status_of(Protocol::Nuphy);
         s.own = None;
+        s.channel = 16;
         let terminal = status_box(&s);
         assert_eq!(
             inside_box(&screen(&terminal)[2]),
             "channels  16 22 44 48 58 72 78   never paired"
         );
+    }
+
+    #[test]
+    fn the_channels_row_holds_a_current_channel_the_keyboard_does_not_listen_on() {
+        let mut s = status_of(Protocol::Nuphy);
+        s.channel = 2;
+        let terminal = status_box(&s);
+        assert_eq!(
+            inside_box(&screen(&terminal)[2]),
+            "channels  2 16 22 26 30 34 44 48 58 72 78"
+        );
+        assert_eq!(cell_at(&terminal, 2, "2 ").modifier, Modifier::REVERSED);
     }
 
     fn cell_at(terminal: &Terminal<TestBackend>, row: u16, text: &str) -> ratatui::buffer::Cell {
@@ -1783,7 +1759,7 @@ mod tests {
 
     #[test]
     fn the_channels_row_marks_the_current_channel_and_the_paired_ones() {
-        let terminal = status_box(&nuphy_status());
+        let terminal = status_box(&status_of(Protocol::Nuphy));
         assert_eq!(cell_at(&terminal, 2, "26").modifier, Modifier::REVERSED);
         assert_eq!(cell_at(&terminal, 2, "30").modifier, Modifier::BOLD);
         assert_eq!(cell_at(&terminal, 2, "16").modifier, Modifier::empty());
@@ -1791,15 +1767,15 @@ mod tests {
 
     #[test]
     fn the_link_state_and_signal_are_colored_by_how_good_they_are() {
-        let terminal = status_box(&nuphy_status());
+        let terminal = status_box(&status_of(Protocol::Nuphy));
         assert_eq!(cell_at(&terminal, 1, "connected").fg, Color::Green);
         assert_eq!(cell_at(&terminal, 1, "-71 dBm").fg, Color::Yellow);
-        let mut weak = nuphy_status();
+        let mut weak = status_of(Protocol::Nuphy);
         weak.last_rssi = -80;
         assert_eq!(cell_at(&status_box(&weak), 1, "-80 dBm").fg, Color::Red);
         assert_eq!(cell_at(&terminal, 3, "pairing open").fg, Color::Cyan);
-        let mut s = unifying_status();
-        s.link_state = 0;
+        let mut s = status_of(Protocol::Unifying);
+        s.link_state = UNIFYING_NOT_PAIRED;
         let terminal = status_box(&s);
         assert_eq!(cell_at(&terminal, 1, "not paired").fg, Color::Red);
     }

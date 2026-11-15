@@ -30,7 +30,8 @@
   which counts no losses or gaps, the panel and `open-dongle history` leave them out.
 - In Unifying mode `open-dongle status` shows the name, serial and device type the keyboard
   reported when it paired, and the live view's title names the keyboard. In NuPhy mode both show
-  the name the keyboard sends each time it connects.
+  the name the keyboard sends each time it connects, and `status` shows the keyboard's ID only once
+  a pairing has delivered it.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.
@@ -46,8 +47,6 @@
 - The live view shows why it lost the dongle or why a reply failed, and keeps its history through
   a failed reply.
 - The live view's noise map fits its legend in 80 columns.
-- `status` prints a keyboard ID the dongle has not received since it booted as "not seen since
-  boot".
 - The diagnostic protocol is now 2, so the 0.1.0 tool reads only `flash` from new firmware.
 
 ## [0.1.0] - 2026-11-11

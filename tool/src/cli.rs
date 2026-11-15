@@ -10,8 +10,8 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    hex, keyboard_id, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name,
-    unifying_kind, uptime, usb_state, version, wall_clock, wpid,
+    hex, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name, status_label,
+    unifying_kind, uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{Action, Counter, ErrorCode, Keyboard, Minute, Protocol, Status};
 use crate::{dfu, format, uf2};
@@ -25,78 +25,84 @@ pub fn status(s: &Status) -> Result<()> {
 
 fn status_lines(s: &Status) -> Vec<String> {
     let c = s.counters;
-    let nuphy = s.protocol == Protocol::Nuphy;
-    let mut lines = vec![
-        format!("firmware  {}", version(s.firmware_version)),
-        format!("protocol  {}", s.protocol.name()),
-    ];
-    let keyboard = if nuphy {
-        format!(
-            " ({}), keyboard {}",
-            paired(s.own),
-            keyboard_id(s.keyboard_id)
-        )
-    } else if s.keyboard.is_some() {
-        String::new()
-    } else {
-        format!(", keyboard {}", wpid(s.keyboard_id))
+    let name = s.keyboard.name().unwrap_or("unnamed");
+    let (link, offer, keyboard) = match &s.keyboard {
+        Keyboard::Unifying(k) => {
+            let row = k.as_ref().map(|k| {
+                let (label, kind) = match unifying_kind(k.kind) {
+                    Some(kind) => (kind, String::new()),
+                    None => ("device", format!(", type {:#04x}", k.kind)),
+                };
+                let value = format!(
+                    "{name}, serial {}, WPID {}{kind}",
+                    hex(&k.serial),
+                    hex(&k.wpid)
+                );
+                (label, value)
+            });
+            (String::new(), String::new(), row)
+        }
+        Keyboard::Nuphy { id, name: known } => {
+            let id = id.map(|id| format!(", ID {}", hex(&id)));
+            let row = (known.is_some() || id.is_some())
+                .then(|| ("keyboard", format!("{name}{}", id.unwrap_or_default())));
+            (
+                format!(" ({})", paired(s.own)),
+                format!(", {}", pairing_offer(s.forced)),
+                row,
+            )
+        }
     };
-    lines.push(format!(
-        "link      {} on channel {}{keyboard}",
-        state_name(s),
-        s.channel
-    ));
-    match &s.keyboard {
-        Some(Keyboard::Unifying { name, serial, kind }) => lines.push(format!(
-            "keyboard  {}, serial {}, WPID {}, type {}",
-            name.as_deref().unwrap_or("unnamed"),
-            hex(serial),
-            wpid(s.keyboard_id),
-            unifying_kind(*kind)
-        )),
-        Some(Keyboard::Nuphy { name }) => lines.push(format!("keyboard  {name}")),
-        None => {}
-    }
-    lines.push(format!(
-        "signal    {} dBm, {}",
-        s.last_rssi,
-        last_packet(s.last_rx_age_ms)
-    ));
-    let offer = if nuphy {
-        format!(", {}", pairing_offer(s.forced))
-    } else {
-        String::new()
-    };
-    lines.push(format!(
-        "pairing   {}{offer}",
-        if s.pairing_open { "open" } else { "closed" }
-    ));
-    lines.push(format!(
-        "usb       {}",
-        usb_state(s.usb_live, s.usb_suspended)
-    ));
-    lines.push(format!(
-        "uptime    {}, reset by {}",
-        uptime(s.uptime_ms),
-        reset_causes(s.reset_cause)
-    ));
     let counters: Vec<String> = s
-        .protocol
+        .protocol()
         .counters()
         .iter()
         .map(|&counter| format!("{} {}", counter.name(), c.get(counter)))
         .collect();
-    lines.push(format!("counters  {}", counters.join(" ")));
-    lines.push(format!(
-        "history   {} minutes, {} events held",
-        s.minute_next.saturating_sub(s.minute_oldest),
-        s.events_total.saturating_sub(s.events_oldest)
-    ));
-    lines
+    let mut rows = vec![
+        ("firmware", version(s.firmware_version)),
+        ("protocol", s.protocol().name().to_string()),
+        (
+            "link",
+            format!("{} on channel {}{link}", state_name(s), s.channel),
+        ),
+    ];
+    rows.extend(keyboard);
+    rows.extend([
+        (
+            "signal",
+            format!("{} dBm, {}", s.last_rssi, last_packet(s.last_rx_age_ms)),
+        ),
+        (
+            "pairing",
+            format!("{}{offer}", if s.pairing_open { "open" } else { "closed" }),
+        ),
+        ("usb", usb_state(s.usb_live, s.usb_suspended).to_string()),
+        (
+            "uptime",
+            format!(
+                "{}, reset by {}",
+                uptime(s.uptime_ms),
+                reset_causes(s.reset_cause)
+            ),
+        ),
+        ("counters", counters.join(" ")),
+        (
+            "history",
+            format!(
+                "{} minutes, {} events held",
+                s.minute_next.saturating_sub(s.minute_oldest),
+                s.events_total.saturating_sub(s.events_oldest)
+            ),
+        ),
+    ]);
+    rows.into_iter()
+        .map(|(label, value)| status_label(label) + &value)
+        .collect()
 }
 
 pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
-    match s.protocol {
+    match s.protocol() {
         Protocol::Nuphy => Ok(()),
         other => bail!(
             "only NuPhy mode has {what}; the dongle runs {} (open-dongle protocol nuphy switches it)",
@@ -135,7 +141,7 @@ pub fn move_link<T: Transport>(dev: &mut Device<T>, s: &Status, channel: u8) -> 
 pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
     let (mut dev, before) = device::open(serial)?;
     let Some(want) = set else {
-        println!("the dongle runs {}", before.protocol.name());
+        println!("the dongle runs {}", before.protocol().name());
         return Ok(());
     };
     let (running, rebooting) = dev.protocol(Some(want))?;
@@ -157,8 +163,8 @@ pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
             bail!("the dongle did not come back within {RETURN_WAIT:?}; replug it");
         }
     };
-    if s.protocol != want {
-        bail!("the dongle came back running {}", s.protocol.name());
+    if s.protocol() != want {
+        bail!("the dongle came back running {}", s.protocol().name());
     }
     status(&s)
 }
@@ -191,7 +197,7 @@ pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> R
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S"),
-            minute_line(s.protocol, &m)
+            minute_line(s.protocol(), &m)
         );
     }
     Ok(())
@@ -205,7 +211,7 @@ pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Resu
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e, s.protocol)
+            describe_event(&e, s.protocol())
         );
     }
     Ok(())
@@ -359,7 +365,8 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::{Command, Protocol};
+    use crate::protocol::tests::status_of;
+    use crate::protocol::{Command, Protocol, UNIFYING_NOT_PAIRED};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
@@ -440,16 +447,9 @@ mod tests {
         assert_eq!(*sent.borrow(), [vec![Command::Move as u8, 1, 5, 0, 0, 0]]);
     }
 
-    fn status_in(protocol: Protocol) -> Status {
-        let payload = crate::protocol::tests::status_running(protocol as u8);
-        let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
-        s.own = Some([26, 30, 34]);
-        s
-    }
-
     #[test]
     fn a_refused_channel_names_the_keyboards_channels() {
-        let unifying = status_in(Protocol::Unifying);
+        let unifying = status_of(Protocol::Unifying);
         let err = move_link(&mut dongle_refusing_with(Command::Move, 3), &unifying, 6)
             .unwrap_err()
             .to_string();
@@ -457,7 +457,7 @@ mod tests {
             err.ends_with("give one of 5 8 17 32 35 41 44 62 65 71 74"),
             "{err}"
         );
-        let nuphy = status_in(Protocol::Nuphy);
+        let nuphy = status_of(Protocol::Nuphy);
         let err = move_link(&mut dongle_refusing_with(Command::Move, 3), &nuphy, 6)
             .unwrap_err()
             .to_string();
@@ -471,7 +471,7 @@ mod tests {
     fn a_refused_move_says_what_it_needs() {
         let err = move_link(
             &mut dongle_refusing_with(Command::Move, 6),
-            &status_in(Protocol::Unifying),
+            &status_of(Protocol::Unifying),
             5,
         )
         .unwrap_err()
@@ -483,7 +483,7 @@ mod tests {
     fn a_move_refused_for_a_held_key_says_so() {
         let err = move_link(
             &mut dongle_refusing_with(Command::Move, 7),
-            &status_in(Protocol::Nuphy),
+            &status_of(Protocol::Nuphy),
             44,
         )
         .unwrap_err()
@@ -503,12 +503,8 @@ mod tests {
 
     #[test]
     fn nuphy_only_commands_name_the_running_protocol() {
-        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
-            .unwrap()
-            .unwrap();
-        assert!(require_nuphy(&s, "forced channels").is_ok());
-        s.protocol = Protocol::Unifying;
-        let err = require_nuphy(&s, "forced channels")
+        assert!(require_nuphy(&status_of(Protocol::Nuphy), "forced channels").is_ok());
+        let err = require_nuphy(&status_of(Protocol::Unifying), "forced channels")
             .unwrap_err()
             .to_string();
         assert_eq!(
@@ -519,16 +515,14 @@ mod tests {
 
     #[test]
     fn prints_a_nuphy_status() {
-        let s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
-            .unwrap()
-            .unwrap();
+        let s = status_of(Protocol::Nuphy);
         assert_eq!(
             status_lines(&s),
             [
                 "firmware  1.2.3",
                 "protocol  NuPhy",
-                "link      connected on channel 26 (paired 26 30 34), keyboard 7015a329",
-                "keyboard  MX Keys",
+                "link      connected on channel 26 (paired 26 30 34)",
+                "keyboard  MX Keys, ID 7015a329",
                 "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open, offers channels 62 52 44, set by hand",
                 "usb       live",
@@ -541,9 +535,7 @@ mod tests {
 
     #[test]
     fn prints_closed_pairing_in_a_nuphy_status() {
-        let mut s = crate::protocol::read_status(&crate::protocol::tests::fixture("status.hex"))
-            .unwrap()
-            .unwrap();
+        let mut s = status_of(Protocol::Nuphy);
         s.pairing_open = false;
         assert!(
             status_lines(&s)
@@ -553,16 +545,14 @@ mod tests {
 
     #[test]
     fn prints_a_unifying_status() {
-        let payload = crate::protocol::tests::status_running(Protocol::Unifying as u8);
-        let mut s = crate::protocol::read_status(&payload).unwrap().unwrap();
-        s.link_state = 1;
+        let s = status_of(Protocol::Unifying);
         assert_eq!(
             status_lines(&s),
             [
                 "firmware  1.2.3",
                 "protocol  Unifying",
-                "link      connected on channel 26",
-                "keyboard  MX Keys, serial b8bcd5b3, WPID 7015, type keyboard",
+                "link      connected on channel 62",
+                "keyboard  MX Keys, serial b8bcd5b3, WPID 7015",
                 "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open",
                 "usb       live",
@@ -574,24 +564,64 @@ mod tests {
     }
 
     #[test]
-    fn a_status_has_no_keyboard_line_when_the_keyboard_reported_nothing() {
-        let mut s = status_in(Protocol::Unifying);
-        s.keyboard = None;
+    fn a_unifying_status_with_no_keyboard_paired_has_no_keyboard_line() {
+        let mut s = status_of(Protocol::Unifying);
+        s.keyboard = Keyboard::Unifying(None);
+        s.link_state = UNIFYING_NOT_PAIRED;
         let lines = status_lines(&s);
         assert!(!lines.iter().any(|l| l.starts_with("keyboard")));
-        assert!(lines[2].ends_with(", keyboard 7015"), "{}", lines[2]);
+        assert_eq!(lines[2], "link      not paired on channel 62");
+    }
+
+    #[test]
+    fn a_nuphy_keyboard_line_holds_what_is_known_of_the_keyboard() {
+        let id = [0x70, 0x15, 0xa3, 0x29];
+        for (id, name, line) in [
+            (Some(id), None, Some("keyboard  unnamed, ID 7015a329")),
+            (
+                None,
+                Some("NuPhy Air75 V2"),
+                Some("keyboard  NuPhy Air75 V2"),
+            ),
+            (None, None, None),
+        ] {
+            let mut s = status_of(Protocol::Nuphy);
+            s.keyboard = Keyboard::Nuphy {
+                id,
+                name: name.map(String::from),
+            };
+            let lines = status_lines(&s);
+            let keyboard = lines.iter().find(|l| l.starts_with("keyboard"));
+            assert_eq!(keyboard.map(String::as_str), line);
+        }
+    }
+
+    #[test]
+    fn a_unifying_device_line_is_labeled_with_its_type() {
+        for (kind, line) in [
+            (2, "mouse     MX Keys, serial b8bcd5b3, WPID 7015"),
+            (4, "presenter MX Keys, serial b8bcd5b3, WPID 7015"),
+            (
+                0x7f,
+                "device    MX Keys, serial b8bcd5b3, WPID 7015, type 0x7f",
+            ),
+        ] {
+            let mut s = status_of(Protocol::Unifying);
+            if let Keyboard::Unifying(Some(keyboard)) = &mut s.keyboard {
+                keyboard.kind = kind;
+            }
+            assert_eq!(status_lines(&s)[3], line);
+        }
     }
 
     #[test]
     fn a_keyboard_without_a_name_prints_as_unnamed() {
-        let mut s = status_in(Protocol::Unifying);
-        if let Some(Keyboard::Unifying { name, .. }) = &mut s.keyboard {
-            *name = None;
+        let mut s = status_of(Protocol::Unifying);
+        if let Keyboard::Unifying(Some(keyboard)) = &mut s.keyboard {
+            keyboard.name = None;
         }
         assert!(
-            status_lines(&s).contains(
-                &"keyboard  unnamed, serial b8bcd5b3, WPID 7015, type keyboard".to_string()
-            )
+            status_lines(&s).contains(&"keyboard  unnamed, serial b8bcd5b3, WPID 7015".to_string())
         );
     }
 

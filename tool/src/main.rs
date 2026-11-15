@@ -127,7 +127,7 @@ fn main() -> Result<()> {
         Cmd::Protocol { name } => cli::protocol(serial, name.map(Into::into)),
         Cmd::Pair => {
             let (mut dev, s) = device::open(serial)?;
-            cli::pair(&mut dev, s.protocol)
+            cli::pair(&mut dev, s.protocol())
         }
         Cmd::Move { channel } => {
             let (mut dev, s) = device::open(serial)?;
