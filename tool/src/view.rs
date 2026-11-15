@@ -108,9 +108,11 @@ const STRIPS: [Strip; 5] = [
     },
 ];
 
-fn strips(protocol: Protocol) -> impl Iterator<Item = &'static Strip> {
+/// With no protocol, only the strips both protocols' firmware count.
+fn strips(protocol: Option<Protocol>) -> impl Iterator<Item = &'static Strip> {
+    let counting = protocol.map_or(Protocol::ALL.to_vec(), |protocol| vec![protocol]);
     STRIPS.iter().filter(move |strip| match strip.source {
-        Source::Counter(counter) => protocol.counts(counter),
+        Source::Counter(counter) => counting.iter().all(|p| p.counts(counter)),
         Source::Busy => true,
     })
 }
@@ -123,7 +125,7 @@ fn panel_rows(strips: usize) -> [Constraint; 3] {
     ]
 }
 
-fn history_min_rows(protocol: Protocol) -> u16 {
+fn history_min_rows(protocol: Option<Protocol>) -> u16 {
     let rows: u16 = panel_rows(strips(protocol).count())
         .iter()
         .map(|row| match row {
@@ -398,12 +400,12 @@ impl Prompt {
 #[derive(Clone, Copy)]
 enum Key {
     Ask(Prompt),
-    Pair,
+    Pair(Protocol),
 }
 
-fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 6] {
+/// With no protocol, only the keys that act the same under both.
+fn action_keys(protocol: Option<Protocol>) -> impl Iterator<Item = (char, &'static str, Key)> {
     const NOISE: (char, &str, Key) = ('n', "noise", Key::Ask(Prompt::Noise));
-    const PAIR: (char, &str, Key) = ('a', "pair", Key::Pair);
     const REBOOT: (char, &str, Key) = ('r', "reboot", Key::Ask(Prompt::Action(Action::Reboot)));
     const BOOTLOADER: (char, &str, Key) = (
         'b',
@@ -411,12 +413,20 @@ fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 6] {
         Key::Ask(Prompt::Action(Action::Bootloader)),
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
-    let (label, other) = match protocol {
-        Protocol::Nuphy => ("unifying", Protocol::Unifying),
-        Protocol::Unifying => ("nuphy", Protocol::Nuphy),
-    };
-    let switch = ('p', label, Key::Ask(Prompt::Switch(other)));
-    [NOISE, PAIR, switch, REBOOT, BOOTLOADER, CLEAR]
+    let own = protocol.map(|protocol| {
+        let (label, other) = match protocol {
+            Protocol::Nuphy => ("unifying", Protocol::Unifying),
+            Protocol::Unifying => ("nuphy", Protocol::Nuphy),
+        };
+        [
+            ('a', "pair", Key::Pair(protocol)),
+            ('p', label, Key::Ask(Prompt::Switch(other))),
+        ]
+    });
+    [NOISE]
+        .into_iter()
+        .chain(own.into_iter().flatten())
+        .chain([REBOOT, BOOTLOADER, CLEAR])
 }
 
 /// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
@@ -549,16 +559,12 @@ impl<T: Transport> App<T> {
         }
     }
 
-    fn protocol(&self) -> Protocol {
-        self.history
-            .status
-            .as_ref()
-            .map_or(Protocol::Nuphy, |s| s.protocol())
+    fn protocol(&self) -> Option<Protocol> {
+        self.history.status.as_ref().map(Status::protocol)
     }
 
     fn key(&self, c: char) -> Option<Key> {
         action_keys(self.protocol())
-            .into_iter()
             .find(|(k, _, _)| *k == c)
             .map(|(_, _, key)| key)
     }
@@ -571,25 +577,24 @@ impl<T: Transport> App<T> {
         }
         match self.key(c) {
             Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
-            Some(Key::Pair) => self.pair(),
+            Some(Key::Pair(protocol)) => self.pair(protocol),
             None => {}
         }
     }
 
-    fn pair(&mut self) {
+    fn pair(&mut self, protocol: Protocol) {
         let Some(dev) = self.device.as_mut() else {
             self.message = "disconnected".into();
             return;
         };
         self.message = match dev.pair() {
-            Ok(()) => pairing_open(self.protocol()).into(),
+            Ok(()) => pairing_open(protocol).into(),
             Err(e) => format!("failed: {}", error_text(&e)),
         };
     }
 
     fn step(&mut self, step: Step) {
         let (Some(dev), Some(status)) = (self.device.as_mut(), self.history.status.as_mut()) else {
-            self.message = "disconnected".into();
             return;
         };
         let Some(to) = step_channel(&status.keyboard_channels(), status.channel, step) else {
@@ -629,8 +634,10 @@ impl<T: Transport> App<T> {
 
     /// The dongle closes its pairing window on its own, so the message outlives the window.
     fn drop_pairing_message_once_closed(&mut self) {
-        let pairing = self.history.status.as_ref().is_some_and(|s| s.pairing_open);
-        if !pairing && self.message == pairing_open(self.protocol()) {
+        let Some(s) = &self.history.status else {
+            return;
+        };
+        if !s.pairing_open && self.message == pairing_open(s.protocol()) {
             self.message.clear();
         }
     }
@@ -698,20 +705,13 @@ impl<T: Transport> App<T> {
             None => match &self.refresh_error {
                 Some(e) => flow(e.split(' '), " ", width),
                 None => {
-                    let actions = action_keys(self.protocol())
-                        .into_iter()
-                        .map(|(key, label, _)| format!("{key} {label}"));
+                    let protocol = self.protocol();
+                    let actions =
+                        action_keys(protocol).map(|(key, label, _)| format!("{key} {label}"));
+                    let channel = protocol.map(|_| "[/] channel");
+                    let scroll = ["←/→ history", "↑/↓ events", "esc back", "q quit"];
                     let hints: Vec<_> = actions
-                        .chain(
-                            [
-                                "[/] channel",
-                                "←/→ history",
-                                "↑/↓ events",
-                                "esc back",
-                                "q quit",
-                            ]
-                            .map(String::from),
-                        )
+                        .chain(channel.into_iter().chain(scroll).map(String::from))
                         .collect();
                     flow(hints.iter().map(String::as_str), "  ", width)
                 }
@@ -1039,12 +1039,12 @@ mod tests {
     }
 
     fn panel_with(marked: Minute, height: u16) -> Vec<String> {
-        panel_in(Protocol::Nuphy, marked, height)
+        panel_in(Some(Protocol::Nuphy), marked, height)
     }
 
-    fn panel_in(protocol: Protocol, marked: Minute, height: u16) -> Vec<String> {
+    fn panel_in(protocol: Option<Protocol>, marked: Minute, height: u16) -> Vec<String> {
         let mut app: App = App::new(None);
-        app.history.status = Some(status_of(protocol));
+        app.history.status = protocol.map(status_of);
         app.history.boot = Some(boot());
         app.history.minutes = (0..10).map(|i| (i, quiet())).collect();
         app.history.minutes[4].1 = marked;
@@ -1217,7 +1217,7 @@ mod tests {
     fn the_nuphy_footer_is_one_line_of_hints() {
         let mut app: App = App::new(None);
         app.history.status = Some(status_of(Protocol::Nuphy));
-        assert_eq!(app.protocol(), Protocol::Nuphy);
+        assert_eq!(app.protocol(), Some(Protocol::Nuphy));
         let hints = [
             "n noise",
             "a pair",
@@ -1235,6 +1235,26 @@ mod tests {
     }
 
     #[test]
+    fn without_a_status_nothing_of_either_protocol_shows() {
+        let mut app: App = App::new(None);
+        let hints = [
+            "n noise",
+            "r reboot",
+            "b bootloader",
+            "c clear",
+            "←/→ history",
+            "↑/↓ events",
+            "esc back",
+            "q quit",
+        ];
+        assert_eq!(app.help(120), [hints.join("  ")]);
+        assert!(app.key('a').is_none());
+        assert!(app.key('p').is_none());
+        app.press(']');
+        assert_eq!(app.message, "");
+    }
+
+    #[test]
     fn each_mode_offers_switching_to_the_other() {
         let mut app: App = App::new(None);
         app.history.status = Some(status_of(Protocol::Unifying));
@@ -1242,13 +1262,13 @@ mod tests {
             app.key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Nuphy)))
         ));
-        assert!(matches!(app.key('a'), Some(Key::Pair)));
+        assert!(matches!(app.key('a'), Some(Key::Pair(_))));
         app.history.status = Some(status_of(Protocol::Nuphy));
         assert!(matches!(
             app.key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
         ));
-        assert!(matches!(app.key('a'), Some(Key::Pair)));
+        assert!(matches!(app.key('a'), Some(Key::Pair(_))));
         assert!(matches!(app.key('n'), Some(Key::Ask(Prompt::Noise))));
     }
 
@@ -1392,7 +1412,7 @@ mod tests {
 
     #[test]
     fn the_pairing_message_stays_while_the_status_reads_pairing() {
-        for protocol in [Protocol::Nuphy, Protocol::Unifying] {
+        for protocol in Protocol::ALL {
             let mut app = app_showing(pairing_open(protocol));
             refreshed_with_pairing(&mut app, protocol, true);
             assert_eq!(app.message, pairing_open(protocol));
@@ -1503,7 +1523,7 @@ mod tests {
             gaps: Some(3),
             ..with_signal(-60)
         };
-        let rows = panel_with(marked, history_min_rows(Protocol::Nuphy));
+        let rows = panel_with(marked, history_min_rows(Some(Protocol::Nuphy)));
         let gaps = rows
             .iter()
             .find(|r| r.starts_with("│gaps"))
@@ -1517,7 +1537,9 @@ mod tests {
     #[test]
     fn a_reading_sits_on_its_labeled_row_or_on_the_edge_past_the_chart() {
         for (dbm, label) in [(-60, "-60"), (-15, "-20"), (-110, "-100")] {
-            for height in history_min_rows(Protocol::Nuphy)..history_min_rows(Protocol::Nuphy) + 6 {
+            for height in
+                history_min_rows(Some(Protocol::Nuphy))..history_min_rows(Some(Protocol::Nuphy)) + 6
+            {
                 let rows = panel_with(with_signal(dbm), height);
                 let labeled = rows.iter().position(|r| r.contains(label)).unwrap();
                 let plotted = plotted(&rows);
@@ -1537,7 +1559,7 @@ mod tests {
             }),
             ..quiet()
         };
-        let rows = panel_with(marked, history_min_rows(Protocol::Nuphy));
+        let rows = panel_with(marked, history_min_rows(Some(Protocol::Nuphy)));
         assert!(
             rows.iter().any(|r| r.starts_with("│busy 100.00% ")),
             "{rows:#?}"
@@ -1792,22 +1814,23 @@ mod tests {
         assert_eq!(cell_at(&terminal, 1, "not paired").fg, Color::Red);
     }
 
-    fn strip_names(protocol: Protocol) -> String {
+    fn strip_names(protocol: Option<Protocol>) -> String {
         panel_in(protocol, quiet(), history_min_rows(protocol)).join("\n")
     }
 
     #[test]
     fn the_unifying_panel_leaves_out_the_strips_its_firmware_never_counts() {
-        let nuphy = strip_names(Protocol::Nuphy);
+        let nuphy = strip_names(Some(Protocol::Nuphy));
         for name in ["losses", "gaps", "dropped", "channel", "busy"] {
             assert!(nuphy.contains(name), "{name} missing from {nuphy}");
         }
-        let unifying = strip_names(Protocol::Unifying);
-        for name in ["dropped", "channel", "busy"] {
-            assert!(unifying.contains(name), "{name} missing from {unifying}");
-        }
-        for name in ["losses", "gaps"] {
-            assert!(!unifying.contains(name), "{name} shown in {unifying}");
+        for shared in [strip_names(Some(Protocol::Unifying)), strip_names(None)] {
+            for name in ["dropped", "channel", "busy"] {
+                assert!(shared.contains(name), "{name} missing from {shared}");
+            }
+            for name in ["losses", "gaps"] {
+                assert!(!shared.contains(name), "{name} shown in {shared}");
+            }
         }
     }
 }

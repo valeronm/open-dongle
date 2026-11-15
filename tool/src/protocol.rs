@@ -96,6 +96,8 @@ pub enum Protocol {
 }
 
 impl Protocol {
+    pub const ALL: [Self; 2] = [Self::Nuphy, Self::Unifying];
+
     pub fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Nuphy),
@@ -968,7 +970,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_unknown_link_state_in_status_is_refused() {
-        for protocol in [Protocol::Nuphy, Protocol::Unifying] {
+        for protocol in Protocol::ALL {
             let mut payload = status_running(protocol as u8);
             payload[LINK_STATE_AT] = 9;
             assert!(read_status(&payload).is_err(), "{protocol:?}");
