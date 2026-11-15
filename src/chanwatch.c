@@ -4,7 +4,7 @@
 static void init(struct chanwatch *w, const uint8_t *channels, size_t n, uint64_t now_ms)
 {
 	memset(w, 0, sizeof(*w));
-	w->count = n < CHANWATCH_MAX ? n : CHANWATCH_MAX;
+	w->count = n;
 	if (w->count > 0) {
 		memcpy(w->channels, channels, w->count);
 	}
@@ -17,7 +17,7 @@ bool chanwatch_set_channels(struct chanwatch *w, const uint8_t *channels, size_t
 	uint64_t hold_until_ms;
 
 	if (n > CHANWATCH_MAX) {
-		n = CHANWATCH_MAX;
+		n = 0;
 	}
 	if (n == w->count && (n == 0 || memcmp(w->channels, channels, n) == 0)) {
 		return false;
@@ -114,7 +114,7 @@ bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out)
 	return true;
 }
 
-bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms)
+void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms)
 {
 	int h = index_of(w, home);
 	uint8_t from = threshold_bucket(weakest_dbm);
@@ -128,11 +128,11 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	int best = -1;
 
 	if (h < 0 || now_ms < w->hold_until_ms) {
-		return false;
+		return;
 	}
 	home_n = sum_from(w->weight[h], 0);
 	if (home_n <= 0.0f) {
-		return false;
+		return;
 	}
 	home_share = sum_from(w->weight[h], from) / home_n;
 	for (size_t i = 0; i < w->count; i++) {
@@ -150,7 +150,7 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 		}
 	}
 	if (best < 0) {
-		return false;
+		return;
 	}
 	best_share = best_harmful / best_n;
 	limit = home_share / 2.0f < home_share - 0.02f ? home_share / 2.0f : home_share - 0.02f;
@@ -161,7 +161,7 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	 * so home's share is taken as exact.
 	 */
 	if (gap <= 0.0f || best_n * gap * gap <= 9.0f * limit * (1.0f - limit)) {
-		return false;
+		return;
 	}
 	chanwatch_hold(w, now_ms);
 	w->move = (struct chanwatch_move){
@@ -170,5 +170,4 @@ bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 		.to_share = (uint16_t)(best_share * NOISE_SHARE_FULL + 0.5f),
 	};
 	w->move_waiting = true;
-	return true;
 }

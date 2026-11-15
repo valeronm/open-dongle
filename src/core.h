@@ -34,8 +34,8 @@ struct core_loop {
 	void (*fill_status)(struct diag_status *st);
 	/* The home channel while a noise move is allowed, or CHANMOVE_NO_HOME. */
 	int (*movable)(void);
-	/* Points *channels at the channels a noise move may go to and returns how many, at most
-	 * CHANWATCH_MAX; a change in them drops the noise heard so far. */
+	/* Points *channels at the channels a noise move may go to and returns how many; a change
+	 * in them drops the noise heard so far. */
 	size_t (*candidates)(const uint8_t **channels);
 	/* Runs after each channel change, scan round or survey, which drops the replies queued on
 	 * the radio. */

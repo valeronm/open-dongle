@@ -33,7 +33,8 @@ struct chanwatch {
 };
 
 /* Returns true, after dropping the noise heard and any move waiting, when the channels differ from
- * the ones w holds; the hold before the next move stays. Takes at most CHANWATCH_MAX. */
+ * the ones w holds; the hold before the next move stays. Given more than CHANWATCH_MAX channels, w
+ * watches none. */
 bool chanwatch_set_channels(struct chanwatch *w, const uint8_t *channels, size_t n,
 			    uint64_t now_ms);
 
@@ -44,12 +45,9 @@ void chanwatch_round(struct chanwatch *w, const int8_t *dbm, uint8_t home, uint6
 /* Adds readings taken between keyboard packets on home. */
 void chanwatch_home(struct chanwatch *w, uint8_t home, const struct noise_tally *t);
 
-/*
- * Returns true when a channel is clearly quieter than home at the keyboard's level, weakest_dbm
- * being its weakest recent packet; the move then waits in w, and the hold before the next move
- * starts.
- */
-bool chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms);
+/* When a channel is clearly quieter than home at the keyboard's level, weakest_dbm being its
+ * weakest recent packet, a move to it waits in w and the hold before the next move starts. */
+void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms);
 
 /* Returns true once with the move that waits. */
 bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out);

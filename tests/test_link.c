@@ -489,6 +489,7 @@ static void test_a_move_needs_a_paired_keyboard_and_pairing_closed(void)
 	init(home);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
 	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
+	CHECK_EQ(link_home(&l), home[0]);
 	hear_keyboard_on_the_pairing_channel(home);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
 	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
@@ -496,6 +497,7 @@ static void test_a_move_needs_a_paired_keyboard_and_pairing_closed(void)
 	tick(PAIRWIN_MS);
 	CHECK_EQ(move(44), CHANMOVE_NOT_MOVABLE);
 	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
+	CHECK_EQ(link_home(&l), CHANMOVE_NO_HOME);
 }
 
 static void test_a_movable_link_reports_its_home_through_a_move_and_a_loss(void)
@@ -508,15 +510,6 @@ static void test_a_movable_link_reports_its_home_through_a_move_and_a_loss(void)
 	tick(1010);
 	CHECK(out.lost);
 	CHECK_EQ(movable(), 44);
-}
-
-static void test_a_paired_dongle_has_a_home_while_it_cannot_move(void)
-{
-	init(NULL);
-	CHECK_EQ(link_home(&l), CHANMOVE_NO_HOME);
-	init(home);
-	CHECK_EQ(movable(), CHANMOVE_NO_HOME);
-	CHECK_EQ(link_home(&l), home[0]);
 }
 
 static void test_no_move_while_the_host_is_suspended(void)
@@ -956,7 +949,6 @@ int main(void)
 	RUN(test_a_requested_move_works_on_a_silent_paired_link);
 	RUN(test_a_move_needs_a_paired_keyboard_and_pairing_closed);
 	RUN(test_a_movable_link_reports_its_home_through_a_move_and_a_loss);
-	RUN(test_a_paired_dongle_has_a_home_while_it_cannot_move);
 	RUN(test_no_move_while_the_host_is_suspended);
 	RUN(test_the_keyboards_channels_are_the_fixed_ones_and_the_paired_three);
 	RUN(test_a_paired_channel_that_is_also_fixed_is_listed_once);

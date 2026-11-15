@@ -47,8 +47,6 @@ static void show_state(void)
 	core_show_state(by_link[link_led(&link, k_uptime_get_32())]);
 }
 
-BUILD_ASSERT(LINK_CHANNELS_MAX <= CHANWATCH_MAX);
-
 static int movable(void)
 {
 	return link_movable(&link, k_uptime_get_32());

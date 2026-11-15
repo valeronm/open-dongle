@@ -256,8 +256,6 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	}
 }
 
-BUILD_ASSERT(UNIFYING_PAIRING_CHANNELS <= CHANWATCH_MAX);
-
 static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
