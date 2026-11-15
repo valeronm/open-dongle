@@ -502,6 +502,12 @@ struct App<T: Transport = device::HidTransport> {
     drawn: Drawn,
 }
 
+enum Outcome {
+    Quit,
+    /// Answered after a redraw, since a noise survey blocks for seconds.
+    Answer(Prompt),
+}
+
 #[derive(Clone, Copy, Default)]
 struct Drawn {
     event_rows: usize,
@@ -535,42 +541,15 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            let Drawn {
-                event_rows: rows,
-                plot_width: width,
-            } = self.drawn;
-            let Some(session) = self.session_mut() else {
-                if key.code == KeyCode::Char('q') {
-                    return Ok(());
-                }
-                continue;
-            };
-            if let Some(prompt) = session.prompt.take() {
-                if key.code == KeyCode::Char('y') {
-                    session.message = "working…".into();
+            match self.handle(key.code) {
+                Some(Outcome::Quit) => return Ok(()),
+                Some(Outcome::Answer(prompt)) => {
                     terminal.draw(|f| self.draw(f))?;
                     if let Some(session) = self.session_mut() {
                         session.answer(prompt);
                     }
-                } else {
-                    session.message.clear();
                 }
-                continue;
-            }
-            session.message.clear();
-            match key.code {
-                KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char(c) => session.press(c),
-                KeyCode::Esc => session.noise = None,
-                KeyCode::Left if let Some(width) = width => session.history.scroll_older(width),
-                KeyCode::Right if let Some(width) = width => session.history.scroll_newer(width),
-                KeyCode::Up => session.history.scroll_events(EventsMove::Newer(1), rows),
-                KeyCode::Down => session.history.scroll_events(EventsMove::Older(1), rows),
-                KeyCode::PageUp => session.history.scroll_events(EventsMove::Newer(rows), rows),
-                KeyCode::PageDown => session.history.scroll_events(EventsMove::Older(rows), rows),
-                KeyCode::Home => session.history.scroll_events(EventsMove::Newest, rows),
-                KeyCode::End => session.history.scroll_events(EventsMove::Oldest, rows),
-                _ => {}
+                None => {}
             }
         }
     }
@@ -609,24 +588,44 @@ impl<T: Transport> Session<T> {
         self.history.status.protocol()
     }
 
+    fn handle(&mut self, key: KeyCode, drawn: Drawn) -> Option<Outcome> {
+        self.message.clear();
+        if let Some(prompt) = self.prompt.take() {
+            return (key == KeyCode::Char('y')).then(|| {
+                self.message = "working…".into();
+                Outcome::Answer(prompt)
+            });
+        }
+        let rows = drawn.event_rows;
+        let history = &mut self.history;
+        match key {
+            KeyCode::Char('q') => return Some(Outcome::Quit),
+            KeyCode::Char('[') => self.step(Step::Down),
+            KeyCode::Char(']') => self.step(Step::Up),
+            KeyCode::Char(c) => match self.key(c) {
+                Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
+                Some(Key::Pair(protocol)) => self.pair(protocol),
+                None => {}
+            },
+            KeyCode::Esc => self.noise = None,
+            KeyCode::Left if let Some(width) = drawn.plot_width => history.scroll_older(width),
+            KeyCode::Right if let Some(width) = drawn.plot_width => history.scroll_newer(width),
+            KeyCode::Up => history.scroll_events(EventsMove::Newer(1), rows),
+            KeyCode::Down => history.scroll_events(EventsMove::Older(1), rows),
+            KeyCode::PageUp => history.scroll_events(EventsMove::Newer(rows), rows),
+            KeyCode::PageDown => history.scroll_events(EventsMove::Older(rows), rows),
+            KeyCode::Home => history.scroll_events(EventsMove::Newest, rows),
+            KeyCode::End => history.scroll_events(EventsMove::Oldest, rows),
+            _ => {}
+        }
+        None
+    }
+
     fn key(&self, c: char) -> Option<Key> {
         action_keys(self.protocol())
             .into_iter()
             .find(|(k, _, _)| *k == c)
             .map(|(_, _, key)| key)
-    }
-
-    fn press(&mut self, c: char) {
-        match c {
-            '[' => return self.step(Step::Down),
-            ']' => return self.step(Step::Up),
-            _ => {}
-        }
-        match self.key(c) {
-            Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
-            Some(Key::Pair(protocol)) => self.pair(protocol),
-            None => {}
-        }
     }
 
     fn pair(&mut self, protocol: Protocol) {
@@ -731,6 +730,14 @@ impl<T: Transport> App<T> {
         match &mut self.connection {
             Connection::Connected(session) => Some(session),
             Connection::Disconnected(_) => None,
+        }
+    }
+
+    fn handle(&mut self, key: KeyCode) -> Option<Outcome> {
+        let drawn = self.drawn;
+        match self.session_mut() {
+            Some(session) => session.handle(key, drawn),
+            None => (key == KeyCode::Char('q')).then_some(Outcome::Quit),
         }
     }
 
@@ -1147,6 +1154,10 @@ mod tests {
         app.session_mut().expect("a connected app")
     }
 
+    fn press<T: Transport>(app: &mut App<T>, c: char) {
+        app.handle(KeyCode::Char(c));
+    }
+
     fn history<T: Transport>(app: &mut App<T>) -> &mut History {
         &mut session(app).history
     }
@@ -1401,7 +1412,7 @@ mod tests {
             ),
             status_of(Protocol::Unifying),
         );
-        session(&mut app).press('a');
+        press(&mut app, 'a');
         assert!(session(&mut app).prompt.is_none());
         assert_eq!(sent.get(), Some(Command::Pair as u8));
         assert_eq!(
@@ -1431,7 +1442,7 @@ mod tests {
     #[test]
     fn the_bracket_keys_move_to_the_neighbouring_channel() {
         let (mut app, sent) = app_moving_from(status_of(Protocol::Unifying));
-        session(&mut app).press(']');
+        press(&mut app, ']');
         assert_eq!(sent.get(), Some(65));
         assert_eq!(
             footer(&mut app),
@@ -1441,7 +1452,7 @@ mod tests {
         let mut status = status_of(Protocol::Nuphy);
         status.channel = 16;
         let (mut app, sent) = app_moving_from(status);
-        session(&mut app).press('[');
+        press(&mut app, '[');
         assert_eq!(sent.get(), Some(78));
     }
 
@@ -1454,7 +1465,7 @@ mod tests {
             ),
             status_of(Protocol::Unifying),
         );
-        session(&mut app).press(']');
+        press(&mut app, ']');
         assert!(footer(&mut app).starts_with(
             "failed: the dongle refused Move: it moves the link only with a keyboard paired"
         ));
@@ -1473,7 +1484,7 @@ mod tests {
     #[test]
     fn the_pair_key_in_nuphy_mode_says_to_hold_fn_4() {
         let mut app = app_showing("");
-        session(&mut app).press('a');
+        press(&mut app, 'a');
         assert_eq!(
             footer(&mut app),
             "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s"
@@ -1775,6 +1786,49 @@ mod tests {
         session(&mut app).noise = Some(Vec::new());
         terminal.draw(|f| app.draw(f)).unwrap();
         assert_eq!(app.drawn.plot_width, None);
+    }
+
+    #[test]
+    fn a_prompt_is_answered_after_a_redraw_only_on_y() {
+        let drawn = Drawn::default();
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        let s = session(&mut app);
+        s.handle(KeyCode::Char('r'), Drawn::default());
+        assert!(s.handle(KeyCode::Char('n'), drawn).is_none());
+        assert!(s.prompt.is_none() && s.message.is_empty());
+        s.handle(KeyCode::Char('r'), Drawn::default());
+        let outcome = s.handle(KeyCode::Char('y'), drawn);
+        assert!(matches!(
+            outcome,
+            Some(Outcome::Answer(Prompt::Action(Action::Reboot)))
+        ));
+        assert_eq!(s.message, "working…");
+    }
+
+    #[test]
+    fn the_arrows_scroll_the_chart_only_while_it_is_drawn() {
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        let s = session(&mut app);
+        s.history.minutes = (0..130).map(|i| (i, quiet())).collect();
+        let hidden = Drawn::default();
+        s.handle(KeyCode::Left, hidden);
+        assert_eq!(s.history.minutes_back, 0);
+        let shown = Drawn {
+            plot_width: Some(50),
+            ..hidden
+        };
+        s.handle(KeyCode::Left, shown);
+        assert_eq!(s.history.minutes_back, HISTORY_STEP_MINUTES);
+    }
+
+    #[test]
+    fn a_disconnected_view_reads_only_q() {
+        let mut app: App<Fake> = App::new(None);
+        assert!(app.handle(KeyCode::Char('n')).is_none());
+        assert!(matches!(
+            app.handle(KeyCode::Char('q')),
+            Some(Outcome::Quit)
+        ));
     }
 
     #[test]
