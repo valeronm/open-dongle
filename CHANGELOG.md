@@ -31,7 +31,8 @@
 - In Unifying mode `open-dongle status` shows the name, serial and device type the keyboard
   reported when it paired, and the live view's title names the keyboard. In NuPhy mode both show
   the name the keyboard sends each time it connects, and `status` shows the keyboard's ID only once
-  a pairing has delivered it.
+  a pairing has delivered it. A Unifying pairing event shows the device's type, and its name while
+  that device is the one paired.
 - An install script that installs the latest release.
 - The channels pairing offers can be set by hand, for interference too brief for the noise survey
   to see.

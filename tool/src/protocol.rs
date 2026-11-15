@@ -335,6 +335,13 @@ pub enum Keyboard {
 }
 
 impl Keyboard {
+    pub fn protocol(&self) -> Protocol {
+        match self {
+            Self::Unifying(_) => Protocol::Unifying,
+            Self::Nuphy { .. } => Protocol::Nuphy,
+        }
+    }
+
     pub fn name(&self) -> Option<&str> {
         match self {
             Self::Unifying(keyboard) => keyboard.as_ref()?.name.as_deref(),
@@ -374,10 +381,7 @@ pub const UNIFYING_CHANNELS: [u8; 11] = [5, 8, 17, 32, 35, 41, 44, 62, 65, 71, 7
 
 impl Status {
     pub fn protocol(&self) -> Protocol {
-        match self.keyboard {
-            Keyboard::Unifying(_) => Protocol::Unifying,
-            Keyboard::Nuphy { .. } => Protocol::Nuphy,
-        }
+        self.keyboard.protocol()
     }
 
     /// Only a NuPhy dongle reports the channels it paired on.

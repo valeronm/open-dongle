@@ -874,7 +874,6 @@ impl<T: Transport> App<T> {
 
     fn draw_events(&mut self, f: &mut Frame, area: Rect) {
         self.event_rows = usize::from(area.height.saturating_sub(2));
-        let protocol = self.protocol();
         let events = &self.history.events;
         let shown = events_window(events, self.history.events_top, self.event_rows);
         let title = if shown.end == events.len() {
@@ -887,8 +886,8 @@ impl<T: Transport> App<T> {
                 events.len()
             )
         };
-        let items: Vec<ListItem> = match self.history.boot {
-            Some(boot) => events[shown]
+        let items: Vec<ListItem> = match (self.history.boot, &self.history.status) {
+            (Some(boot), Some(s)) => events[shown]
                 .iter()
                 .rev()
                 .map(|(_, e)| {
@@ -896,11 +895,11 @@ impl<T: Transport> App<T> {
                     ListItem::new(format!(
                         "{}  {}",
                         at.format(CLOCK),
-                        describe_event(e, protocol)
+                        describe_event(e, &s.keyboard)
                     ))
                 })
                 .collect(),
-            None => Vec::new(),
+            _ => Vec::new(),
         };
         f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
     }

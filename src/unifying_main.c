@@ -59,7 +59,7 @@ static void on_paired(void)
 	err = store_save_unifying(record, sizeof(record));
 	printk("pairing saved: %d\n", err);
 	core_log(HISTORY_UNIFYING_PAIRED, session.pairing.device.wpid[0],
-		 session.pairing.device.wpid[1], 0, (uint32_t)err);
+		 session.pairing.device.wpid[1], session.pairing.device.type, (uint32_t)err);
 }
 
 static void report_pairing(enum unifying_rx_event event, const uint8_t *reply, size_t n)

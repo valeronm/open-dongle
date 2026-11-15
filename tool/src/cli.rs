@@ -211,7 +211,7 @@ pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Resu
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e, s.protocol())
+            describe_event(&e, &s.keyboard)
         );
     }
     Ok(())
