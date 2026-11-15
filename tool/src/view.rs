@@ -479,9 +479,14 @@ enum Connection<T: Transport> {
 struct App<T: Transport = device::HidTransport> {
     serial: Option<String>,
     connection: Connection<T>,
-    // The events list's rows and the history chart's columns as last drawn.
+    drawn: Drawn,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Drawn {
     event_rows: usize,
-    plot_width: usize,
+    /// `None` while the history chart is not on screen.
+    plot_width: Option<usize>,
 }
 
 pub fn run(serial: Option<String>) -> Result<()> {
@@ -510,7 +515,10 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            let (rows, width) = (self.event_rows, self.plot_width);
+            let Drawn {
+                event_rows: rows,
+                plot_width: width,
+            } = self.drawn;
             let Some(session) = self.session_mut() else {
                 if key.code == KeyCode::Char('q') {
                     return Ok(());
@@ -534,8 +542,8 @@ impl App {
                 KeyCode::Char('q') => return Ok(()),
                 KeyCode::Char(c) => session.press(c),
                 KeyCode::Esc => session.noise = None,
-                KeyCode::Left => session.scroll_older(width),
-                KeyCode::Right => session.scroll_newer(width),
+                KeyCode::Left if let Some(width) = width => session.scroll_older(width),
+                KeyCode::Right if let Some(width) = width => session.scroll_newer(width),
                 KeyCode::Up => session.scroll_events(EventsMove::Newer(1), rows),
                 KeyCode::Down => session.scroll_events(EventsMove::Older(1), rows),
                 KeyCode::PageUp => session.scroll_events(EventsMove::Newer(rows), rows),
@@ -716,15 +724,7 @@ impl<T: Transport> App<T> {
         App {
             serial,
             connection: Connection::Disconnected("disconnected".into()),
-            event_rows: EVENT_ROWS,
-            plot_width: 0,
-        }
-    }
-
-    fn session(&self) -> Option<&Session<T>> {
-        match &self.connection {
-            Connection::Connected(session) => Some(session),
-            Connection::Disconnected(_) => None,
+            drawn: Drawn::default(),
         }
     }
 
@@ -733,14 +733,6 @@ impl<T: Transport> App<T> {
             Connection::Connected(session) => Some(session),
             Connection::Disconnected(_) => None,
         }
-    }
-
-    fn history(&self) -> Option<&History> {
-        self.session().map(|s| &s.history)
-    }
-
-    fn protocol(&self) -> Option<Protocol> {
-        self.session().map(Session::protocol)
     }
 
     fn refresh(&mut self, status: Result<Status>) {
@@ -756,238 +748,248 @@ impl<T: Transport> App<T> {
     }
 
     fn draw(&mut self, f: &mut Frame) {
-        let title = match self.history() {
-            Some(h) => ["OpenDongle", h.status.protocol().name()]
+        let (session, help) = self.connection.view(f.area().width as usize);
+        let status = session.map(|s| &s.history.status);
+        let title = match status {
+            Some(s) => ["OpenDongle", s.protocol().name()]
                 .into_iter()
-                .chain(h.status.link.keyboard_name())
+                .chain(s.link.keyboard_name())
                 .collect::<Vec<_>>()
                 .join(" · "),
             None => "OpenDongle".into(),
         };
-        let status = Paragraph::new(self.status_lines()).block(Block::bordered().title(title));
-        let help = self.help(f.area().width as usize);
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(STATUS_ROWS + 2),
-            Constraint::Min(history_min_rows(self.protocol())),
+            Constraint::Min(history_min_rows(status.map(Status::protocol))),
             Constraint::Max(EVENT_ROWS as u16 + 2),
             Constraint::Length(help.len() as u16),
         ])
         .areas(f.area());
-        f.render_widget(status, top);
-        if let Some(session) = self.session()
+        f.render_widget(
+            Paragraph::new(status_lines(status)).block(Block::bordered().title(title)),
+            top,
+        );
+        let plot_width = if let Some(session) = session
             && let Some(noise) = &session.noise
         {
-            Self::draw_noise(f, middle, noise, &session.history.status);
+            draw_noise(f, middle, noise, &session.history.status);
+            None
         } else {
-            self.draw_history(f, middle);
-        }
-        self.draw_events(f, bottom);
+            Some(draw_history(f, middle, session))
+        };
+        let event_rows = draw_events(f, bottom, session.map(|s| &s.history));
         f.render_widget(Paragraph::new(help.join("\n")), footer);
+        self.drawn = Drawn {
+            event_rows,
+            plot_width,
+        };
     }
+}
 
-    fn help(&self, width: usize) -> Vec<String> {
-        match &self.connection {
-            Connection::Connected(session) => session.help(width),
+impl<T: Transport> Connection<T> {
+    fn view(&self, width: usize) -> (Option<&Session<T>>, Vec<String>) {
+        match self {
+            Connection::Connected(session) => (Some(session), session.help(width)),
             Connection::Disconnected(line) => {
                 let mut lines = flow(line.split(' '), " ", width);
                 lines.push("q quit".into());
-                lines
+                (None, lines)
             }
         }
     }
+}
 
-    fn status_lines(&self) -> Vec<Line<'static>> {
-        let Some(s) = self.history().map(|h| &h.status) else {
-            return vec![Line::from("disconnected")];
-        };
-        let signal_style = match s.last_rx_age_ms {
-            Some(_) => Style::new().fg(signal_color(s.last_rssi)),
-            None => Style::new(),
-        };
-        let link = vec![
-            Span::styled(state_name(s), Style::new().fg(link_color(link_health(s)))),
-            Span::raw(SEPARATOR),
-            Span::styled(format!("{} dBm", s.last_rssi), signal_style),
-            Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
-        ];
-        let mut dongle = vec![Span::raw(format!(
-            "usb {}{SEPARATOR}up {}",
-            usb_state(s.usb_live, s.usb_suspended),
-            uptime(s.uptime_ms)
-        ))];
-        if s.pairing_open {
-            dongle.push(Span::raw(SEPARATOR));
-            dongle.push(Span::styled(
-                "pairing open",
-                Style::new().fg(link_color(LinkHealth::Pairing)),
-            ));
-        }
-        vec![
-            status_row("link", link),
-            status_row("channels", channel_spans(s)),
-            status_row("dongle", dongle),
-        ]
+fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
+    let Some(s) = status else {
+        return vec![Line::from("disconnected")];
+    };
+    let signal_style = match s.last_rx_age_ms {
+        Some(_) => Style::new().fg(signal_color(s.last_rssi)),
+        None => Style::new(),
+    };
+    let link = vec![
+        Span::styled(state_name(s), Style::new().fg(link_color(link_health(s)))),
+        Span::raw(SEPARATOR),
+        Span::styled(format!("{} dBm", s.last_rssi), signal_style),
+        Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
+    ];
+    let mut dongle = vec![Span::raw(format!(
+        "usb {}{SEPARATOR}up {}",
+        usb_state(s.usb_live, s.usb_suspended),
+        uptime(s.uptime_ms)
+    ))];
+    if s.pairing_open {
+        dongle.push(Span::raw(SEPARATOR));
+        dongle.push(Span::styled(
+            "pairing open",
+            Style::new().fg(link_color(LinkHealth::Pairing)),
+        ));
     }
+    vec![
+        status_row("link", link),
+        status_row("channels", channel_spans(s)),
+        status_row("dongle", dongle),
+    ]
+}
 
-    fn draw_history(&mut self, f: &mut Frame, area: Rect) {
-        let block = Block::bordered()
-            .title(legend(
-                "signal dBm",
-                SIGNAL_LINES
-                    .iter()
-                    .rev()
-                    .map(|&(name, color, _)| (name, color)),
-            ))
-            .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
-        let inner = block.inner(area);
-        f.render_widget(block, area);
-        let [gutter, axis_line, plot] = Layout::horizontal([
-            Constraint::Length(GUTTER),
-            Constraint::Length(1),
-            Constraint::Fill(1),
-        ])
-        .areas(inner);
-        let kept: Vec<&Strip> = strips(self.protocol()).collect();
-        let rows = Layout::vertical(panel_rows(kept.len()));
-        let [dbm_labels, strip_labels, _] = rows.areas(gutter);
-        let [chart_axis, _, _] = rows.areas(axis_line);
-        let [chart, strips, axis] = rows.areas(plot);
+fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Session<T>>) -> usize {
+    let block = Block::bordered()
+        .title(legend(
+            "signal dBm",
+            SIGNAL_LINES
+                .iter()
+                .rev()
+                .map(|&(name, color, _)| (name, color)),
+        ))
+        .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let [gutter, axis_line, plot] = Layout::horizontal([
+        Constraint::Length(GUTTER),
+        Constraint::Length(1),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
+    let kept: Vec<&Strip> = strips(session.map(Session::protocol)).collect();
+    let rows = Layout::vertical(panel_rows(kept.len()));
+    let [dbm_labels, strip_labels, _] = rows.areas(gutter);
+    let [chart_axis, _, _] = rows.areas(axis_line);
+    let [chart, strips, axis] = rows.areas(plot);
 
-        let width = usize::from(plot.width);
-        self.plot_width = width;
-        let (shown, boot): (&[(u32, Minute)], _) = match &self.connection {
-            Connection::Connected(session) => {
-                let minutes = &session.history.minutes;
-                let end = minutes.len() - session.scrolled(width);
-                (
-                    &minutes[end.saturating_sub(width)..end],
-                    Some(session.history.boot),
-                )
-            }
-            Connection::Disconnected(_) => (&[], None),
-        };
-
-        let runs: Vec<_> = SIGNAL_LINES
-            .iter()
-            .map(|(_, color, pick)| (*color, dbm_runs(shown, *pick)))
-            .collect();
-        let datasets: Vec<Dataset> = runs
-            .iter()
-            .flat_map(|(color, runs)| {
-                runs.iter().map(|run| {
-                    Dataset::default()
-                        .marker(DBM_MARKER)
-                        .graph_type(GraphType::Line)
-                        .style(Style::default().fg(*color))
-                        .data(run)
-                })
-            })
-            .collect();
-        f.render_widget(
-            Chart::new(datasets)
-                .x_axis(Axis::default().bounds([0.0, width.saturating_sub(1).max(1) as f64]))
-                .y_axis(Axis::default().bounds(DBM_BOUNDS)),
-            chart,
-        );
-        f.render_widget(Block::new().borders(Borders::LEFT), chart_axis);
-        let mut label_rows = vec![Line::default(); usize::from(dbm_labels.height)];
-        for dbm in DBM_LABELS {
-            if let Some(row) = dbm_row(dbm, dbm_labels.height).and_then(|r| label_rows.get_mut(r)) {
-                *row = Line::from(dbm.to_string());
-            }
-        }
-        f.render_widget(Paragraph::new(label_rows).right_aligned(), dbm_labels);
-
-        let mut names = Vec::new();
-        let mut scales = Vec::new();
-        let mut bars = Vec::new();
-        for strip in kept {
-            let values: Vec<u16> = shown.iter().map(|(_, m)| strip.value(m)).collect();
-            let (top, bar) = bar_strip(&values);
-            names.push(Line::from(strip.name));
-            scales.push(match top {
-                0 => Line::default(),
-                _ => Line::from(strip.scale(top)),
-            });
-            bars.push(Line::from(bar));
-        }
-        f.render_widget(Paragraph::new(names), strip_labels);
-        f.render_widget(Paragraph::new(scales).right_aligned(), strip_labels);
-        f.render_widget(Paragraph::new(bars), strips);
-
-        if let Some(boot) = boot {
-            f.render_widget(Paragraph::new(time_axis(boot, shown)), axis);
-        }
-    }
-
-    fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
-        let bars: Vec<Bar> = noise
-            .iter()
-            .map(|c| {
-                let role = channel_role(c.channel, s);
-                Bar::default()
-                    .value(u64::from(noise_level(c.loudest)))
-                    .style(Style::default().fg(role_color(role)))
-                    .text_value(String::new())
-            })
-            .collect();
-        let [chart, ruler] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
-        let block = Block::bordered()
-            .title(legend(
-                "loudest per channel",
-                [ChannelRole::Current, ChannelRole::Paired]
-                    .into_iter()
-                    .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
-            ))
-            .title_bottom("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11");
-        let bars_area = block.inner(chart);
-        f.render_widget(
-            BarChart::default()
-                .block(block)
-                .bar_width(1)
-                .bar_gap(0)
-                .data(BarGroup::default().bars(&bars)),
-            chart,
-        );
-        let first = noise.first().map_or(0, |c| c.channel);
-        let count = u8::try_from(noise.len()).unwrap_or(u8::MAX);
-        let under_bars = Rect::new(bars_area.x, ruler.y, bars_area.width, 1);
-        f.render_widget(Paragraph::new(noise_ruler(first, count)), under_bars);
-    }
-
-    fn draw_events(&mut self, f: &mut Frame, area: Rect) {
-        self.event_rows = usize::from(area.height.saturating_sub(2));
-        let Some(history) = self.history() else {
-            f.render_widget(Block::bordered().title("events"), area);
-            return;
-        };
-        let events = &history.events;
-        let shown = events_window(events, history.events_top, self.event_rows);
-        let title = if shown.end == events.len() {
-            "events".to_string()
-        } else {
-            format!(
-                "events, {}–{} of {} (Home for newest)",
-                events.len() - shown.end + 1,
-                events.len() - shown.start,
-                events.len()
+    let width = usize::from(plot.width);
+    let (shown, boot): (&[(u32, Minute)], _) = match session {
+        Some(session) => {
+            let minutes = &session.history.minutes;
+            let end = minutes.len() - session.scrolled(width);
+            (
+                &minutes[end.saturating_sub(width)..end],
+                Some(session.history.boot),
             )
-        };
-        let items: Vec<ListItem> = events[shown]
-            .iter()
-            .rev()
-            .map(|(_, e)| {
-                let at = history.boot + TimeDelta::milliseconds(e.time_ms as i64);
-                ListItem::new(format!(
-                    "{}  {}",
-                    at.format(CLOCK),
-                    describe_event(e, &history.status.link)
-                ))
+        }
+        None => (&[], None),
+    };
+
+    let runs: Vec<_> = SIGNAL_LINES
+        .iter()
+        .map(|(_, color, pick)| (*color, dbm_runs(shown, *pick)))
+        .collect();
+    let datasets: Vec<Dataset> = runs
+        .iter()
+        .flat_map(|(color, runs)| {
+            runs.iter().map(|run| {
+                Dataset::default()
+                    .marker(DBM_MARKER)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(*color))
+                    .data(run)
             })
-            .collect();
-        f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+        })
+        .collect();
+    f.render_widget(
+        Chart::new(datasets)
+            .x_axis(Axis::default().bounds([0.0, width.saturating_sub(1).max(1) as f64]))
+            .y_axis(Axis::default().bounds(DBM_BOUNDS)),
+        chart,
+    );
+    f.render_widget(Block::new().borders(Borders::LEFT), chart_axis);
+    let mut label_rows = vec![Line::default(); usize::from(dbm_labels.height)];
+    for dbm in DBM_LABELS {
+        if let Some(row) = dbm_row(dbm, dbm_labels.height).and_then(|r| label_rows.get_mut(r)) {
+            *row = Line::from(dbm.to_string());
+        }
     }
+    f.render_widget(Paragraph::new(label_rows).right_aligned(), dbm_labels);
+
+    let mut names = Vec::new();
+    let mut scales = Vec::new();
+    let mut bars = Vec::new();
+    for strip in kept {
+        let values: Vec<u16> = shown.iter().map(|(_, m)| strip.value(m)).collect();
+        let (top, bar) = bar_strip(&values);
+        names.push(Line::from(strip.name));
+        scales.push(match top {
+            0 => Line::default(),
+            _ => Line::from(strip.scale(top)),
+        });
+        bars.push(Line::from(bar));
+    }
+    f.render_widget(Paragraph::new(names), strip_labels);
+    f.render_widget(Paragraph::new(scales).right_aligned(), strip_labels);
+    f.render_widget(Paragraph::new(bars), strips);
+
+    if let Some(boot) = boot {
+        f.render_widget(Paragraph::new(time_axis(boot, shown)), axis);
+    }
+    width
+}
+
+fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
+    let bars: Vec<Bar> = noise
+        .iter()
+        .map(|c| {
+            let role = channel_role(c.channel, s);
+            Bar::default()
+                .value(u64::from(noise_level(c.loudest)))
+                .style(Style::default().fg(role_color(role)))
+                .text_value(String::new())
+        })
+        .collect();
+    let [chart, ruler] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
+    let block = Block::bordered()
+        .title(legend(
+            "loudest per channel",
+            [ChannelRole::Current, ChannelRole::Paired]
+                .into_iter()
+                .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
+        ))
+        .title_bottom("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11");
+    let bars_area = block.inner(chart);
+    f.render_widget(
+        BarChart::default()
+            .block(block)
+            .bar_width(1)
+            .bar_gap(0)
+            .data(BarGroup::default().bars(&bars)),
+        chart,
+    );
+    let first = noise.first().map_or(0, |c| c.channel);
+    let count = u8::try_from(noise.len()).unwrap_or(u8::MAX);
+    let under_bars = Rect::new(bars_area.x, ruler.y, bars_area.width, 1);
+    f.render_widget(Paragraph::new(noise_ruler(first, count)), under_bars);
+}
+
+fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
+    let rows = usize::from(area.height.saturating_sub(2));
+    let Some(history) = history else {
+        f.render_widget(Block::bordered().title("events"), area);
+        return rows;
+    };
+    let events = &history.events;
+    let shown = events_window(events, history.events_top, rows);
+    let title = if shown.end == events.len() {
+        "events".to_string()
+    } else {
+        format!(
+            "events, {}–{} of {} (Home for newest)",
+            events.len() - shown.end + 1,
+            events.len() - shown.start,
+            events.len()
+        )
+    };
+    let items: Vec<ListItem> = events[shown]
+        .iter()
+        .rev()
+        .map(|(_, e)| {
+            let at = history.boot + TimeDelta::milliseconds(e.time_ms as i64);
+            ListItem::new(format!(
+                "{}  {}",
+                at.format(CLOCK),
+                describe_event(e, &history.status.link)
+            ))
+        })
+        .collect();
+    f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+    rows
 }
 
 #[cfg(test)]
@@ -1162,7 +1164,11 @@ mod tests {
             None => App::new(None),
         };
         let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
-        terminal.draw(|f| app.draw_history(f, f.area())).unwrap();
+        terminal
+            .draw(|f| {
+                draw_history(f, f.area(), app.session_mut().map(|s| &*s));
+            })
+            .unwrap();
         screen(&terminal)
     }
 
@@ -1181,7 +1187,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
         let rows = screen(&terminal);
-        rows[rows.len() - app.help(80).len()..]
+        rows[rows.len() - app.connection.view(80).1.len()..]
             .iter()
             .map(|row| row.trim_end())
             .collect::<Vec<_>>()
@@ -1279,7 +1285,7 @@ mod tests {
             footer(&mut app),
             "the dongle refused Status: the radio failed"
         );
-        assert!(app.session().is_some());
+        assert!(app.session_mut().is_some());
         assert_eq!(history(&mut app).minutes.len(), 1);
     }
 
@@ -1319,8 +1325,8 @@ mod tests {
 
     #[test]
     fn the_nuphy_footer_is_one_line_of_hints() {
-        let app = app_with(status_of(Protocol::Nuphy));
-        assert_eq!(app.protocol(), Some(Protocol::Nuphy));
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        assert_eq!(session(&mut app).protocol(), Protocol::Nuphy);
         let hints = [
             "n noise",
             "a pair",
@@ -1334,7 +1340,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(app.help(120), [hints.join("  ")]);
+        assert_eq!(app.connection.view(120).1, [hints.join("  ")]);
     }
 
     #[test]
@@ -1457,20 +1463,12 @@ mod tests {
 
     #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
-        let mut app = app_with(status_of(Protocol::Unifying));
-        assert!(
-            app.status_lines()[2]
-                .to_string()
-                .ends_with("   pairing open")
-        );
-        history(&mut app).status = status_of(Protocol::Nuphy);
-        assert!(
-            app.status_lines()[2]
-                .to_string()
-                .ends_with("   pairing open")
-        );
-        history(&mut app).status.pairing_open = false;
-        assert!(!app.status_lines()[2].to_string().contains("pairing"));
+        let dongle_row = |s: &Status| status_lines(Some(s))[2].to_string();
+        assert!(dongle_row(&status_of(Protocol::Unifying)).ends_with("   pairing open"));
+        let mut s = status_of(Protocol::Nuphy);
+        assert!(dongle_row(&s).ends_with("   pairing open"));
+        s.pairing_open = false;
+        assert!(!dongle_row(&s).contains("pairing"));
     }
 
     #[test]
@@ -1568,7 +1566,7 @@ mod tests {
             footer(&mut app),
             "disconnected: writing to the dongle: hidapi error: device disconnected\nq quit"
         );
-        assert!(app.session().is_none());
+        assert!(app.session_mut().is_none());
     }
 
     #[test]
@@ -1593,7 +1591,7 @@ mod tests {
             .collect();
         let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
         terminal
-            .draw(|f| App::<Fake>::draw_noise(f, f.area(), &noise, &status))
+            .draw(|f| draw_noise(f, f.area(), &noise, &status))
             .unwrap();
         let rows = screen(&terminal);
         let text = format!("{}{}", rows[0], rows[10]);
@@ -1767,6 +1765,17 @@ mod tests {
         assert!(h.refresh(&mut dev, s).is_err());
         assert_eq!(h.status.uptime_ms, 201 * 60_000);
         assert_eq!(h.minutes.len(), 130);
+    }
+
+    #[test]
+    fn the_chart_width_is_kept_only_while_the_chart_is_drawn() {
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert!(app.drawn.plot_width.is_some());
+        session(&mut app).noise = Some(Vec::new());
+        terminal.draw(|f| app.draw(f)).unwrap();
+        assert_eq!(app.drawn.plot_width, None);
     }
 
     #[test]
