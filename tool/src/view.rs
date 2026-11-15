@@ -110,7 +110,7 @@ const STRIPS: [Strip; 5] = [
 
 fn strips(protocol: Protocol) -> impl Iterator<Item = &'static Strip> {
     STRIPS.iter().filter(move |strip| match strip.source {
-        Source::Counter(counter) => protocol.counters().contains(&counter),
+        Source::Counter(counter) => protocol.counts(counter),
         Source::Busy => true,
     })
 }
@@ -324,7 +324,7 @@ impl History {
             .retain(|(i, _)| *i >= s.events_oldest && *i < s.events_total);
         let from = self.minutes.last().map_or(s.minute_oldest, |(i, _)| i + 1);
         self.minutes
-            .extend(dev.minutes_between(from, s.minute_next)?);
+            .extend(dev.minutes_between(from, s.minute_next, s.protocol())?);
         let from = self.events.last().map_or(
             s.events_total.saturating_sub(EVENTS_KEPT as u32),
             |(i, _)| i + 1,
@@ -989,9 +989,9 @@ mod tests {
             invalid: 0,
             dropped: 0,
             channel_changes: 0,
-            link_losses: 0,
+            link_losses: Some(0),
             usb_retries: 0,
-            gaps: 0,
+            gaps: Some(0),
             rssi: None,
             noise: None,
         }
@@ -1500,7 +1500,7 @@ mod tests {
     #[test]
     fn a_minute_sits_in_one_column_across_the_chart_and_the_strips() {
         let marked = Minute {
-            gaps: 3,
+            gaps: Some(3),
             ..with_signal(-60)
         };
         let rows = panel_with(marked, history_min_rows(Protocol::Nuphy));

@@ -57,7 +57,7 @@ fn status_lines(s: &Status) -> Vec<String> {
         .protocol()
         .counters()
         .iter()
-        .map(|&counter| format!("{} {}", counter.name(), c.get(counter)))
+        .filter_map(|&counter| Some(format!("{} {}", counter.name(), c.get(counter)?)))
         .collect();
     let mut rows = vec![
         ("firmware", version(s.firmware_version)),
@@ -192,7 +192,7 @@ fn minute_line(protocol: Protocol, m: &Minute) -> String {
 pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> Result<()> {
     let now = Local::now();
     let from = s.minute_next.saturating_sub(minutes);
-    for (index, m) in dev.minutes_between(from, s.minute_next)? {
+    for (index, m) in dev.minutes_between(from, s.minute_next, s.protocol())? {
         let at = wall_clock(now, s.uptime_ms, u64::from(index) * 60_000);
         println!(
             "{}  {}",
@@ -624,9 +624,9 @@ mod tests {
             invalid: 1,
             dropped: 0,
             channel_changes: 2,
-            link_losses: 3,
+            link_losses: Some(3),
             usb_retries: 5,
-            gaps: 4,
+            gaps: Some(4),
             rssi: None,
             noise: None,
         }

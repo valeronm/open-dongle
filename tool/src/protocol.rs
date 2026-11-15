@@ -104,6 +104,14 @@ impl Protocol {
         }
     }
 
+    pub fn counts(self, counter: Counter) -> bool {
+        self.counters().contains(&counter)
+    }
+
+    fn counted<T>(self, counter: Counter, value: T) -> Option<T> {
+        self.counts(counter).then_some(value)
+    }
+
     pub(crate) fn read(r: &mut Reader) -> Result<Self> {
         Self::from_code(r.u8()?).ok_or_else(|| unknown("protocol"))
     }
@@ -291,24 +299,25 @@ pub struct Counters {
     pub invalid: u32,
     pub dropped: u32,
     pub channel_changes: u32,
-    pub link_losses: u32,
+    pub link_losses: Option<u32>,
     pub usb_retries: u32,
-    pub gaps: u32,
+    pub gaps: Option<u32>,
     pub merges: u32,
-    pub surveys: u32,
+    pub surveys: Option<u32>,
 }
 
 impl Counters {
-    pub fn get(&self, counter: Counter) -> u32 {
+    /// `None` for a counter the dongle's protocol does not count.
+    pub fn get(&self, counter: Counter) -> Option<u32> {
         match counter {
-            Counter::Packets => self.packets,
-            Counter::Invalid => self.invalid,
-            Counter::Dropped => self.dropped,
-            Counter::ChannelChanges => self.channel_changes,
+            Counter::Packets => Some(self.packets),
+            Counter::Invalid => Some(self.invalid),
+            Counter::Dropped => Some(self.dropped),
+            Counter::ChannelChanges => Some(self.channel_changes),
             Counter::LinkLosses => self.link_losses,
             Counter::Gaps => self.gaps,
-            Counter::UsbRetries => self.usb_retries,
-            Counter::Merges => self.merges,
+            Counter::UsbRetries => Some(self.usb_retries),
+            Counter::Merges => Some(self.merges),
             Counter::Surveys => self.surveys,
         }
     }
@@ -490,20 +499,41 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let last_rssi = r.i8()?;
     let age = r.u32()?;
     let usb = r.u8()?;
-    let counters = Counters {
-        packets: r.u32()?,
-        invalid: r.u32()?,
-        dropped: r.u32()?,
-        channel_changes: r.u32()?,
-        link_losses: r.u32()?,
-        usb_retries: r.u32()?,
-        gaps: r.u32()?,
-        merges: r.u32()?,
-        surveys: r.u32()?,
-    };
+    let [
+        packets,
+        invalid,
+        dropped,
+        channel_changes,
+        link_losses,
+        usb_retries,
+        gaps,
+        merges,
+        surveys,
+    ] = [
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+        r.u32()?,
+    ];
     let [minute_next, minute_oldest, events_total, events_oldest] =
         [r.u32()?, r.u32()?, r.u32()?, r.u32()?];
     let protocol = Protocol::read(&mut r)?;
+    let counters = Counters {
+        packets,
+        invalid,
+        dropped,
+        channel_changes,
+        link_losses: protocol.counted(Counter::LinkLosses, link_losses),
+        usb_retries,
+        gaps: protocol.counted(Counter::Gaps, gaps),
+        merges,
+        surveys: protocol.counted(Counter::Surveys, surveys),
+    };
     let pairing_open = r.u8()? != 0;
     let link = read_link(&mut r, protocol, link_state, own, forced, keyboard_id)?;
     Ok(Ok(Status {
@@ -599,26 +629,26 @@ pub struct Minute {
     pub invalid: u8,
     pub dropped: u8,
     pub channel_changes: u8,
-    pub link_losses: u8,
+    pub link_losses: Option<u8>,
     pub usb_retries: u8,
-    pub gaps: u8,
+    pub gaps: Option<u8>,
     pub rssi: Option<Rssi>,
     pub noise: Option<Noise>,
 }
 
 impl Minute {
-    /// `None` for a counter the dongle keeps only as a total.
+    /// `None` for a counter the dongle keeps only as a total or its protocol does not count.
     pub fn get(&self, counter: Counter) -> Option<u16> {
-        Some(match counter {
-            Counter::Packets => self.packets,
-            Counter::Invalid => self.invalid.into(),
-            Counter::Dropped => self.dropped.into(),
-            Counter::ChannelChanges => self.channel_changes.into(),
-            Counter::LinkLosses => self.link_losses.into(),
-            Counter::UsbRetries => self.usb_retries.into(),
-            Counter::Gaps => self.gaps.into(),
-            Counter::Merges | Counter::Surveys => return None,
-        })
+        match counter {
+            Counter::Packets => Some(self.packets),
+            Counter::Invalid => Some(self.invalid.into()),
+            Counter::Dropped => Some(self.dropped.into()),
+            Counter::ChannelChanges => Some(self.channel_changes.into()),
+            Counter::LinkLosses => self.link_losses.map(Into::into),
+            Counter::UsbRetries => Some(self.usb_retries.into()),
+            Counter::Gaps => self.gaps.map(Into::into),
+            Counter::Merges | Counter::Surveys => None,
+        }
     }
 }
 
@@ -635,7 +665,7 @@ fn read_noise(r: &mut Reader) -> Result<Option<Noise>> {
     }))
 }
 
-pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
+pub fn decode_minutes(payload: &[u8], protocol: Protocol) -> Result<(u32, Vec<Minute>)> {
     decode_page(payload, |r| {
         let packets = r.u16()?;
         let (invalid, dropped, channel_changes, link_losses, usb_retries, gaps) =
@@ -650,9 +680,9 @@ pub fn decode_minutes(payload: &[u8]) -> Result<(u32, Vec<Minute>)> {
             invalid,
             dropped,
             channel_changes,
-            link_losses,
+            link_losses: protocol.counted(Counter::LinkLosses, link_losses),
             usb_retries,
-            gaps,
+            gaps: protocol.counted(Counter::Gaps, gaps),
             rssi: present(rssi),
             noise: read_noise(r)?,
         })
@@ -895,11 +925,11 @@ pub(crate) mod tests {
                 invalid: 1,
                 dropped: 2,
                 channel_changes: 3,
-                link_losses: 4,
+                link_losses: Some(4),
                 usb_retries: 5,
-                gaps: 8,
+                gaps: Some(8),
                 merges: 6,
-                surveys: 7
+                surveys: Some(7),
             }
         );
         assert_eq!((s.minute_next, s.minute_oldest), (1500, 60));
@@ -1109,12 +1139,12 @@ pub(crate) mod tests {
 
     #[test]
     fn minutes_fixture_decodes() {
-        let (first, m) = decode_minutes(&fixture("minutes.hex")).unwrap();
+        let (first, m) = decode_minutes(&fixture("minutes.hex"), Protocol::Nuphy).unwrap();
         assert_eq!(first, 1440);
         assert_eq!(m.len(), 2);
         assert_eq!(m[0].packets, 300);
         assert_eq!(m[0].usb_retries, 1);
-        assert_eq!(m[0].gaps, 3);
+        assert_eq!(m[0].gaps, Some(3));
         assert_eq!(
             m[0].rssi,
             Some(Rssi {
@@ -1131,7 +1161,7 @@ pub(crate) mod tests {
                 strong: 5
             })
         );
-        assert_eq!((m[1].channel_changes, m[1].link_losses), (12, 1));
+        assert_eq!((m[1].channel_changes, m[1].link_losses), (12, Some(1)));
         assert_eq!(m[1].rssi, None);
         assert_eq!(m[1].noise, None);
     }
@@ -1232,10 +1262,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_unifying_dongle_has_none_of_the_counters_only_nuphy_counts() {
+        let c = status_of(Protocol::Unifying).counters;
+        assert_eq!((c.link_losses, c.gaps, c.surveys), (None, None, None));
+        assert_eq!(c.get(Counter::Merges), Some(6));
+        let (_, m) = decode_minutes(&fixture("minutes.hex"), Protocol::Unifying).unwrap();
+        assert_eq!((m[0].link_losses, m[0].gaps), (None, None));
+        assert_eq!(m[0].get(Counter::UsbRetries), Some(1));
+    }
+
+    #[test]
     fn padding_after_the_count_is_ignored() {
         let mut payload = fixture("minutes.hex");
         payload.resize(CHUNK, 0);
-        assert_eq!(decode_minutes(&payload).unwrap().1.len(), 2);
+        assert_eq!(
+            decode_minutes(&payload, Protocol::Nuphy).unwrap().1.len(),
+            2
+        );
     }
 
     #[test]
@@ -1243,7 +1286,7 @@ pub(crate) mod tests {
         let mut payload = 0u32.to_le_bytes().to_vec();
         payload.push(1);
         payload.extend([5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        let (_, m) = decode_minutes(&payload).unwrap();
+        let (_, m) = decode_minutes(&payload, Protocol::Nuphy).unwrap();
         assert_eq!(m[0].packets, 5);
         assert_eq!(m[0].rssi, None);
         assert_eq!(m[0].noise, None);

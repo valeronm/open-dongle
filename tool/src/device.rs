@@ -151,8 +151,8 @@ impl<T: Transport> Device<T> {
         Ok((self, status))
     }
 
-    pub fn minutes(&mut self, from: u32) -> Result<(u32, Vec<Minute>)> {
-        decode_minutes(&self.call(Command::History, from, TIMEOUT)?)
+    pub fn minutes(&mut self, from: u32, protocol: Protocol) -> Result<(u32, Vec<Minute>)> {
+        decode_minutes(&self.call(Command::History, from, TIMEOUT)?, protocol)
     }
 
     pub fn events(&mut self, from: u32) -> Result<(u32, Vec<Event>)> {
@@ -188,8 +188,13 @@ impl<T: Transport> Device<T> {
     }
 
     /// Returns the held minutes with their indexes, from `from` (or the oldest held) up to `end`.
-    pub fn minutes_between(&mut self, from: u32, end: u32) -> Result<Vec<(u32, Minute)>> {
-        collect_pages(from, end, |f| self.minutes(f))
+    pub fn minutes_between(
+        &mut self,
+        from: u32,
+        end: u32,
+        protocol: Protocol,
+    ) -> Result<Vec<(u32, Minute)>> {
+        collect_pages(from, end, |f| self.minutes(f, protocol))
     }
 
     /// Returns the held events with their indexes, from `from` (or the oldest held) up to `end`.
@@ -386,7 +391,7 @@ pub(crate) mod tests {
             }),
             0,
         );
-        let m = dev.minutes_between(0, 130).unwrap();
+        let m = dev.minutes_between(0, 130, Protocol::Nuphy).unwrap();
         assert_eq!(m.len(), 130);
         assert_eq!((m[0].0, m[129].0), (0, 129));
     }
@@ -401,7 +406,7 @@ pub(crate) mod tests {
             }),
             0,
         );
-        let (first, m) = dev.minutes(1440).unwrap();
+        let (first, m) = dev.minutes(1440, Protocol::Nuphy).unwrap();
         assert_eq!((first, m.len()), (1440, 2));
     }
 
@@ -415,7 +420,7 @@ pub(crate) mod tests {
             }),
             0,
         );
-        assert_eq!(dev.status().unwrap().counters.surveys, 7);
+        assert_eq!(dev.status().unwrap().counters.surveys, Some(7));
     }
 
     #[test]
