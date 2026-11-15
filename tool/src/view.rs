@@ -453,6 +453,17 @@ fn error_text(e: &anyhow::Error) -> String {
     format!("{e:#}")
 }
 
+struct Session<T: Transport> {
+    device: Device<T>,
+    history: History,
+    /// The last refresh's error, while the dongle answers but its reply failed.
+    refresh_error: Option<String>,
+    noise: Option<Vec<NoiseChannel>>,
+    prompt: Option<Prompt>,
+    message: String,
+    scroll: usize,
+}
+
 #[expect(
     clippy::large_enum_variant,
     reason = "one Connection lives for the whole run"
@@ -460,21 +471,12 @@ fn error_text(e: &anyhow::Error) -> String {
 enum Connection<T: Transport> {
     /// Holds the footer's line.
     Disconnected(String),
-    Connected {
-        device: Device<T>,
-        history: History,
-        /// The last refresh's error, while the dongle answers but its reply failed.
-        refresh_error: Option<String>,
-        noise: Option<Vec<NoiseChannel>>,
-    },
+    Connected(Session<T>),
 }
 
 struct App<T: Transport = device::HidTransport> {
     serial: Option<String>,
     connection: Connection<T>,
-    prompt: Option<Prompt>,
-    message: String,
-    scroll: usize,
     event_rows: usize,
 }
 
@@ -504,49 +506,49 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            if let Some(prompt) = self.prompt.take() {
+            let rows = self.event_rows;
+            let Some(session) = self.session_mut() else {
+                if key.code == KeyCode::Char('q') {
+                    return Ok(());
+                }
+                continue;
+            };
+            if let Some(prompt) = session.prompt.take() {
                 if key.code == KeyCode::Char('y') {
-                    self.message = "working…".into();
+                    session.message = "working…".into();
                     terminal.draw(|f| self.draw(f))?;
-                    self.answer(prompt);
+                    if let Some(session) = self.session_mut() {
+                        session.answer(prompt);
+                    }
                 } else {
-                    self.message.clear();
+                    session.message.clear();
                 }
                 continue;
             }
-            self.message.clear();
+            session.message.clear();
             match key.code {
                 KeyCode::Char('q') => return Ok(()),
-                KeyCode::Char(c) => self.press(c),
-                KeyCode::Esc => {
-                    if let Connection::Connected { noise, .. } = &mut self.connection {
-                        *noise = None;
-                    }
-                }
-                KeyCode::Left => self.scroll += 10,
-                KeyCode::Right => self.scroll = self.scroll.saturating_sub(10),
-                KeyCode::Up => self.scroll_events(EventsMove::Newer(1)),
-                KeyCode::Down => self.scroll_events(EventsMove::Older(1)),
-                KeyCode::PageUp => self.scroll_events(EventsMove::Newer(self.event_rows)),
-                KeyCode::PageDown => self.scroll_events(EventsMove::Older(self.event_rows)),
-                KeyCode::Home => self.scroll_events(EventsMove::Newest),
-                KeyCode::End => self.scroll_events(EventsMove::Oldest),
+                KeyCode::Char(c) => session.press(c),
+                KeyCode::Esc => session.noise = None,
+                KeyCode::Left => session.scroll += 10,
+                KeyCode::Right => session.scroll = session.scroll.saturating_sub(10),
+                KeyCode::Up => session.scroll_events(EventsMove::Newer(1), rows),
+                KeyCode::Down => session.scroll_events(EventsMove::Older(1), rows),
+                KeyCode::PageUp => session.scroll_events(EventsMove::Newer(rows), rows),
+                KeyCode::PageDown => session.scroll_events(EventsMove::Older(rows), rows),
+                KeyCode::Home => session.scroll_events(EventsMove::Newest, rows),
+                KeyCode::End => session.scroll_events(EventsMove::Oldest, rows),
                 _ => {}
             }
         }
     }
 
     fn poll(&mut self) {
-        let status = match self.device() {
-            Some(dev) => dev.status(),
+        let status = match self.session_mut() {
+            Some(session) => session.device.status(),
             None => match device::open(self.serial.as_deref()) {
                 Ok((device, status)) => {
-                    self.connection = Connection::Connected {
-                        device,
-                        history: History::new(status.clone()),
-                        refresh_error: None,
-                        noise: None,
-                    };
+                    self.connection = Connection::Connected(Session::new(device, status.clone()));
                     Ok(status)
                 }
                 Err(e) => {
@@ -559,38 +561,25 @@ impl App {
     }
 }
 
-impl<T: Transport> App<T> {
-    fn new(serial: Option<String>) -> Self {
-        App {
-            serial,
-            connection: Connection::Disconnected("disconnected".into()),
+impl<T: Transport> Session<T> {
+    fn new(device: Device<T>, status: Status) -> Self {
+        Session {
+            device,
+            history: History::new(status),
+            refresh_error: None,
+            noise: None,
             prompt: None,
             message: String::new(),
             scroll: 0,
-            event_rows: EVENT_ROWS,
         }
     }
 
-    fn device(&mut self) -> Option<&mut Device<T>> {
-        match &mut self.connection {
-            Connection::Connected { device, .. } => Some(device),
-            Connection::Disconnected(_) => None,
-        }
-    }
-
-    fn history(&self) -> Option<&History> {
-        match &self.connection {
-            Connection::Connected { history, .. } => Some(history),
-            Connection::Disconnected(_) => None,
-        }
-    }
-
-    fn protocol(&self) -> Option<Protocol> {
-        self.history().map(|h| h.status.protocol())
+    fn protocol(&self) -> Protocol {
+        self.history.status.protocol()
     }
 
     fn key(&self, c: char) -> Option<Key> {
-        action_keys(self.protocol()?)
+        action_keys(self.protocol())
             .into_iter()
             .find(|(k, _, _)| *k == c)
             .map(|(_, _, key)| key)
@@ -610,29 +599,18 @@ impl<T: Transport> App<T> {
     }
 
     fn pair(&mut self, protocol: Protocol) {
-        let Some(dev) = self.device() else {
-            return;
-        };
-        self.message = match dev.pair() {
+        self.message = match self.device.pair() {
             Ok(()) => pairing_open(protocol).into(),
             Err(e) => format!("failed: {}", error_text(&e)),
         };
     }
 
     fn step(&mut self, step: Step) {
-        let Connection::Connected {
-            device: dev,
-            history,
-            ..
-        } = &mut self.connection
-        else {
-            return;
-        };
-        let status = &mut history.status;
+        let status = &mut self.history.status;
         let Some(to) = step_channel(&status.keyboard_channels(), status.channel, step) else {
             return;
         };
-        self.message = match crate::cli::move_link(dev, status, to) {
+        self.message = match crate::cli::move_link(&mut self.device, status, to) {
             Ok(line) => {
                 status.channel = to;
                 line
@@ -641,64 +619,41 @@ impl<T: Transport> App<T> {
         };
     }
 
-    fn scroll_events(&mut self, step: EventsMove) {
-        if let Connection::Connected { history, .. } = &mut self.connection {
-            history.events_top =
-                scrolled_top(&history.events, history.events_top, self.event_rows, step);
-        }
+    fn scroll_events(&mut self, step: EventsMove, rows: usize) {
+        let history = &mut self.history;
+        history.events_top = scrolled_top(&history.events, history.events_top, rows, step);
     }
 
-    fn refresh(&mut self, status: Result<Status>) {
-        let Connection::Connected {
-            device,
-            history,
-            refresh_error,
-            ..
-        } = &mut self.connection
-        else {
-            return;
-        };
+    /// Returns the error that lost the dongle.
+    fn refresh(&mut self, status: Result<Status>) -> Result<()> {
         let read = status.is_ok();
-        match status.and_then(|s| history.refresh(device, s)) {
-            Ok(()) => *refresh_error = None,
-            Err(e) if e.is::<Lost>() => return self.disconnect(&e),
-            Err(e) => *refresh_error = Some(error_text(&e)),
+        match status.and_then(|s| self.history.refresh(&mut self.device, s)) {
+            Ok(()) => self.refresh_error = None,
+            Err(e) if e.is::<Lost>() => return Err(e),
+            Err(e) => self.refresh_error = Some(error_text(&e)),
         }
         if read {
             self.drop_pairing_message_once_closed();
         }
+        Ok(())
     }
 
     /// The dongle closes its pairing window on its own, so the message outlives the window.
     fn drop_pairing_message_once_closed(&mut self) {
-        let closed = self.history().is_some_and(|h| {
-            !h.status.pairing_open && self.message == pairing_open(h.status.protocol())
-        });
-        if closed {
+        let status = &self.history.status;
+        if !status.pairing_open && self.message == pairing_open(status.protocol()) {
             self.message.clear();
         }
     }
 
-    fn disconnect(&mut self, reason: &anyhow::Error) {
-        self.connection = Connection::Disconnected(format!("disconnected: {}", error_text(reason)));
-        self.prompt = None;
-        self.message.clear();
-    }
-
     fn answer(&mut self, prompt: Prompt) {
-        let Connection::Connected {
-            device: dev, noise, ..
-        } = &mut self.connection
-        else {
-            return;
-        };
         let result = match prompt {
-            Prompt::Noise => dev.noise().map(|n| {
-                *noise = Some(n);
+            Prompt::Noise => self.device.noise().map(|n| {
+                self.noise = Some(n);
                 "done".to_string()
             }),
-            Prompt::Action(c) => dev.action(c).map(|()| "done".to_string()),
-            Prompt::Switch(to) => dev.protocol(Some(to)).map(|(_, rebooting)| {
+            Prompt::Action(c) => self.device.action(c).map(|()| "done".to_string()),
+            Prompt::Switch(to) => self.device.protocol(Some(to)).map(|(_, rebooting)| {
                 if rebooting {
                     format!("switching to {}; the dongle reboots", to.name())
                 } else {
@@ -707,6 +662,77 @@ impl<T: Transport> App<T> {
             }),
         };
         self.message = result.unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
+    }
+
+    fn help(&self, width: usize) -> Vec<String> {
+        match self.prompt {
+            Some(p) => flow(p.question().split(' '), " ", width),
+            None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
+            None => match &self.refresh_error {
+                Some(e) => flow(e.split(' '), " ", width),
+                None => {
+                    let hints: Vec<_> = action_keys(self.protocol())
+                        .into_iter()
+                        .map(|(key, label, _)| format!("{key} {label}"))
+                        .chain(
+                            [
+                                "[/] channel",
+                                "←/→ history",
+                                "↑/↓ events",
+                                "esc back",
+                                "q quit",
+                            ]
+                            .map(String::from),
+                        )
+                        .collect();
+                    flow(hints.iter().map(String::as_str), "  ", width)
+                }
+            },
+        }
+    }
+}
+
+impl<T: Transport> App<T> {
+    fn new(serial: Option<String>) -> Self {
+        App {
+            serial,
+            connection: Connection::Disconnected("disconnected".into()),
+            event_rows: EVENT_ROWS,
+        }
+    }
+
+    fn session(&self) -> Option<&Session<T>> {
+        match &self.connection {
+            Connection::Connected(session) => Some(session),
+            Connection::Disconnected(_) => None,
+        }
+    }
+
+    fn session_mut(&mut self) -> Option<&mut Session<T>> {
+        match &mut self.connection {
+            Connection::Connected(session) => Some(session),
+            Connection::Disconnected(_) => None,
+        }
+    }
+
+    fn history(&self) -> Option<&History> {
+        self.session().map(|s| &s.history)
+    }
+
+    fn protocol(&self) -> Option<Protocol> {
+        self.session().map(Session::protocol)
+    }
+
+    fn refresh(&mut self, status: Result<Status>) {
+        if let Some(session) = self.session_mut()
+            && let Err(e) = session.refresh(status)
+        {
+            self.disconnect(&e);
+        }
+    }
+
+    fn disconnect(&mut self, reason: &anyhow::Error) {
+        self.connection = Connection::Disconnected(format!("disconnected: {}", error_text(reason)));
     }
 
     fn draw(&mut self, f: &mut Frame) {
@@ -728,13 +754,10 @@ impl<T: Transport> App<T> {
         ])
         .areas(f.area());
         f.render_widget(status, top);
-        if let Connection::Connected {
-            noise: Some(noise),
-            history,
-            ..
-        } = &self.connection
+        if let Some(session) = self.session()
+            && let Some(noise) = &session.noise
         {
-            Self::draw_noise(f, middle, noise, &history.status);
+            Self::draw_noise(f, middle, noise, &session.history.status);
         } else {
             self.draw_history(f, middle);
         }
@@ -743,41 +766,13 @@ impl<T: Transport> App<T> {
     }
 
     fn help(&self, width: usize) -> Vec<String> {
-        let (protocol, refresh_error) = match &self.connection {
-            Connection::Connected {
-                history,
-                refresh_error,
-                ..
-            } => (history.status.protocol(), refresh_error),
+        match &self.connection {
+            Connection::Connected(session) => session.help(width),
             Connection::Disconnected(line) => {
                 let mut lines = flow(line.split(' '), " ", width);
                 lines.push("q quit".into());
-                return lines;
+                lines
             }
-        };
-        match self.prompt {
-            Some(p) => flow(p.question().split(' '), " ", width),
-            None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
-            None => match refresh_error {
-                Some(e) => flow(e.split(' '), " ", width),
-                None => {
-                    let hints: Vec<_> = action_keys(protocol)
-                        .into_iter()
-                        .map(|(key, label, _)| format!("{key} {label}"))
-                        .chain(
-                            [
-                                "[/] channel",
-                                "←/→ history",
-                                "↑/↓ events",
-                                "esc back",
-                                "q quit",
-                            ]
-                            .map(String::from),
-                        )
-                        .collect();
-                    flow(hints.iter().map(String::as_str), "  ", width)
-                }
-            },
         }
     }
 
@@ -839,13 +834,18 @@ impl<T: Transport> App<T> {
         let [chart, strips, axis] = rows.areas(plot);
 
         let width = usize::from(plot.width);
-        let (minutes, boot): (&[(u32, Minute)], _) = match &self.connection {
-            Connection::Connected { history, .. } => (&history.minutes, Some(history.boot)),
+        let (shown, boot): (&[(u32, Minute)], _) = match &mut self.connection {
+            Connection::Connected(session) => {
+                let minutes = &session.history.minutes;
+                session.scroll = session.scroll.min(minutes.len().saturating_sub(width));
+                let end = minutes.len() - session.scroll;
+                (
+                    &minutes[end.saturating_sub(width)..end],
+                    Some(session.history.boot),
+                )
+            }
             Connection::Disconnected(_) => (&[], None),
         };
-        self.scroll = self.scroll.min(minutes.len().saturating_sub(width));
-        let end = minutes.len().saturating_sub(self.scroll);
-        let shown = &minutes[end.saturating_sub(width)..end];
 
         let runs: Vec<_> = SIGNAL_LINES
             .iter()
@@ -1115,23 +1115,19 @@ mod tests {
     }
 
     fn app_on<T: Transport>(device: Device<T>, status: Status) -> App<T> {
-        let mut history = History::new(status);
-        history.boot = boot();
+        let mut session = Session::new(device, status);
+        session.history.boot = boot();
         let mut app = App::new(None);
-        app.connection = Connection::Connected {
-            device,
-            history,
-            refresh_error: None,
-            noise: None,
-        };
+        app.connection = Connection::Connected(session);
         app
     }
 
+    fn session<T: Transport>(app: &mut App<T>) -> &mut Session<T> {
+        app.session_mut().expect("a connected app")
+    }
+
     fn history<T: Transport>(app: &mut App<T>) -> &mut History {
-        match &mut app.connection {
-            Connection::Connected { history, .. } => history,
-            Connection::Disconnected(_) => panic!("disconnected"),
-        }
+        &mut session(app).history
     }
 
     fn panel_in(protocol: Option<Protocol>, marked: Minute, height: u16) -> Vec<String> {
@@ -1257,13 +1253,13 @@ mod tests {
             status_of(Protocol::Nuphy),
         );
         history(&mut app).minutes = vec![(0, quiet())];
-        let status = app.device().unwrap().status();
+        let status = session(&mut app).device.status();
         app.refresh(status);
         assert_eq!(
             footer(&mut app),
             "the dongle refused Status: the radio failed"
         );
-        assert!(app.device().is_some());
+        assert!(app.session().is_some());
         assert_eq!(history(&mut app).minutes.len(), 1);
     }
 
@@ -1322,37 +1318,23 @@ mod tests {
     }
 
     #[test]
-    fn a_disconnected_view_keeps_showing_why_and_offers_no_dongle_keys() {
-        let mut app = app_on(Device::new(Unplugged, 0), status_of(Protocol::Unifying));
-        let status = app.device().unwrap().status();
-        app.refresh(status);
-        let footer = [
-            "disconnected: writing to the dongle: hidapi error: device disconnected",
-            "q quit",
-        ];
-        assert_eq!(app.help(120), footer);
-        for key in ['n', 'a', 'p', 'r', 'b', 'c', ']'] {
-            app.press(key);
-            assert!(app.prompt.is_none(), "{key}");
-        }
-        assert_eq!(app.help(120), footer);
-    }
-
-    #[test]
     fn each_mode_offers_switching_to_the_other() {
         let mut app = app_with(status_of(Protocol::Unifying));
         assert!(matches!(
-            app.key('p'),
+            session(&mut app).key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Nuphy)))
         ));
-        assert!(matches!(app.key('a'), Some(Key::Pair(_))));
+        assert!(matches!(session(&mut app).key('a'), Some(Key::Pair(_))));
         history(&mut app).status = status_of(Protocol::Nuphy);
         assert!(matches!(
-            app.key('p'),
+            session(&mut app).key('p'),
             Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
         ));
-        assert!(matches!(app.key('a'), Some(Key::Pair(_))));
-        assert!(matches!(app.key('n'), Some(Key::Ask(Prompt::Noise))));
+        assert!(matches!(session(&mut app).key('a'), Some(Key::Pair(_))));
+        assert!(matches!(
+            session(&mut app).key('n'),
+            Some(Key::Ask(Prompt::Noise))
+        ));
     }
 
     #[test]
@@ -1372,7 +1354,7 @@ mod tests {
             ),
             status_of(Protocol::Nuphy),
         );
-        app.answer(Prompt::Switch(Protocol::Unifying));
+        session(&mut app).answer(Prompt::Switch(Protocol::Unifying));
         assert_eq!(sent.get(), Some((Command::Protocol as u8, 2)));
         assert_eq!(
             footer(&mut app),
@@ -1394,8 +1376,8 @@ mod tests {
             ),
             status_of(Protocol::Unifying),
         );
-        app.press('a');
-        assert!(app.prompt.is_none());
+        session(&mut app).press('a');
+        assert!(session(&mut app).prompt.is_none());
         assert_eq!(sent.get(), Some(Command::Pair as u8));
         assert_eq!(
             footer(&mut app),
@@ -1424,7 +1406,7 @@ mod tests {
     #[test]
     fn the_bracket_keys_move_to_the_neighbouring_channel() {
         let (mut app, sent) = app_moving_from(status_of(Protocol::Unifying));
-        app.press(']');
+        session(&mut app).press(']');
         assert_eq!(sent.get(), Some(65));
         assert_eq!(
             footer(&mut app),
@@ -1434,7 +1416,7 @@ mod tests {
         let mut status = status_of(Protocol::Nuphy);
         status.channel = 16;
         let (mut app, sent) = app_moving_from(status);
-        app.press('[');
+        session(&mut app).press('[');
         assert_eq!(sent.get(), Some(78));
     }
 
@@ -1447,7 +1429,7 @@ mod tests {
             ),
             status_of(Protocol::Unifying),
         );
-        app.press(']');
+        session(&mut app).press(']');
         assert!(footer(&mut app).starts_with(
             "failed: the dongle refused Move: it moves the link only with a keyboard paired"
         ));
@@ -1474,7 +1456,7 @@ mod tests {
     #[test]
     fn the_pair_key_in_nuphy_mode_says_to_hold_fn_4() {
         let mut app = app_showing("");
-        app.press('a');
+        session(&mut app).press('a');
         assert_eq!(
             footer(&mut app),
             "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s"
@@ -1493,10 +1475,10 @@ mod tests {
             0,
         );
         let mut app = app_on(device, status_of(Protocol::Nuphy));
-        app.message = pairing_open(Protocol::Nuphy).into();
-        let status = app.device().unwrap().status();
+        session(&mut app).message = pairing_open(Protocol::Nuphy).into();
+        let status = session(&mut app).device.status();
         app.refresh(status);
-        assert_eq!(app.message, "");
+        assert_eq!(session(&mut app).message, "");
     }
 
     fn refreshed_with_pairing(app: &mut App<Fake>, protocol: Protocol, open: bool) {
@@ -1509,7 +1491,7 @@ mod tests {
 
     fn app_showing(message: &str) -> App<Fake> {
         let mut app = app_with(status_of(Protocol::Nuphy));
-        app.message = message.into();
+        session(&mut app).message = message.into();
         app
     }
 
@@ -1518,7 +1500,7 @@ mod tests {
         for protocol in Protocol::ALL {
             let mut app = app_showing(pairing_open(protocol));
             refreshed_with_pairing(&mut app, protocol, true);
-            assert_eq!(app.message, pairing_open(protocol));
+            assert_eq!(session(&mut app).message, pairing_open(protocol));
         }
     }
 
@@ -1526,7 +1508,7 @@ mod tests {
     fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
         let mut app = app_showing(pairing_open(Protocol::Unifying));
         refreshed_with_pairing(&mut app, Protocol::Unifying, false);
-        assert_eq!(app.message, "");
+        assert_eq!(session(&mut app).message, "");
         assert_eq!(
             footer(&mut app),
             "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel\n←/→ history  ↑/↓ events  esc back  q quit"
@@ -1537,7 +1519,7 @@ mod tests {
     fn another_message_stays_when_the_status_no_longer_reads_pairing() {
         let mut app = app_showing("done");
         refreshed_with_pairing(&mut app, Protocol::Unifying, false);
-        assert_eq!(app.message, "done");
+        assert_eq!(session(&mut app).message, "done");
     }
 
     struct Unplugged;
@@ -1560,19 +1542,19 @@ mod tests {
     #[test]
     fn a_lost_dongle_disconnects() {
         let mut app = app_on(Device::new(Unplugged, 0), status_of(Protocol::Nuphy));
-        let status = app.device().unwrap().status();
+        let status = session(&mut app).device.status();
         app.refresh(status);
         assert_eq!(
             footer(&mut app),
             "disconnected: writing to the dongle: hidapi error: device disconnected\nq quit"
         );
-        assert!(app.device().is_none());
+        assert!(app.session().is_none());
     }
 
     #[test]
     fn a_failed_action_shows_its_cause() {
         let mut app = app_on(Device::new(Unplugged, 0), status_of(Protocol::Nuphy));
-        app.answer(Prompt::Action(Action::Reboot));
+        session(&mut app).answer(Prompt::Action(Action::Reboot));
         assert_eq!(
             footer(&mut app),
             "failed: writing to the dongle: hidapi error: device disconnected"
