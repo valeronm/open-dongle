@@ -345,6 +345,8 @@ impl History {
     }
 }
 
+const HISTORY_STEP_MINUTES: usize = 10;
+
 #[derive(Clone, Copy)]
 enum EventsMove {
     Older(usize),
@@ -477,7 +479,9 @@ enum Connection<T: Transport> {
 struct App<T: Transport = device::HidTransport> {
     serial: Option<String>,
     connection: Connection<T>,
+    // The events list's rows and the history chart's columns as last drawn.
     event_rows: usize,
+    plot_width: usize,
 }
 
 pub fn run(serial: Option<String>) -> Result<()> {
@@ -506,7 +510,7 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            let rows = self.event_rows;
+            let (rows, width) = (self.event_rows, self.plot_width);
             let Some(session) = self.session_mut() else {
                 if key.code == KeyCode::Char('q') {
                     return Ok(());
@@ -530,8 +534,8 @@ impl App {
                 KeyCode::Char('q') => return Ok(()),
                 KeyCode::Char(c) => session.press(c),
                 KeyCode::Esc => session.noise = None,
-                KeyCode::Left => session.scroll += 10,
-                KeyCode::Right => session.scroll = session.scroll.saturating_sub(10),
+                KeyCode::Left => session.scroll_older(width),
+                KeyCode::Right => session.scroll_newer(width),
                 KeyCode::Up => session.scroll_events(EventsMove::Newer(1), rows),
                 KeyCode::Down => session.scroll_events(EventsMove::Older(1), rows),
                 KeyCode::PageUp => session.scroll_events(EventsMove::Newer(rows), rows),
@@ -619,6 +623,21 @@ impl<T: Transport> Session<T> {
         };
     }
 
+    /// `scroll` clamped so the chart stays full.
+    fn scrolled(&self, width: usize) -> usize {
+        self.scroll
+            .min(self.history.minutes.len().saturating_sub(width))
+    }
+
+    fn scroll_older(&mut self, width: usize) {
+        self.scroll = self.scrolled(width) + HISTORY_STEP_MINUTES;
+        self.scroll = self.scrolled(width);
+    }
+
+    fn scroll_newer(&mut self, width: usize) {
+        self.scroll = self.scrolled(width).saturating_sub(HISTORY_STEP_MINUTES);
+    }
+
     fn scroll_events(&mut self, step: EventsMove, rows: usize) {
         let history = &mut self.history;
         history.events_top = scrolled_top(&history.events, history.events_top, rows, step);
@@ -698,6 +717,7 @@ impl<T: Transport> App<T> {
             serial,
             connection: Connection::Disconnected("disconnected".into()),
             event_rows: EVENT_ROWS,
+            plot_width: 0,
         }
     }
 
@@ -834,11 +854,11 @@ impl<T: Transport> App<T> {
         let [chart, strips, axis] = rows.areas(plot);
 
         let width = usize::from(plot.width);
-        let (shown, boot): (&[(u32, Minute)], _) = match &mut self.connection {
+        self.plot_width = width;
+        let (shown, boot): (&[(u32, Minute)], _) = match &self.connection {
             Connection::Connected(session) => {
                 let minutes = &session.history.minutes;
-                session.scroll = session.scroll.min(minutes.len().saturating_sub(width));
-                let end = minutes.len() - session.scroll;
+                let end = minutes.len() - session.scrolled(width);
                 (
                     &minutes[end.saturating_sub(width)..end],
                     Some(session.history.boot),
@@ -1747,6 +1767,22 @@ mod tests {
         assert!(h.refresh(&mut dev, s).is_err());
         assert_eq!(h.status.uptime_ms, 201 * 60_000);
         assert_eq!(h.minutes.len(), 130);
+    }
+
+    #[test]
+    fn the_history_scroll_stops_where_the_chart_is_still_full() {
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        let s = session(&mut app);
+        s.history.minutes = (0..130).map(|i| (i, quiet())).collect();
+        for _ in 0..20 {
+            s.scroll_older(50);
+        }
+        assert_eq!(s.scroll, 80);
+        s.scroll_newer(50);
+        assert_eq!(s.scroll, 70);
+        s.history.minutes.truncate(60);
+        s.scroll_newer(50);
+        assert_eq!(s.scroll, 0);
     }
 
     #[test]
