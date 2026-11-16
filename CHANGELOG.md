@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-11-16
 
 - One firmware runs the NuPhy Air75 V2 or a Logitech Unifying keyboard (tested with the MX Keys): `open-dongle protocol` switches between them, keeping each one's pairing.
 - A keyboard pairs only while pairing is open, after `open-dongle pair` or the dongle being plugged
