@@ -77,7 +77,6 @@ struct link {
 	/* The forced channels can change between the pair reply and the keyboard's confirm. */
 	uint8_t offered[LINK_OWN_CHANNELS];
 	uint8_t channel;
-	bool on_pairing_channel;
 	uint8_t fixed_next;
 	uint32_t slot_start_ms;
 	uint32_t last_rx_ms;
@@ -89,7 +88,10 @@ struct link {
 	struct pairwin window;
 };
 
-/* own is the three channels from the last pairing, or NULL for a dongle that never paired. */
+/*
+ * own is the three channels from the last pairing, or NULL for a dongle that never paired; channels
+ * link_channels_allowed refuses count as never paired.
+ */
 void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint8_t *own,
 	       uint32_t now_ms, struct link_out *out);
 void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,

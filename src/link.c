@@ -46,11 +46,14 @@ static void set_own(struct link *l, const uint8_t own[LINK_OWN_CHANNELS])
 	list_channels(l);
 }
 
-static uint8_t slot_channel(const struct link *l)
+/* Neither the fixed channels nor a paired keyboard's channels include PAIRING_CHANNEL. */
+static bool on_pairing_channel(const struct link *l)
 {
-	if (l->on_pairing_channel) {
-		return PAIRING_CHANNEL;
-	}
+	return l->channel == PAIRING_CHANNEL;
+}
+
+static uint8_t own_slot_channel(const struct link *l)
+{
 	return l->own_known ? l->home : link_fixed_channels[l->fixed_next];
 }
 
@@ -58,9 +61,8 @@ static void go_idle(struct link *l, uint32_t now_ms, struct link_out *out)
 {
 	l->state = LINK_IDLE;
 	l->suspend_sent = false;
-	l->on_pairing_channel = false;
 	l->slot_start_ms = now_ms;
-	set_channel(l, slot_channel(l), out);
+	set_channel(l, own_slot_channel(l), out);
 }
 
 static void reply(struct link *l, uint8_t pipe, struct link_out *out)
@@ -89,7 +91,7 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint
 {
 	memset(l, 0, sizeof(*l));
 	memcpy(l->dongle_id, dongle_id, NUPHY_ID_LEN);
-	if (own != NULL) {
+	if (own != NULL && link_channels_allowed(own)) {
 		set_own(l, own);
 	} else {
 		list_channels(l);
@@ -207,7 +209,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		break;
 	case LINK_IDLE:
 		/* A keyboard heard on the pairing channel stays there until a send fails. */
-		l->state = (l->on_pairing_channel && l->own_known) ? LINK_MOVING_HOME
+		l->state = (on_pairing_channel(l) && l->own_known) ? LINK_MOVING_HOME
 								   : LINK_CONNECTED;
 		out->up = true;
 		pairwin_link_up(&l->window);
@@ -259,17 +261,19 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	case LINK_IDLE:
 		/* A keyboard that fails a send sweeps its channels within milliseconds. */
 		if (l->own_known && !link_pairing_open(l, now_ms)) {
-			if (l->on_pairing_channel) {
-				l->on_pairing_channel = false;
-				set_channel(l, slot_channel(l), out);
+			if (on_pairing_channel(l)) {
+				set_channel(l, l->home, out);
 			}
 		} else if (now_ms - l->slot_start_ms >= SLOT_MS) {
-			l->on_pairing_channel = !l->on_pairing_channel;
-			if (!l->on_pairing_channel && !l->own_known) {
-				l->fixed_next = (l->fixed_next + 1) % sizeof(link_fixed_channels);
+			if (!on_pairing_channel(l)) {
+				set_channel(l, PAIRING_CHANNEL, out);
+			} else {
+				if (!l->own_known) {
+					l->fixed_next = (l->fixed_next + 1) % sizeof(link_fixed_channels);
+				}
+				set_channel(l, own_slot_channel(l), out);
 			}
 			l->slot_start_ms = now_ms;
-			set_channel(l, slot_channel(l), out);
 		}
 		break;
 	case LINK_SURVEY:
@@ -379,7 +383,6 @@ enum chanmove_result link_move(struct link *l, uint8_t channel, uint32_t now_ms)
 		return CHANMOVE_NOT_MOVABLE;
 	}
 	l->home = channel;
-	l->on_pairing_channel = false;
 	l->channel = channel;
 	return CHANMOVE_DONE;
 }

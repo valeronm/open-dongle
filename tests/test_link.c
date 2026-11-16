@@ -863,6 +863,14 @@ static void test_another_keyboard_does_not_keep_a_pairing_alive(void)
 	CHECK(out.pairing_expired);
 }
 
+static void test_stored_channels_holding_a_pairing_channel_count_as_never_paired(void)
+{
+	static const uint8_t stored[3] = {2, 30, 34};
+
+	init(stored);
+	CHECK_EQ(link_home(&l), CHANMOVE_NO_HOME);
+}
+
 static void test_a_never_paired_dongle_answers_a_request_at_any_time(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -996,6 +1004,7 @@ int main(void)
 	RUN(test_opening_pairing_lets_a_paired_dongle_answer_for_30_s);
 	RUN(test_pairing_opened_on_request_ignores_the_keyboard_connecting);
 	RUN(test_another_keyboard_does_not_keep_a_pairing_alive);
+	RUN(test_stored_channels_holding_a_pairing_channel_count_as_never_paired);
 	RUN(test_a_never_paired_dongle_answers_a_request_at_any_time);
 	RUN(test_a_confirmed_pairing_closes_pairing);
 	RUN(test_a_confirmed_pairing_is_not_reported_as_running_out);
