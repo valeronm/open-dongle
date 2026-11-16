@@ -58,8 +58,9 @@ protocol keeps its own pairing, so switching back needs no new pairing.
 
 `open-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. Plugging the dongle in
 opens it too, until the paired keyboard connects or 30 seconds pass, so switch that keyboard off
-first or put it in pairing mode. A dongle with no keyboard paired keeps pairing open. A new keyboard
-replaces the one paired before.
+first or put it in pairing mode. A connected NuPhy keyboard keeps `open-dongle pair` from hearing
+another one, so switch it off too. A dongle with no keyboard paired keeps pairing open. A new
+keyboard replaces the one paired before.
 
 **NuPhy:** in 2.4G mode, hold Fn+4 for 3 seconds. Keep the keyboard close, since it transmits at
 low power while pairing. If the link gets worse after the Wi-Fi around you changes, pair again.
