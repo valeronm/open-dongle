@@ -6,6 +6,7 @@
 #define MARKER_FINAL 0x0f
 #define STEP_FINAL 0x06
 #define CAP_UNIFYING 0x04
+#define TYPE_KEYBOARD 0x01
 #define REPORT_TYPE_MASK 0x1f
 #define REPORT_ENCRYPTED_KEYBOARD 0x13
 #define REPORT_MEDIA 0x03
@@ -156,7 +157,7 @@ static size_t start(struct unifying_attempt *a, const struct unifying_receiver *
 		    const uint8_t nonce[UNIFYING_NONCE_LEN], const uint8_t *frame, uint64_t now_ms,
 		    uint8_t *reply, enum unifying_rx_event *event)
 {
-	if (!(frame[14] & CAP_UNIFYING)) {
+	if (!(frame[14] & CAP_UNIFYING) || frame[13] != TYPE_KEYBOARD) {
 		*a = (struct unifying_attempt){0};
 		*event = UNIFYING_RX_REFUSED;
 		return 0;

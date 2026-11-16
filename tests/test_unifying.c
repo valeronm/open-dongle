@@ -195,6 +195,20 @@ static void test_request_1_without_the_unifying_bit_is_refused(void)
 	CHECK_EQ(p.attempt.state, UNIFYING_IDLE);
 }
 
+static void test_request_1_from_a_mouse_is_refused(void)
+{
+	struct unifying_pairing p = open_pairing();
+	uint8_t f[UNIFYING_FRAME_MAX], reply[UNIFYING_FRAME_MAX];
+	enum unifying_rx_event ev;
+
+	request_1(f, 0xe1, 0x05);
+	f[13] = 0x02;
+	seal(f, UNIFYING_FRAME_MAX);
+	CHECK_EQ(feed_ev(&p, f, sizeof(f), 0, reply, &ev), 0);
+	CHECK_EQ(ev, UNIFYING_RX_REFUSED);
+	CHECK_EQ(p.attempt.state, UNIFYING_IDLE);
+}
+
 static void test_request_2_is_answered_with_the_nonce_and_derives_the_key(void)
 {
 	static const uint8_t expected[UNIFYING_FRAME_MAX] = {
@@ -2341,6 +2355,7 @@ int main(void)
 	RUN(test_key_permutes_and_masks_the_key_data);
 	RUN(test_request_1_is_answered_with_the_assigned_address);
 	RUN(test_request_1_without_the_unifying_bit_is_refused);
+	RUN(test_request_1_from_a_mouse_is_refused);
 	RUN(test_request_2_is_answered_with_the_nonce_and_derives_the_key);
 	RUN(test_request_3_gets_the_final_response_and_completes);
 	RUN(test_a_paired_device_holds_what_the_keyboard_reported_about_itself);

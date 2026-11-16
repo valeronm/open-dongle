@@ -105,9 +105,9 @@ void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIF
  * reply (UNIFYING_FRAME_MAX bytes), or 0 when there is none, and sets *event to what the frame did.
  * nonce is copied in when Request 1 starts an attempt, so it must be one no earlier attempt used.
  * A repeat of an answered request gets 0, since ESB keeps its reply queued until the keyboard moves
- * on. A Request 1 lacking the Unifying-compatible capability discards any attempt in progress. The
- * paired device changes only when Request 3 completes an attempt. A Request 1 is ignored while the
- * window is closed; Requests 2 and 3 are not.
+ * on. A Request 1 from anything but a Unifying-compatible keyboard discards any attempt in
+ * progress. The paired device changes only when Request 3 completes an attempt. A Request 1 is
+ * ignored while the window is closed; Requests 2 and 3 are not.
  */
 size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_receiver *r,
 			   const uint8_t nonce[UNIFYING_NONCE_LEN], const uint8_t *frame, size_t len,
