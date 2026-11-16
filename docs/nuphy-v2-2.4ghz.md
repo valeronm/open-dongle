@@ -7,7 +7,7 @@ ACK of the keyboard's next packet on that pipe.
 
 ## Radio settings
 
-The ESB configuration is in `src/radio.c`. What the code does not show:
+The ESB configuration is in `nuphy_run()` in `src/nuphy_main.c`. What the code does not show:
 
 - Pipe 0 carries pairing. After pairing, the keyboard sends everything else on pipe 1.
 - The keyboard transmits at +4 dBm, and at -20 dBm while pairing.
@@ -22,8 +22,8 @@ code does not show:
   report.
 - A hello follows any recovery from failed sends, a wake included, so it does not mark a wake.
 - A pair request carries the ID of the dongle the keyboard was last paired with.
-- The keyboard passes a USB suspend message on to the keyboard's main controller, which runs QMK.
-- Name chunks, mouse reports and the NKRO bitmap are valid frames this firmware ignores.
+- The radio module passes a USB suspend message on to the keyboard's main controller, which runs QMK.
+- Mouse reports and the NKRO bitmap are valid frames this firmware ignores.
 
 ## Pairing
 

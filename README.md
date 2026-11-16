@@ -3,10 +3,8 @@
 An open replacement 2.4 GHz receiver for wireless keyboards, running on a [Pro Micro
 nRF52840](#hardware). It supports the NuPhy Air75 V2 and Logitech Unifying keyboards, one
 [protocol](#keyboard-protocols) at a time; the Unifying keyboard tested is the MX Keys.
-
-NuPhy's own dongle loses keys even with the keyboard 20 cm away. This one reads every packet the
-radio delivers, queues reports while USB is busy, and picks quiet channels when it pairs. The
-keyboard keeps its own firmware.
+[docs/protocols.md](docs/protocols.md) compares it with each keyboard's own receiver. The keyboard
+keeps its own firmware.
 
 ## Hardware
 
@@ -56,38 +54,18 @@ dongle keeps in flash. A new dongle runs NuPhy. `open-dongle protocol unifying` 
 `open-dongle protocol nuphy` switches it, and the dongle reboots into the new protocol. Each
 protocol keeps its own pairing, so switching back needs no new pairing.
 
-Forced channels under [Diagnostics](#diagnostics) exist only in NuPhy mode. In Unifying mode a
-silence is logged but not counted as a link loss, because an idle MX Keys sleeps after a few
-minutes.
-
 ## Pairing
 
-A keyboard pairs only while the dongle has pairing open, so a keyboard nearby cannot join on its
-own; NuPhy traffic is not encrypted, so this keeps out other keyboards, not an attacker.
 `open-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. Plugging the dongle in
-opens it too, until the paired keyboard connects. To pair without the tool, plug the dongle in with
-the paired keyboard off, or, to pair that keyboard again, with it already in pairing mode. A dongle
-that has never paired in the running protocol keeps pairing open.
+opens it too, until the paired keyboard connects or 30 seconds pass, so switch that keyboard off
+first or put it in pairing mode. A dongle with no keyboard paired keeps pairing open. A new keyboard
+replaces the one paired before.
 
-Put a NuPhy keyboard in 2.4G mode and hold Fn+4 for 3 seconds to enter pairing mode. The dongle
-measures the radio noise for about 1.5 seconds and gives the keyboard the three quietest channels,
-which both remember. The keyboard transmits at low power while pairing, so keep it close to the
-dongle. If Wi-Fi around you changes and the link gets worse, pair again.
+**NuPhy:** in 2.4G mode, hold Fn+4 for 3 seconds. Keep the keyboard close, since it transmits at
+low power while pairing. If the link gets worse after the Wi-Fi around you changes, pair again.
 
-A Unifying keyboard pairs when switched off and on while pairing is open. On a keyboard with
-Easy-Switch keys, such as the MX Keys, first enter pairing mode by holding an Easy-Switch key until
-it blinks fast. A new keyboard replaces the one paired before.
-
-The dongle keeps checking the noise on every channel the keyboard can use, a few milliseconds at a
-time, and moves to a clearly quieter one; the keyboard finds it again within about a second. For a
-NuPhy keyboard those are the three channels from pairing and seven its firmware fixes. For a
-Unifying keyboard they are the 11 pairing channels: after a failed send the MX Keys searches only
-them, never the other normal channels. Only noise strong enough to matter at the keyboard's current
-signal counts, so a keyboard close to the dongle rarely causes a move, and one across the room
-moves away from Wi-Fi that would not trouble the close one. `open-dongle events` logs each move
-with both channels' noise, and `open-dongle moves`, or `m` in the live view, shows the noise each
-channel has gathered for the next one. A restarted dongle returns to the channel it had after
-pairing.
+**Unifying:** switch the keyboard off and on. On a keyboard with Easy-Switch keys, such as the MX
+Keys, first hold an Easy-Switch key until it blinks fast.
 
 ## LED
 
@@ -101,17 +79,9 @@ pairing.
 
 ## Diagnostics
 
-`open-dongle` reads the dongle over a vendor HID interface: link state and signal, counter totals,
-per-minute counters for the last day, recent events and a radio noise map. With no arguments it
-shows a live view, where `p` switches the protocol after asking and `a` opens pairing;
-`--help` lists the subcommands. The history lives in the dongle's RAM, so it covers only the time
-since the dongle was last plugged in, reset or switched to the other protocol. A noise map takes the
-same measurement as NuPhy [pairing](#pairing) and stops the keyboard meanwhile, because the radio
-cannot listen while it measures. Each minute of history also records the noise on the home channel,
-the one the dongle listens on, and each gap or loss event the noise on the channel the link was on,
-both read between keyboard packets. A NuPhy keyboard's home channel is the first of its three. In
-Unifying mode the minute's noise is recorded only while pairing is closed, because the pairing
-sweep moves the dongle across channels.
+`open-dongle` reads the dongle's link state and signal, counters, history, events and radio noise
+over USB, in a live view or one command at a time. [docs/tool.md](docs/tool.md) describes what it
+shows and every command.
 
 ## Building from source
 
@@ -149,7 +119,7 @@ requests.
 
 The keyboards' radio protocols, beyond what the code shows, are in
 [docs/nuphy-v2-2.4ghz.md](docs/nuphy-v2-2.4ghz.md) for the NuPhy and
-[docs/unifying-pairing.md](docs/unifying-pairing.md) for Logitech Unifying.
+[docs/unifying.md](docs/unifying.md) for Logitech Unifying.
 
 A release is built when a `v<version>` tag is pushed. Set the version in `tool/Cargo.toml`, which
 the firmware reads too, add its section to `CHANGELOG.md`, commit, and push the tag. The release
