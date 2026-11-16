@@ -178,7 +178,8 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		on_pairing_message(l, m, now_ms, out);
 		return;
 	}
-	if (pipe != 1) {
+	/* Pipe 1 carries no keyboard ID, so a pairing cannot tell the keyboard it pairs from another. */
+	if (pipe != 1 || l->state == LINK_SURVEY || l->state == LINK_PAIRING) {
 		return;
 	}
 	if (connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {

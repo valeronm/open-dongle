@@ -849,6 +849,20 @@ static void test_pairing_opened_on_request_ignores_the_keyboard_connecting(void)
 	CHECK(out.start_survey);
 }
 
+static void test_another_keyboard_does_not_keep_a_pairing_alive(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	deliver(&request, 0, 10);
+	survey(surveyed, 20);
+	for (uint32_t t = 60; t < 1020; t += 40) {
+		message(NUPHY_KEEPALIVE, 1, t);
+	}
+	tick(1020);
+	CHECK(out.pairing_expired);
+}
+
 static void test_a_never_paired_dongle_answers_a_request_at_any_time(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -981,6 +995,7 @@ int main(void)
 	RUN(test_the_keyboard_connecting_closes_pairing_opened_at_boot);
 	RUN(test_opening_pairing_lets_a_paired_dongle_answer_for_30_s);
 	RUN(test_pairing_opened_on_request_ignores_the_keyboard_connecting);
+	RUN(test_another_keyboard_does_not_keep_a_pairing_alive);
 	RUN(test_a_never_paired_dongle_answers_a_request_at_any_time);
 	RUN(test_a_confirmed_pairing_closes_pairing);
 	RUN(test_a_confirmed_pairing_is_not_reported_as_running_out);
