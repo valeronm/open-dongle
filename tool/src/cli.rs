@@ -14,7 +14,7 @@ use crate::format::{
     unifying_kind, uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{
-    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, Protocol, Status, Watch,
+    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol, Status, Watch,
 };
 use crate::{dfu, format, uf2};
 
@@ -275,24 +275,41 @@ pub fn noise<T: Transport>(dev: &mut Device<T>, s: &Status, yes: bool) -> Result
     if !confirm(NOISE_QUESTION, yes)? {
         return Ok(());
     }
-    let rows: Vec<_> = dev
-        .noise()?
-        .into_iter()
-        .map(|c| (channel_description(c.channel, s), c))
+    for line in noise_lines(&dev.noise()?, s) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn noise_lines(noise: &[NoiseChannel], s: &Status) -> Vec<String> {
+    let reachable = s.keyboard_channels();
+    let rows: Vec<_> = noise
+        .iter()
+        .map(|c| {
+            let mut description = channel_description(c.channel, s);
+            if reachable.contains(&c.channel) {
+                if !description.is_empty() {
+                    description.push_str(", ");
+                }
+                description.push_str("move target");
+            }
+            (description, c)
+        })
         .collect();
     let width = rows
         .iter()
         .map(|(d, _)| d.chars().count())
         .max()
         .unwrap_or(0);
-    for (description, c) in rows {
-        let bar = "#".repeat(usize::from(noise_level(c.loudest)) / 2);
-        println!(
-            "{:3}  {description:<width$}  {:4} dBm  avg {:4}  {bar}",
-            c.channel, c.loudest, c.average
-        );
-    }
-    Ok(())
+    rows.into_iter()
+        .map(|(description, c)| {
+            let bar = "#".repeat(usize::from(noise_level(c.loudest)) / 2);
+            format!(
+                "{:3}  {description:<width$}  {:4} dBm  avg {:4}  {bar}",
+                c.channel, c.loudest, c.average
+            )
+        })
+        .collect()
 }
 
 pub fn moves<T: Transport>(dev: &mut Device<T>, s: &Status) -> Result<()> {
@@ -447,6 +464,23 @@ mod tests {
         assert!(parse_channels(&strings(&["62", "52", "x"])).is_err());
         assert!(parse_channels(&strings(&["62", "52", "300"])).is_err());
         assert!(parse_channels(&strings(&["auto", "52", "44"])).is_err());
+    }
+
+    #[test]
+    fn noise_labels_the_channels_a_move_can_reach() {
+        let s = status_of(Protocol::Nuphy);
+        let noise = [16, 17].map(|channel| NoiseChannel {
+            channel,
+            loudest: -100,
+            average: -100,
+        });
+        assert_eq!(
+            noise_lines(&noise, &s),
+            [
+                " 16  wifi 1, move target  -100 dBm  avg -100  ",
+                " 17  wifi 1               -100 dBm  avg -100  ",
+            ]
+        );
     }
 
     #[test]

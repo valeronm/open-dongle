@@ -963,13 +963,17 @@ fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Sessio
 }
 
 fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
+    let reachable = s.keyboard_channels();
     let bars: Vec<Bar> = noise
         .iter()
         .map(|c| {
-            let role = channel_role(c.channel, s);
+            let mut style = Style::new().fg(role_color(channel_role(c.channel, s)));
+            if !reachable.contains(&c.channel) {
+                style = style.add_modifier(Modifier::DIM);
+            }
             Bar::default()
                 .value(u64::from(noise_level(c.loudest)))
-                .style(Style::default().fg(role_color(role)))
+                .style(style)
                 .text_value(String::new())
         })
         .collect();
@@ -982,7 +986,13 @@ fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
                 .into_iter()
                 .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
         ))
-        .title_bottom("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11");
+        .title_bottom(Line::from_iter([
+            Span::raw("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11  "),
+            Span::styled(
+                "dim: no move reaches",
+                Style::new().add_modifier(Modifier::DIM),
+            ),
+        ]));
     let bars_area = block.inner(chart);
     f.render_widget(
         BarChart::default()
@@ -1714,20 +1724,28 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_noise_legend_fits_an_80_column_terminal() {
+    const NOISE_FIRST: u8 = 2;
+    const NOISE_ROWS: u16 = 12;
+
+    fn noise_map() -> Terminal<TestBackend> {
         let status = status_of(Protocol::Nuphy);
-        let noise: Vec<NoiseChannel> = (2..=80)
+        let noise: Vec<NoiseChannel> = (NOISE_FIRST..=80)
             .map(|channel| NoiseChannel {
                 channel,
-                loudest: -90,
-                average: -95,
+                loudest: -40,
+                average: -60,
             })
             .collect();
-        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(80, NOISE_ROWS)).unwrap();
         terminal
             .draw(|f| draw_noise(f, f.area(), &noise, &status))
             .unwrap();
+        terminal
+    }
+
+    #[test]
+    fn the_noise_legend_fits_an_80_column_terminal() {
+        let terminal = noise_map();
         let rows = screen(&terminal);
         let text = format!("{}{}", rows[0], rows[10]);
         for key in [
@@ -1736,9 +1754,23 @@ mod tests {
             "━ paired",
             "▲ BLE advertising",
             "├─┤ Wi-Fi 1/6/11",
+            "dim: no move reaches",
         ] {
             assert!(text.contains(key), "{key} missing from {text}");
         }
+    }
+
+    #[test]
+    fn the_noise_map_dims_the_channels_no_move_can_reach() {
+        let terminal = noise_map();
+        let bottom_bar_row = NOISE_ROWS - 3;
+        let dimmed = |channel: u8| {
+            terminal.backend().buffer()[(1 + u16::from(channel - NOISE_FIRST), bottom_bar_row)]
+                .modifier
+                .contains(Modifier::DIM)
+        };
+        assert!(dimmed(17));
+        assert!(!dimmed(16));
     }
 
     fn plotted(rows: &[String]) -> Vec<(usize, usize)> {

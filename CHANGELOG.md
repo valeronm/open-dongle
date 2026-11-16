@@ -15,6 +15,8 @@
   watched channel's share of readings loud enough to count at the keyboard's signal, how those
   readings spread over 10 dB steps, and how long until the next move may come. Unlike the noise
   map it does not stop the keyboard.
+- The noise map marks the channels a move can reach: the live view dims the others, and
+  `open-dongle noise` labels them as move targets.
 - `open-dongle move`, or `[` and `]` in the live view, moves the link to one of the keyboard's
   channels in either mode while a keyboard is paired and pairing is closed, for testing how the
   keyboard follows and how the dongle moves away from noise. A NuPhy dongle does not move while
