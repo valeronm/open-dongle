@@ -11,6 +11,10 @@
   and logs each move with the noise on both channels. A Unifying dongle moves only among the
   pairing channels, the only ones the keyboard searches after a failed send; a NuPhy dongle moves
   among the keyboard's three paired and seven fixed channels.
+- `open-dongle moves`, or `m` in the live view, shows the noise the dongle judges its moves by: each
+  watched channel's share of readings loud enough to count at the keyboard's signal, how those
+  readings spread over 10 dB steps, and how long until the next move may come. Unlike the noise
+  map it does not stop the keyboard.
 - `open-dongle move`, or `[` and `]` in the live view, moves the link to one of the keyboard's
   channels in either mode while a keyboard is paired and pairing is closed, for testing how the
   keyboard follows and how the dongle moves away from noise. A NuPhy dongle does not move while

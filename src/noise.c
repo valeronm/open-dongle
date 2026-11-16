@@ -49,6 +49,6 @@ uint8_t noise_bucket(int8_t dbm)
 	if (dbm < NOISE_BUSY_DBM) {
 		return 0;
 	}
-	b = 1 + (dbm - NOISE_BUSY_DBM) / 10;
+	b = 1 + (dbm - NOISE_BUSY_DBM) / NOISE_BUCKET_DB;
 	return b < NOISE_BUCKETS ? (uint8_t)b : NOISE_BUCKETS - 1;
 }

@@ -179,3 +179,29 @@ size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s)
 	}
 	return p - out;
 }
+
+size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
+			 uint8_t threshold_bucket, bool paused, uint64_t now_ms)
+{
+	uint8_t *p = out;
+
+	*p++ = home;
+	*p++ = threshold_bucket;
+	*p++ = paused;
+	p = put_le(p, w->hold_until_ms > now_ms ? w->hold_until_ms - now_ms : 0, 4);
+	*p++ = w->count;
+	for (size_t i = 0; i < w->count; i++) {
+		uint16_t counted = threshold_bucket == CHANWATCH_NO_THRESHOLD
+					   ? 0
+					   : chanwatch_share_hundredths(
+						     chanwatch_share(w, i, threshold_bucket));
+
+		*p++ = w->channels[i];
+		*p++ = chanwatch_enough(w, i);
+		p = put_le(p, counted, 2);
+		for (int b = 0; b < NOISE_BUCKETS; b++) {
+			p = put_le(p, (uint32_t)(w->weight[i][b] + 0.5f), 4);
+		}
+	}
+	return p - out;
+}

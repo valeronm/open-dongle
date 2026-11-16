@@ -13,6 +13,7 @@
 /* Assumed: the nearest datasheet figure is 7.1 dB co-channel rejection for Bluetooth LE at
  * 2 Mbps. */
 #define CHANWATCH_MARGIN_DB 10
+#define CHANWATCH_NO_THRESHOLD 0
 
 /* Shares are in hundredths of a percent of the readings at or above the threshold. */
 struct chanwatch_move {
@@ -45,9 +46,24 @@ void chanwatch_round(struct chanwatch *w, const int8_t *dbm, uint8_t home, uint6
 /* Adds readings taken between keyboard packets on home. */
 void chanwatch_home(struct chanwatch *w, uint8_t home, const struct noise_tally *t);
 
-/* When a channel is clearly quieter than home at the keyboard's level, weakest_dbm being its
- * weakest recent packet, a move to it waits in w and the hold before the next move starts. */
-void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms);
+/* When a channel is clearly quieter than home counting readings in threshold_bucket and louder,
+ * a move to it waits in w and the hold before the next move starts. CHANWATCH_NO_THRESHOLD counts
+ * every reading, so no channel is quieter. */
+void chanwatch_decide(struct chanwatch *w, uint8_t home, uint8_t threshold_bucket,
+		      uint64_t now_ms);
+
+/* The first bucket counted as noise that harms a keyboard whose weakest recent packet is
+ * weakest_dbm. */
+uint8_t chanwatch_threshold_bucket(int8_t weakest_dbm);
+
+/* The share of the readings at index i of w in bucket from and louder; 0 without readings. */
+float chanwatch_share(const struct chanwatch *w, size_t i, uint8_t from);
+
+/* Converts share, a fraction of the readings, to hundredths of a percent. */
+uint16_t chanwatch_share_hundredths(float share);
+
+/* Returns true when the channel at index i of w has heard enough to be moved to. */
+bool chanwatch_enough(const struct chanwatch *w, size_t i);
 
 /* Returns true once with the move that waits. */
 bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out);

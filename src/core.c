@@ -229,12 +229,19 @@ uint8_t core_minutes_since_key(void)
 	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
 }
 
+static uint8_t threshold_bucket(void)
+{
+	int8_t weakest;
+
+	return history_weakest(&history, &weakest) ? chanwatch_threshold_bucket(weakest)
+						   : CHANWATCH_NO_THRESHOLD;
+}
+
 static void scan(void)
 {
 	int64_t now = k_uptime_get();
 	const uint8_t *channels;
 	int8_t dbm[CHANWATCH_MAX];
-	int8_t weakest;
 	size_t n;
 	int home;
 
@@ -255,9 +262,7 @@ static void scan(void)
 	}
 	loop->replies_dropped();
 	chanwatch_round(&watch, dbm, (uint8_t)home, (uint64_t)now);
-	if (history_weakest(&history, &weakest)) {
-		chanwatch_decide(&watch, (uint8_t)home, weakest, (uint64_t)now);
-	}
+	chanwatch_decide(&watch, (uint8_t)home, threshold_bucket(), (uint64_t)now);
 }
 
 static bool keys_held(void)
@@ -418,6 +423,18 @@ static void serve_noise(const struct diag_request *req, uint8_t *payload)
 	loop->radio_resumed();
 	log_event(HISTORY_NOISE, 0, 0, 0, 0);
 	diag_reply(req, payload, diag_encode_noise(payload, survey), DIAG_AFTER_NONE);
+}
+
+static void serve_watch(const struct diag_request *req, uint8_t *payload)
+{
+	int home = loop->home();
+
+	diag_reply(req, payload,
+		   diag_encode_watch(payload, &watch,
+				     home == CHANMOVE_NO_HOME ? 0 : (uint8_t)home, threshold_bucket(),
+				     loop->movable() == CHANMOVE_NO_HOME,
+				     (uint64_t)k_uptime_get()),
+		   DIAG_AFTER_NONE);
 }
 
 bool core_take_leds(uint8_t *leds)
@@ -615,6 +632,9 @@ bool core_take_request(struct diag_request *out)
 			break;
 		case DIAG_MOVE:
 			serve_move(out);
+			break;
+		case DIAG_WATCH:
+			serve_watch(out, payload);
 			break;
 		default:
 			return true;

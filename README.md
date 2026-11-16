@@ -85,7 +85,9 @@ Unifying keyboard they are the 11 pairing channels: after a failed send the MX K
 them, never the other normal channels. Only noise strong enough to matter at the keyboard's current
 signal counts, so a keyboard close to the dongle rarely causes a move, and one across the room
 moves away from Wi-Fi that would not trouble the close one. `open-dongle events` logs each move
-with both channels' noise. A restarted dongle returns to the channel it had after pairing.
+with both channels' noise, and `open-dongle moves`, or `m` in the live view, shows the noise each
+channel has gathered for the next one. A restarted dongle returns to the channel it had after
+pairing.
 
 ## LED
 

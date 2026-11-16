@@ -17,7 +17,7 @@ static struct noise_tally home_noise(uint32_t harmful, uint32_t total)
 static bool decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms,
 		   struct chanwatch_move *m)
 {
-	chanwatch_decide(w, home, weakest_dbm, now_ms);
+	chanwatch_decide(w, home, chanwatch_threshold_bucket(weakest_dbm), now_ms);
 	return chanwatch_take_move(w, m);
 }
 
@@ -220,7 +220,7 @@ static void test_a_decided_move_is_taken_once(void)
 
 	primed(&w, &home, -95);
 	CHECK(!chanwatch_take_move(&w, &m));
-	chanwatch_decide(&w, 5, -70, 0);
+	chanwatch_decide(&w, 5, chanwatch_threshold_bucket(-70), 0);
 	CHECK(chanwatch_take_move(&w, &m));
 	CHECK_EQ(m.to, 8);
 	CHECK(!chanwatch_take_move(&w, &m));
@@ -233,7 +233,7 @@ static void test_another_move_drops_the_one_that_waits(void)
 	struct noise_tally home = home_noise(46, 100);
 
 	primed(&w, &home, -95);
-	chanwatch_decide(&w, 5, -70, 0);
+	chanwatch_decide(&w, 5, chanwatch_threshold_bucket(-70), 0);
 	CHECK(w.move_waiting);
 	chanwatch_hold(&w, 0);
 	CHECK(!chanwatch_take_move(&w, &m));
@@ -246,7 +246,7 @@ static void test_other_channels_drop_the_move_that_waits(void)
 	struct noise_tally home = home_noise(46, 100);
 
 	primed(&w, &home, -95);
-	chanwatch_decide(&w, 5, -70, 0);
+	chanwatch_decide(&w, 5, chanwatch_threshold_bucket(-70), 0);
 	CHECK(w.move_waiting);
 	CHECK(chanwatch_set_channels(&w, other, 2, 0));
 	CHECK(!chanwatch_take_move(&w, &m));
@@ -267,6 +267,26 @@ static void test_more_channels_than_it_holds_are_not_watched(void)
 	CHECK(!rounds_until_move(&w, CHANWATCH_MIN_SAMPLES, 0, 0, &m));
 }
 
+static void test_the_threshold_never_counts_the_quietest_bucket(void)
+{
+	CHECK(chanwatch_threshold_bucket(INT8_MIN) != CHANWATCH_NO_THRESHOLD);
+	CHECK_EQ(chanwatch_threshold_bucket(INT8_MIN), 1);
+	CHECK_EQ(chanwatch_threshold_bucket(-80), 1);
+	CHECK_EQ(chanwatch_threshold_bucket(-30), 5);
+}
+
+static void test_no_move_without_a_threshold(void)
+{
+	struct chanwatch w;
+	struct chanwatch_move m;
+	struct noise_tally home = home_noise(400, 1000);
+
+	primed(&w, &home, -95);
+	chanwatch_decide(&w, 5, CHANWATCH_NO_THRESHOLD, 0);
+	CHECK(!chanwatch_take_move(&w, &m));
+	CHECK(decide(&w, 5, -70, 0, &m));
+}
+
 int main(void)
 {
 	RUN(test_a_much_quieter_channel_wins_once_it_has_enough_samples);
@@ -285,5 +305,7 @@ int main(void)
 	RUN(test_another_move_drops_the_one_that_waits);
 	RUN(test_other_channels_drop_the_move_that_waits);
 	RUN(test_more_channels_than_it_holds_are_not_watched);
+	RUN(test_the_threshold_never_counts_the_quietest_bucket);
+	RUN(test_no_move_without_a_threshold);
 	return TEST_EXIT();
 }

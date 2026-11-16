@@ -13,7 +13,9 @@ use crate::format::{
     hex, last_packet, noise_level, paired, pairing_offer, reset_causes, state_name, status_label,
     unifying_kind, uptime, usb_state, version, wall_clock,
 };
-use crate::protocol::{Action, Counter, ErrorCode, Link, Minute, Protocol, Status};
+use crate::protocol::{
+    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, Protocol, Status, Watch,
+};
 use crate::{dfu, format, uf2};
 
 pub fn status(s: &Status) -> Result<()> {
@@ -293,6 +295,68 @@ pub fn noise<T: Transport>(dev: &mut Device<T>, s: &Status, yes: bool) -> Result
     Ok(())
 }
 
+pub fn moves<T: Transport>(dev: &mut Device<T>, s: &Status) -> Result<()> {
+    for line in moves_lines(&dev.watch()?, s) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+fn moves_lines(w: &Watch, s: &Status) -> Vec<String> {
+    let rows: Vec<_> = w
+        .channels
+        .iter()
+        .map(|c| {
+            (
+                format::described(c.channel, format::watch_role(c.channel, w, s)),
+                c,
+            )
+        })
+        .collect();
+    let width = rows
+        .iter()
+        .map(|(d, _)| d.chars().count())
+        .max()
+        .unwrap_or(0);
+    let labels = (0..NOISE_BUCKETS as u8).map(|b| format!("{:>6}", format::bucket_label(b)));
+    let header = format!(
+        "{:3}  {:width$}  {:>8}  {:>7}  {}",
+        "",
+        "",
+        "readings",
+        "counted",
+        labels.collect::<Vec<_>>().join(" ")
+    );
+    let lines = rows.into_iter().map(|(description, c)| {
+        let counted = format::counted_share(w.counted(c));
+        let readings = c.readings();
+        let spread: Vec<_> = c
+            .buckets
+            .iter()
+            .map(|&b| format!("{:>6}", tenths(b, readings)))
+            .collect();
+        let line = format!(
+            "{:3}  {description:<width$}  {readings:>8}  {counted:>7}  {}",
+            c.channel,
+            spread.join(" ")
+        );
+        if w.too_few(c) {
+            format!("{line}  too few readings to move to")
+        } else {
+            line
+        }
+    });
+    [format::watch_summary(w), header]
+        .into_iter()
+        .chain(lines)
+        .collect()
+}
+
+fn tenths(part: u32, whole: u64) -> String {
+    let t = (u64::from(part) * 2000 + whole) / (2 * whole.max(1));
+    format!("{}.{}%", t / 10, t % 10)
+}
+
 pub fn action<T: Transport>(dev: &mut Device<T>, action: Action, yes: bool) -> Result<()> {
     if confirm(action_question(action), yes)? {
         dev.action(action)?;
@@ -383,6 +447,59 @@ mod tests {
         assert!(parse_channels(&strings(&["62", "52", "x"])).is_err());
         assert!(parse_channels(&strings(&["62", "52", "300"])).is_err());
         assert!(parse_channels(&strings(&["auto", "52", "44"])).is_err());
+    }
+
+    #[test]
+    fn moves_list_each_channel_with_its_counted_share_and_spread() {
+        let mut s = status_of(Protocol::Nuphy);
+        s.channel = 41;
+        let w =
+            crate::protocol::decode_watch(&crate::protocol::tests::fixture("watch.hex")).unwrap();
+        assert_eq!(
+            moves_lines(&w, &s),
+            [
+                "noise at -75 dBm or louder counts; next move in 30 s at the earliest",
+                "                      readings  counted    <-85    -85    -75    -65    -55    -45",
+                "  2  wifi 1, ble adv        60    0.00%  100.0%   0.0%   0.0%   0.0%   0.0%   0.0%",
+                " 41  wifi 6, current      1236    2.91%   80.9%  16.2%   2.4%   0.4%   0.0%   0.1%",
+                " 62  wifi 11                30    0.00%   33.3%  66.7%   0.0%   0.0%   0.0%   0.0%  too few readings to move to",
+            ]
+        );
+    }
+
+    #[test]
+    fn moves_mark_the_home_they_report_as_current() {
+        let mut s = status_of(Protocol::Nuphy);
+        s.channel = 2;
+        let w =
+            crate::protocol::decode_watch(&crate::protocol::tests::fixture("watch.hex")).unwrap();
+        let lines = moves_lines(&w, &s);
+        assert!(lines[2].starts_with("  2  wifi 1, ble adv "), "{lines:?}");
+        assert!(lines[3].starts_with(" 41  wifi 6, current "), "{lines:?}");
+    }
+
+    #[test]
+    fn moves_without_a_keyboard_packet_count_nothing() {
+        let s = status_of(Protocol::Nuphy);
+        let w = Watch {
+            home: None,
+            threshold: None,
+            paused: false,
+            hold_left_ms: 0,
+            channels: Vec::new(),
+        };
+        assert_eq!(
+            moves_lines(&w, &s)[0],
+            "no keyboard link, so the dongle makes no moves"
+        );
+        let w = Watch {
+            home: Some(41),
+            ..w
+        };
+        assert_eq!(
+            moves_lines(&w, &s)[0],
+            "no recent keyboard packet, so no noise counts"
+        );
     }
 
     fn dongle_refusing_with(command: Command, code: u8) -> Device<Fake> {

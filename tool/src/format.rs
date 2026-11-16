@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Local};
 use crate::board::State;
 use crate::protocol::{
     Action, BUSY_DBM, Event, EventKind, Link, Noise, NuphyState, Protocol, STRONG_DBM, Status,
-    UnifyingState, VersionMismatch,
+    UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -102,10 +102,23 @@ fn is_ble_advertising(channel: u8) -> bool {
     BLE_ADVERTISING.contains(&channel)
 }
 
+/// The status's channel leaves home during a pairing sweep.
+pub fn watch_role(channel: u8, w: &Watch, s: &Status) -> ChannelRole {
+    match channel_role(channel, s) {
+        _ if Some(channel) == w.home => ChannelRole::Current,
+        ChannelRole::Current => ChannelRole::Other,
+        role => role,
+    }
+}
+
 pub fn channel_description(channel: u8, s: &Status) -> String {
+    described(channel, channel_role(channel, s))
+}
+
+pub fn described(channel: u8, role: ChannelRole) -> String {
     let wifi = wifi_channel(channel).map(|k| format!("wifi {k}"));
     let ble = is_ble_advertising(channel).then(|| "ble adv".to_string());
-    let role = channel_role(channel, s).label().map(str::to_string);
+    let role = role.label().map(str::to_string);
     wifi.into_iter()
         .chain(ble)
         .chain(role)
@@ -314,6 +327,32 @@ pub fn flashed(status: Result<Status, VersionMismatch>) -> String {
         ),
         Err(m) => format!("flashed; {m}"),
     }
+}
+
+pub fn bucket_label(bucket: u8) -> String {
+    bucket_floor(bucket).map_or(format!("<{BUSY_DBM}"), |dbm| dbm.to_string())
+}
+
+pub fn watch_summary(w: &Watch) -> String {
+    let counted = match (w.home, w.threshold) {
+        (None, _) => return "no keyboard link, so the dongle makes no moves".into(),
+        (Some(_), None) => "no recent keyboard packet, so no noise counts".into(),
+        (Some(_), Some(t)) => format!("noise at {} dBm or louder counts", bucket_label(t)),
+    };
+    if w.paused {
+        format!("moves paused; {counted}")
+    } else if w.hold_left_ms == 0 {
+        counted
+    } else {
+        format!(
+            "{counted}; next move in {} at the earliest",
+            duration(w.hold_left_ms)
+        )
+    }
+}
+
+pub fn counted_share(hundredths: Option<u16>) -> String {
+    hundredths.map_or("-".into(), share)
 }
 
 pub fn share(hundredths: u16) -> String {
@@ -794,6 +833,21 @@ mod tests {
         assert_eq!(noise_level(-100), 0);
         assert_eq!(noise_level(-110), 0);
         assert_eq!(noise_level(-50), 50);
+    }
+
+    #[test]
+    fn a_paused_watch_says_so_instead_of_the_next_move() {
+        let w = Watch {
+            home: Some(41),
+            threshold: Some(5),
+            paused: true,
+            hold_left_ms: 30_000,
+            channels: Vec::new(),
+        };
+        assert_eq!(
+            watch_summary(&w),
+            "moves paused; noise at -45 dBm or louder counts"
+        );
     }
 
     #[test]

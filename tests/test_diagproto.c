@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "test.h"
 #include "chanpick.h"
+#include "chanwatch.h"
 #include "diagproto.h"
 #include "history.h"
 #include "link.h"
@@ -202,11 +203,102 @@ static void test_noise_matches_fixture(void)
 	CHECK_MEM(got, want, want_len);
 }
 
+static void test_watch_matches_fixture(void)
+{
+	static struct chanwatch w;
+	const uint8_t channels[] = {2, 41, 62};
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture("watch.hex", want, sizeof(want));
+	size_t got_len;
+
+	chanwatch_set_channels(&w, channels, sizeof(channels), 0);
+	w.weight[0][0] = 60.0f;
+	w.weight[1][0] = 1000.0f;
+	w.weight[1][1] = 200.0f;
+	w.weight[1][2] = 30.0f;
+	w.weight[1][3] = 5.0f;
+	w.weight[1][5] = 1.0f;
+	w.weight[2][0] = 10.4f;
+	w.weight[2][1] = 20.0f;
+	w.hold_until_ms = 70000;
+	got_len = diag_encode_watch(got, &w, 41, 2, false, 40000);
+	CHECK_EQ(got_len, want_len);
+	CHECK_MEM(got, want, want_len);
+}
+
+static void test_a_paused_watch_past_its_hold_reports_none_left(void)
+{
+	static struct chanwatch w;
+	uint8_t got[DIAG_PAYLOAD_MAX];
+
+	w.hold_until_ms = 1000;
+	CHECK_EQ(diag_encode_watch(got, &w, 0, 0, true, 5000), 8);
+	CHECK_EQ(got[0], 0);
+	CHECK_EQ(got[1], 0);
+	CHECK_EQ(got[2], 1);
+	CHECK_EQ(got[3] | got[4] | got[5] | got[6], 0);
+	CHECK_EQ(got[7], 0);
+}
+
+static void test_a_watch_without_a_threshold_counts_nothing(void)
+{
+	static struct chanwatch w;
+	const uint8_t channels[] = {41};
+	uint8_t got[DIAG_PAYLOAD_MAX];
+
+	chanwatch_set_channels(&w, channels, sizeof(channels), 0);
+	w.weight[0][5] = 100.0f;
+	diag_encode_watch(got, &w, 41, 0, false, 0);
+	CHECK_EQ(got[10] | got[11], 0);
+}
+
+static void test_a_full_watch_fits_the_payload_buffer(void)
+{
+	static struct chanwatch w;
+	uint8_t channels[CHANWATCH_MAX] = {0};
+	uint8_t got[DIAG_PAYLOAD_MAX];
+
+	for (int i = 0; i < CHANWATCH_MAX; i++) {
+		channels[i] = 2 + i;
+	}
+	chanwatch_set_channels(&w, channels, CHANWATCH_MAX, 0);
+	CHECK(diag_encode_watch(got, &w, 2, 1, false, 0) <= DIAG_PAYLOAD_MAX);
+}
+
+static void test_noise_limits_match_fixture(void)
+{
+	const int8_t got[] = {NOISE_BUSY_DBM, NOISE_STRONG_DBM};
+	uint8_t want[sizeof(got) + 1];
+	size_t want_len = load_fixture("noise-limits.hex", want, sizeof(want));
+
+	CHECK_EQ(want_len, sizeof(got));
+	CHECK_MEM(got, want, sizeof(got));
+}
+
+static void test_bucket_floors_match_fixture(void)
+{
+	int8_t got[NOISE_BUCKETS - 1];
+	uint8_t want[NOISE_BUCKETS];
+	size_t want_len = load_fixture("bucket-floors.hex", want, sizeof(want));
+
+	for (int b = 1; b < NOISE_BUCKETS; b++) {
+		int dbm = INT8_MIN;
+
+		while (noise_bucket((int8_t)dbm) < b) {
+			dbm++;
+		}
+		got[b - 1] = (int8_t)dbm;
+	}
+	CHECK_EQ(want_len, sizeof(got));
+	CHECK_MEM(got, want, sizeof(got));
+}
+
 static void test_command_numbers_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
 			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS,
-			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE};
+			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE, DIAG_WATCH};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -277,6 +369,7 @@ static void test_a_command_belongs_to_one_protocol_or_to_all(void)
 	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_PROTOCOL), 0);
 	CHECK_EQ(diag_command_protocol(DIAG_MOVE), 0);
+	CHECK_EQ(diag_command_protocol(DIAG_WATCH), 0);
 	CHECK_EQ(diag_command_protocol(0), 0);
 	CHECK_EQ(diag_command_protocol(200), 0);
 }
@@ -293,6 +386,12 @@ int main(void)
 	RUN(test_minutes_match_fixture);
 	RUN(test_events_match_fixture);
 	RUN(test_noise_matches_fixture);
+	RUN(test_watch_matches_fixture);
+	RUN(test_a_paused_watch_past_its_hold_reports_none_left);
+	RUN(test_a_watch_without_a_threshold_counts_nothing);
+	RUN(test_a_full_watch_fits_the_payload_buffer);
+	RUN(test_noise_limits_match_fixture);
+	RUN(test_bucket_floors_match_fixture);
 	RUN(test_command_numbers_match_fixture);
 	RUN(test_event_type_numbers_match_fixture);
 	RUN(test_a_full_page_fits_the_payload_buffer);

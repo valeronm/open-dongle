@@ -43,6 +43,7 @@ pub enum Command {
     Pair,
     Protocol,
     Move,
+    Watch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -771,6 +772,91 @@ pub fn decode_noise(payload: &[u8]) -> Result<Vec<NoiseChannel>> {
         .collect()
 }
 
+// Equal to the firmware's `NOISE_BUCKETS` and `NOISE_BUCKET_DB`.
+pub const NOISE_BUCKETS: usize = 6;
+const BUCKET_DB: i8 = 10;
+
+/// The quietest reading `bucket` holds, or `None` for the bucket below `BUSY_DBM`.
+pub fn bucket_floor(bucket: u8) -> Option<i8> {
+    let above = i8::try_from(bucket.checked_sub(1)?).ok()?;
+    BUSY_DBM.checked_add(above.checked_mul(BUCKET_DB)?)
+}
+
+/// The noise the dongle decides its moves from, read between keyboard packets on the home
+/// channel and in short scans on the others, fading over minutes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Watch {
+    pub home: Option<u8>,
+    /// The quietest bucket counted against a channel at the keyboard's current signal; `None`
+    /// without a keyboard packet in the current or previous minute.
+    pub threshold: Option<u8>,
+    /// Whether the dongle holds the link where it is whatever the noise.
+    pub paused: bool,
+    pub hold_left_ms: u32,
+    pub channels: Vec<WatchChannel>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WatchChannel {
+    pub channel: u8,
+    /// Whether the channel has heard enough for the dongle to move to it.
+    pub enough: bool,
+    /// The share of readings loud enough to count at the keyboard's signal, in hundredths of a
+    /// percent; meaningful only with a threshold and readings.
+    pub counted: u16,
+    pub buckets: [u32; NOISE_BUCKETS],
+}
+
+impl Watch {
+    pub fn counted(&self, c: &WatchChannel) -> Option<u16> {
+        (self.threshold.is_some() && c.readings() > 0).then_some(c.counted)
+    }
+
+    /// Home is never moved to.
+    pub fn too_few(&self, c: &WatchChannel) -> bool {
+        !c.enough && Some(c.channel) != self.home
+    }
+}
+
+impl WatchChannel {
+    pub fn readings(&self) -> u64 {
+        self.buckets.iter().map(|&b| u64::from(b)).sum()
+    }
+}
+
+pub fn decode_watch(payload: &[u8]) -> Result<Watch> {
+    let mut r = Reader::new(payload);
+    let home = r.u8()?;
+    let threshold = r.u8()?;
+    let paused = r.u8()?;
+    let hold_left_ms = r.u32()?;
+    let count = r.u8()?;
+    let channels = (0..count)
+        .map(|_| {
+            let channel = r.u8()?;
+            let enough = r.u8()? != 0;
+            let counted = r.u16()?;
+            let mut buckets = [0; NOISE_BUCKETS];
+            for b in &mut buckets {
+                *b = r.u32()?;
+            }
+            Ok(WatchChannel {
+                channel,
+                enough,
+                counted,
+                buckets,
+            })
+        })
+        .collect::<Result<_>>()?;
+    Ok(Watch {
+        home: present(home),
+        threshold: present(threshold),
+        paused: paused != 0,
+        hold_left_ms,
+        channels,
+    })
+}
+
 pub fn decode_events(payload: &[u8]) -> Result<(u32, Vec<Event>)> {
     decode_page(payload, |r| {
         Ok(Event {
@@ -1071,6 +1157,77 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn watch_fixture_decodes() {
+        let w = decode_watch(&fixture("watch.hex")).unwrap();
+        assert_eq!(w.home, Some(41));
+        assert_eq!(w.threshold, Some(2));
+        assert!(!w.paused);
+        assert_eq!(w.hold_left_ms, 30_000);
+        assert_eq!(
+            w.channels,
+            [
+                WatchChannel {
+                    channel: 2,
+                    enough: true,
+                    counted: 0,
+                    buckets: [60, 0, 0, 0, 0, 0]
+                },
+                WatchChannel {
+                    channel: 41,
+                    enough: true,
+                    counted: 291,
+                    buckets: [1000, 200, 30, 5, 0, 1]
+                },
+                WatchChannel {
+                    channel: 62,
+                    enough: false,
+                    counted: 0,
+                    buckets: [10, 20, 0, 0, 0, 0]
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_paused_watch_without_home_or_threshold_decodes_as_none() {
+        let w = decode_watch(&[0, 0, 1, 0, 0, 0, 0, 0]).unwrap();
+        assert_eq!((w.home, w.threshold, w.paused), (None, None, true));
+        assert!(w.channels.is_empty());
+    }
+
+    #[test]
+    fn a_channel_without_readings_counts_nothing() {
+        let mut payload = vec![41, 2, 0, 0, 0, 0, 0, 1, 41, 0, 0, 0];
+        payload.extend([0; 4 * NOISE_BUCKETS]);
+        let w = decode_watch(&payload).unwrap();
+        assert_eq!(w.counted(&w.channels[0]), None);
+    }
+
+    #[test]
+    fn noise_limits_match_fixture() {
+        assert_eq!(
+            fixture("noise-limits.hex"),
+            [BUSY_DBM as u8, STRONG_DBM as u8]
+        );
+    }
+
+    #[test]
+    fn bucket_floors_match_fixture() {
+        let floors: Vec<u8> = (1..NOISE_BUCKETS as u8)
+            .map(|b| bucket_floor(b).unwrap() as u8)
+            .collect();
+        assert_eq!(fixture("bucket-floors.hex"), floors);
+    }
+
+    #[test]
+    fn a_bucket_starts_ten_db_above_the_one_before() {
+        assert_eq!(bucket_floor(0), None);
+        assert_eq!(bucket_floor(1), Some(BUSY_DBM));
+        assert_eq!(bucket_floor(2), Some(-75));
+        assert_eq!(bucket_floor(5), Some(-45));
+    }
+
     fn refusal(version: u8) -> String {
         read_status(&status_in_protocol(version))
             .unwrap()
@@ -1207,6 +1364,7 @@ pub(crate) mod tests {
             Command::Pair,
             Command::Protocol,
             Command::Move,
+            Command::Watch,
         ];
         assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
     }

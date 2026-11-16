@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
     Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
-    Reader, Status, VersionMismatch, channels_arg, decode_events, decode_minutes, decode_noise,
-    parse_part, read_status, request,
+    Reader, Status, VersionMismatch, Watch, channels_arg, decode_events, decode_minutes,
+    decode_noise, decode_watch, parse_part, read_status, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -185,6 +185,10 @@ impl<T: Transport> Device<T> {
 
     pub fn noise(&mut self) -> Result<Vec<NoiseChannel>> {
         decode_noise(&self.call(Command::Noise, 0, NOISE_TIMEOUT)?)
+    }
+
+    pub fn watch(&mut self) -> Result<Watch> {
+        decode_watch(&self.call(Command::Watch, 0, TIMEOUT)?)
     }
 
     /// Returns the held minutes with their indexes, from `from` (or the oldest held) up to `end`.

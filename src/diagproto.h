@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "chanpick.h"
+#include "chanwatch.h"
 #include "history.h"
 #include "protocol.h"
 
@@ -36,6 +37,7 @@ enum diag_command {
 	DIAG_PROTOCOL,
 	/* arg is the channel; the reply is the channel the link was on. */
 	DIAG_MOVE,
+	DIAG_WATCH,
 };
 
 enum diag_error {
@@ -101,5 +103,8 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
 			 size_t n);
 size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
+/* No home is sent as 0, no threshold as CHANWATCH_NO_THRESHOLD. */
+size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
+			 uint8_t threshold_bucket, bool paused, uint64_t now_ms);
 
 #endif

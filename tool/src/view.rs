@@ -19,13 +19,14 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, LinkHealth, NOISE_QUESTION, action_question, channel_role, describe_event,
-    last_packet, link_health, noise_level, noise_ruler, paired, pairing_open, share, state_name,
-    status_label, switch_question, uptime, usb_state, wall_clock,
+    ChannelRole, LinkHealth, NOISE_QUESTION, action_question, bucket_label, channel_role,
+    counted_share, describe_event, last_packet, link_health, noise_level, noise_ruler, paired,
+    pairing_open, share, state_name, status_label, switch_question, uptime, usb_state, wall_clock,
+    watch_role, watch_summary,
 };
 use crate::protocol::{
-    Action, BUSY_DBM, Counter, Event, Link, Minute, NoiseChannel, NuphyLink, Protocol, Status,
-    Step, step_channel,
+    Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
+    Protocol, Status, Step, Watch, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -266,9 +267,10 @@ fn time_axis(boot: DateTime<Local>, shown: &[(u32, Minute)]) -> String {
         })
 }
 
-fn legend(
+fn legend<N: Into<std::borrow::Cow<'static, str>>>(
     title: &'static str,
-    keys: impl IntoIterator<Item = (&'static str, Color)>,
+    glyph: &'static str,
+    keys: impl IntoIterator<Item = (N, Color)>,
 ) -> Line<'static> {
     Line::from_iter(
         [Span::raw(title)]
@@ -276,7 +278,7 @@ fn legend(
             .chain(keys.into_iter().flat_map(|(name, color)| {
                 [
                     Span::raw("  "),
-                    Span::styled("━ ", Style::default().fg(color)),
+                    Span::styled(glyph, Style::default().fg(color)),
                     Span::raw(name),
                 ]
             })),
@@ -429,10 +431,12 @@ impl Prompt {
 enum Key {
     Ask(Prompt),
     Pair(Protocol),
+    Moves,
 }
 
-fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 6] {
+fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 7] {
     const NOISE: (char, &str, Key) = ('n', "noise", Key::Ask(Prompt::Noise));
+    const MOVES: (char, &str, Key) = ('m', "moves", Key::Moves);
     const REBOOT: (char, &str, Key) = ('r', "reboot", Key::Ask(Prompt::Action(Action::Reboot)));
     const BOOTLOADER: (char, &str, Key) = (
         'b',
@@ -446,7 +450,7 @@ fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 6] {
     };
     let pair = ('a', "pair", Key::Pair(protocol));
     let switch = ('p', label, Key::Ask(Prompt::Switch(other)));
-    [NOISE, pair, switch, REBOOT, BOOTLOADER, CLEAR]
+    [NOISE, MOVES, pair, switch, REBOOT, BOOTLOADER, CLEAR]
 }
 
 /// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
@@ -481,9 +485,16 @@ struct Session<T: Transport> {
     history: History,
     /// The last refresh's error, while the dongle answers but its reply failed.
     refresh_error: Option<String>,
-    noise: Option<Vec<NoiseChannel>>,
+    pane: Pane,
     prompt: Option<Prompt>,
     message: String,
+}
+
+enum Pane {
+    History,
+    Noise(Vec<NoiseChannel>),
+    /// Reread on every poll.
+    Moves(Watch),
 }
 
 #[expect(
@@ -578,7 +589,7 @@ impl<T: Transport> Session<T> {
             device,
             history: History::new(status),
             refresh_error: None,
-            noise: None,
+            pane: Pane::History,
             prompt: None,
             message: String::new(),
         }
@@ -605,9 +616,10 @@ impl<T: Transport> Session<T> {
             KeyCode::Char(c) => match self.key(c) {
                 Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
                 Some(Key::Pair(protocol)) => self.pair(protocol),
+                Some(Key::Moves) => self.show_moves(),
                 None => {}
             },
-            KeyCode::Esc => self.noise = None,
+            KeyCode::Esc => self.pane = Pane::History,
             KeyCode::Left if let Some(width) = drawn.plot_width => history.scroll_older(width),
             KeyCode::Right if let Some(width) = drawn.plot_width => history.scroll_newer(width),
             KeyCode::Up => history.scroll_events(EventsMove::Newer(1), rows),
@@ -626,6 +638,13 @@ impl<T: Transport> Session<T> {
             .into_iter()
             .find(|(k, _, _)| *k == c)
             .map(|(_, _, key)| key)
+    }
+
+    fn show_moves(&mut self) {
+        match self.device.watch() {
+            Ok(w) => self.pane = Pane::Moves(w),
+            Err(e) => self.message = format!("failed: {}", error_text(&e)),
+        }
     }
 
     fn pair(&mut self, protocol: Protocol) {
@@ -652,13 +671,23 @@ impl<T: Transport> Session<T> {
     /// Returns the error that lost the dongle.
     fn refresh(&mut self, status: Result<Status>) -> Result<()> {
         let read = status.is_ok();
-        match status.and_then(|s| self.history.refresh(&mut self.device, s)) {
+        let refreshed = status
+            .and_then(|s| self.history.refresh(&mut self.device, s))
+            .and_then(|()| self.reread_pane());
+        match refreshed {
             Ok(()) => self.refresh_error = None,
             Err(e) if e.is::<Lost>() => return Err(e),
             Err(e) => self.refresh_error = Some(error_text(&e)),
         }
         if read {
             self.drop_pairing_message_once_closed();
+        }
+        Ok(())
+    }
+
+    fn reread_pane(&mut self) -> Result<()> {
+        if let Pane::Moves(w) = &mut self.pane {
+            *w = self.device.watch()?;
         }
         Ok(())
     }
@@ -674,7 +703,7 @@ impl<T: Transport> Session<T> {
     fn answer(&mut self, prompt: Prompt) {
         let result = match prompt {
             Prompt::Noise => self.device.noise().map(|n| {
-                self.noise = Some(n);
+                self.pane = Pane::Noise(n);
                 "done".to_string()
             }),
             Prompt::Action(c) => self.device.action(c).map(|()| "done".to_string()),
@@ -775,13 +804,16 @@ impl<T: Transport> App<T> {
             Paragraph::new(status_lines(status)).block(Block::bordered().title(title)),
             top,
         );
-        let plot_width = if let Some(session) = session
-            && let Some(noise) = &session.noise
-        {
-            draw_noise(f, middle, noise, &session.history.status);
-            None
-        } else {
-            Some(draw_history(f, middle, session))
+        let plot_width = match session.map(|s| (&s.pane, &s.history.status)) {
+            Some((Pane::Noise(noise), status)) => {
+                draw_noise(f, middle, noise, status);
+                None
+            }
+            Some((Pane::Moves(watch), status)) => {
+                draw_moves(f, middle, watch, status);
+                None
+            }
+            Some((Pane::History, _)) | None => Some(draw_history(f, middle, session)),
         };
         let event_rows = draw_events(f, bottom, session.map(|s| &s.history));
         f.render_widget(Paragraph::new(help.join("\n")), footer);
@@ -842,6 +874,7 @@ fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Sessio
     let block = Block::bordered()
         .title(legend(
             "signal dBm",
+            "━ ",
             SIGNAL_LINES
                 .iter()
                 .rev()
@@ -944,6 +977,7 @@ fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
     let block = Block::bordered()
         .title(legend(
             "loudest per channel",
+            "━ ",
             [ChannelRole::Current, ChannelRole::Paired]
                 .into_iter()
                 .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
@@ -962,6 +996,84 @@ fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
     let count = u8::try_from(noise.len()).unwrap_or(u8::MAX);
     let under_bars = Rect::new(bars_area.x, ruler.y, bars_area.width, 1);
     f.render_widget(Paragraph::new(noise_ruler(first, count)), under_bars);
+}
+
+/// Splits `room` cells among the buckets by their share of the readings, giving each non-empty
+/// bucket at least one cell; a row too narrow for that keeps the loudest.
+fn band_cells(buckets: &[u32; NOISE_BUCKETS], room: usize) -> [usize; NOISE_BUCKETS] {
+    let mut cells = [0; NOISE_BUCKETS];
+    let present: Vec<usize> = (0..NOISE_BUCKETS).filter(|&b| buckets[b] > 0).collect();
+    if room <= present.len() {
+        for &b in present.iter().rev().take(room) {
+            cells[b] = 1;
+        }
+        return cells;
+    }
+    let spare = (room - present.len()) as u64;
+    let total: u64 = buckets.iter().map(|&b| u64::from(b)).sum();
+    let mut remainders = Vec::new();
+    for &b in &present {
+        let scaled = spare * u64::from(buckets[b]);
+        cells[b] = 1 + (scaled / total) as usize;
+        remainders.push((scaled % total, b));
+    }
+    remainders.sort_by_key(|x| std::cmp::Reverse(x.0));
+    let left = room - cells.iter().sum::<usize>();
+    for &(_, b) in remainders.iter().take(left) {
+        cells[b] += 1;
+    }
+    cells
+}
+
+const BAND_COLORS: [Color; NOISE_BUCKETS] = [
+    Color::DarkGray,
+    Color::Blue,
+    Color::Green,
+    Color::Yellow,
+    Color::Indexed(208),
+    Color::Red,
+];
+
+fn band_legend() -> Line<'static> {
+    let mut line = legend(
+        "noise by level",
+        "█ ",
+        (0..).map(bucket_label).zip(BAND_COLORS),
+    );
+    line.push_span(Span::styled(
+        "  gray: few readings",
+        Style::default().fg(Color::DarkGray),
+    ));
+    line
+}
+
+fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
+    let block = Block::bordered()
+        .title(band_legend())
+        .title_bottom(watch_summary(w));
+    let width = usize::from(block.inner(area).width);
+    let lines: Vec<Line> = w
+        .channels
+        .iter()
+        .map(|c| {
+            let color = if w.too_few(c) {
+                Color::DarkGray
+            } else {
+                role_color(watch_role(c.channel, w, s))
+            };
+            let label = Span::styled(
+                format!("{:>3}  {:>7}  ", c.channel, counted_share(w.counted(c))),
+                Style::default().fg(color),
+            );
+            let room = width.saturating_sub(label.width());
+            let bands = band_cells(&c.buckets, room)
+                .into_iter()
+                .zip(BAND_COLORS)
+                .map(|(cells, color)| Span::styled("█".repeat(cells), Style::default().fg(color)));
+            Line::from_iter([label].into_iter().chain(bands))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
@@ -1193,10 +1305,23 @@ mod tests {
             .collect()
     }
 
-    fn footer<T: Transport>(app: &mut App<T>) -> String {
+    fn drawn<T: Transport>(app: &mut App<T>) -> Terminal<TestBackend> {
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
-        let rows = screen(&terminal);
+        terminal
+    }
+
+    fn channel_fg(terminal: &Terminal<TestBackend>, channel: u8, x: u16) -> Color {
+        let rows = screen(terminal);
+        let y = rows
+            .iter()
+            .position(|r| r.starts_with(&format!("│{channel:>3}  ")))
+            .unwrap();
+        terminal.backend().buffer()[(x, y as u16)].fg
+    }
+
+    fn footer<T: Transport>(app: &mut App<T>) -> String {
+        let rows = screen(&drawn(app));
         rows[rows.len() - app.connection.view(80).1.len()..]
             .iter()
             .map(|row| row.trim_end())
@@ -1204,8 +1329,9 @@ mod tests {
             .join("\n")
     }
 
-    const UNIFYING_HINTS: [&str; 10] = [
+    const UNIFYING_HINTS: [&str; 11] = [
         "n noise",
+        "m moves",
         "a pair",
         "p nuphy",
         "r reboot",
@@ -1223,7 +1349,7 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history",
+                "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history",
                 "↑/↓ events  esc back  q quit",
             ]
         );
@@ -1262,12 +1388,10 @@ mod tests {
     #[test]
     fn the_unifying_footer_flows_onto_the_last_rows_of_an_80_column_screen() {
         let mut app = app_with(status_of(Protocol::Unifying));
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|f| app.draw(f)).unwrap();
-        let rows = screen(&terminal);
+        let rows = screen(&drawn(&mut app));
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel"
+            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel"
         );
         assert_eq!(
             rows[23].trim_end(),
@@ -1320,9 +1444,9 @@ mod tests {
         );
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel  ←/→ history  ↑/↓ events"
+            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel  ←/→ history"
         );
-        assert_eq!(rows[23].trim_end(), "esc back  q quit");
+        assert_eq!(rows[23].trim_end(), "↑/↓ events  esc back  q quit");
     }
 
     #[test]
@@ -1339,6 +1463,7 @@ mod tests {
         assert_eq!(session(&mut app).protocol(), Protocol::Nuphy);
         let hints = [
             "n noise",
+            "m moves",
             "a pair",
             "p unifying",
             "r reboot",
@@ -1350,7 +1475,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(app.connection.view(120).1, [hints.join("  ")]);
+        assert_eq!(app.connection.view(130).1, [hints.join("  ")]);
     }
 
     #[test]
@@ -1539,7 +1664,7 @@ mod tests {
         assert_eq!(session(&mut app).message, "");
         assert_eq!(
             footer(&mut app),
-            "n noise  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel\n←/→ history  ↑/↓ events  esc back  q quit"
+            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel\n←/→ history  ↑/↓ events  esc back  q quit"
         );
     }
 
@@ -1777,13 +1902,131 @@ mod tests {
         assert_eq!(h.minutes.len(), 130);
     }
 
+    fn app_watching(watch: Vec<u8>) -> (App<Fake>, std::rc::Rc<std::cell::Cell<usize>>) {
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let count = asked.clone();
+        let mut status = status_of(Protocol::Nuphy);
+        status.channel = 41;
+        let app = app_on(
+            Device::new(
+                Fake::new(move |req| {
+                    if req[0] == Command::Watch as u8 {
+                        count.set(count.get() + 1);
+                        parts(req[0], req[1], &watch)
+                    } else {
+                        parts(req[0], req[1], &[0, 0, 0, 0, 0])
+                    }
+                }),
+                0,
+            ),
+            status,
+        );
+        (app, asked)
+    }
+
+    fn drawn_text<T: Transport>(app: &mut App<T>) -> String {
+        screen(&drawn(app)).join("\n")
+    }
+
+    #[test]
+    fn the_moves_key_shows_the_noise_the_dongle_moves_by() {
+        let (mut app, asked) = app_watching(crate::protocol::tests::fixture("watch.hex"));
+        press(&mut app, 'm');
+        assert_eq!(asked.get(), 1);
+        let text = drawn_text(&mut app);
+        assert!(text.contains("noise at -75 dBm or louder counts"), "{text}");
+        assert!(text.contains("2.91%"), "{text}");
+        assert_eq!(app.drawn.plot_width, None);
+    }
+
+    #[test]
+    fn bands_split_the_row_by_share() {
+        assert_eq!(band_cells(&[50, 50, 0, 0, 0, 0], 10), [5, 5, 0, 0, 0, 0]);
+        assert_eq!(band_cells(&[60, 0, 0, 0, 0, 0], 10), [10, 0, 0, 0, 0, 0]);
+        assert_eq!(band_cells(&[0; NOISE_BUCKETS], 10), [0; NOISE_BUCKETS]);
+    }
+
+    #[test]
+    fn a_tiny_band_keeps_one_cell_and_the_row_stays_full() {
+        let cells = band_cells(&[1000, 200, 30, 5, 0, 1], 60);
+        assert_eq!(cells.iter().sum::<usize>(), 60);
+        assert_eq!(cells[4], 0);
+        assert!(cells[5] >= 1 && cells[3] >= 1, "{cells:?}");
+        assert!(cells[0] > cells[1] && cells[1] > cells[2], "{cells:?}");
+    }
+
+    #[test]
+    fn a_row_too_narrow_for_every_band_keeps_the_loudest() {
+        assert_eq!(band_cells(&[10, 10, 10, 10, 10, 10], 4), [0, 0, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn each_channel_ends_in_the_color_of_its_loudest_band() {
+        let (mut app, _) = app_watching(crate::protocol::tests::fixture("watch.hex"));
+        press(&mut app, 'm');
+        let terminal = drawn(&mut app);
+        assert_eq!(channel_fg(&terminal, 2, 78), Color::DarkGray);
+        assert_eq!(channel_fg(&terminal, 41, 78), Color::Red);
+    }
+
+    #[test]
+    fn the_moves_pane_marks_the_home_it_reports_as_current() {
+        let (mut app, _) = app_watching(crate::protocol::tests::fixture("watch.hex"));
+        session(&mut app).history.status.channel = 2;
+        press(&mut app, 'm');
+        let terminal = drawn(&mut app);
+        assert_eq!(
+            channel_fg(&terminal, 41, 3),
+            role_color(ChannelRole::Current)
+        );
+        assert_eq!(channel_fg(&terminal, 2, 3), role_color(ChannelRole::Other));
+    }
+
+    #[test]
+    fn a_poll_rereads_the_moves_while_they_are_shown() {
+        let (mut app, asked) = app_watching(crate::protocol::tests::fixture("watch.hex"));
+        let status = session(&mut app).history.status.clone();
+        app.refresh(Ok(status.clone()));
+        assert_eq!(asked.get(), 0);
+        press(&mut app, 'm');
+        app.refresh(Ok(status));
+        assert_eq!(asked.get(), 2);
+    }
+
+    #[test]
+    fn esc_brings_back_the_history_from_the_moves() {
+        let (mut app, _) = app_watching(crate::protocol::tests::fixture("watch.hex"));
+        press(&mut app, 'm');
+        app.handle(KeyCode::Esc);
+        drawn_text(&mut app);
+        assert!(app.drawn.plot_width.is_some());
+    }
+
+    #[test]
+    fn a_dongle_without_moves_keeps_the_history_and_says_why() {
+        let mut app = app_on(
+            Device::new(
+                Fake::new(|req| vec![error_part(req[0], req[1], ErrorCode::UnknownCommand as u8)]),
+                0,
+            ),
+            status_of(Protocol::Nuphy),
+        );
+        press(&mut app, 'm');
+        assert!(matches!(session(&mut app).pane, Pane::History));
+        assert!(
+            footer(&mut app).starts_with("failed:"),
+            "{}",
+            footer(&mut app)
+        );
+    }
+
     #[test]
     fn the_chart_width_is_kept_only_while_the_chart_is_drawn() {
         let mut app = app_with(status_of(Protocol::Nuphy));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|f| app.draw(f)).unwrap();
         assert!(app.drawn.plot_width.is_some());
-        session(&mut app).noise = Some(Vec::new());
+        session(&mut app).pane = Pane::Noise(Vec::new());
         terminal.draw(|f| app.draw(f)).unwrap();
         assert_eq!(app.drawn.plot_width, None);
     }
@@ -1899,10 +2142,7 @@ mod tests {
     }
 
     fn status_box(status: &Status) -> Terminal<TestBackend> {
-        let mut app = app_with(status.clone());
-        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|f| app.draw(f)).unwrap();
-        terminal
+        drawn(&mut app_with(status.clone()))
     }
 
     #[test]

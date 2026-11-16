@@ -62,6 +62,8 @@ enum Cmd {
     },
     /// Measure the radio noise on every channel
     Noise(Confirm),
+    /// The noise on the keyboard's channels that the dongle decides its moves from
+    Moves,
     /// Set the three channels every pairing offers, or `auto` to pick them by survey
     Channels {
         /// Three channels from 2 to 80, for example 62 52 44, or auto
@@ -119,6 +121,10 @@ fn main() -> Result<()> {
         Cmd::Noise(c) => {
             let (mut dev, s) = device::open(serial)?;
             cli::noise(&mut dev, &s, c.yes)
+        }
+        Cmd::Moves => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::moves(&mut dev, &s)
         }
         Cmd::Channels { channels } => {
             let forced = cli::parse_channels(&channels)?;

@@ -91,11 +91,28 @@ static float sum_from(const float *weight, uint8_t from)
 }
 
 /* A threshold counts the whole bucket it falls in. */
-static uint8_t threshold_bucket(int8_t weakest_dbm)
+uint8_t chanwatch_threshold_bucket(int8_t weakest_dbm)
 {
 	int t = weakest_dbm - CHANWATCH_MARGIN_DB;
 
 	return noise_bucket((int8_t)(t < NOISE_BUSY_DBM ? NOISE_BUSY_DBM : t));
+}
+
+float chanwatch_share(const struct chanwatch *w, size_t i, uint8_t from)
+{
+	float n = sum_from(w->weight[i], 0);
+
+	return n > 0.0f ? sum_from(w->weight[i], from) / n : 0.0f;
+}
+
+uint16_t chanwatch_share_hundredths(float share)
+{
+	return (uint16_t)(share * NOISE_SHARE_FULL + 0.5f);
+}
+
+bool chanwatch_enough(const struct chanwatch *w, size_t i)
+{
+	return sum_from(w->weight[i], 0) >= CHANWATCH_MIN_SAMPLES;
 }
 
 void chanwatch_hold(struct chanwatch *w, uint64_t now_ms)
@@ -114,15 +131,13 @@ bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out)
 	return true;
 }
 
-void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uint64_t now_ms)
+void chanwatch_decide(struct chanwatch *w, uint8_t home, uint8_t threshold_bucket,
+		      uint64_t now_ms)
 {
 	int h = index_of(w, home);
-	uint8_t from = threshold_bucket(weakest_dbm);
-	float home_n;
 	float home_share;
 	float best_n = 0.0f;
-	float best_harmful = 0.0f;
-	float best_share;
+	float best_share = 0.0f;
 	float limit;
 	float gap;
 	int best = -1;
@@ -130,29 +145,23 @@ void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	if (h < 0 || now_ms < w->hold_until_ms) {
 		return;
 	}
-	home_n = sum_from(w->weight[h], 0);
-	if (home_n <= 0.0f) {
-		return;
-	}
-	home_share = sum_from(w->weight[h], from) / home_n;
+	home_share = chanwatch_share(w, (size_t)h, threshold_bucket);
 	for (size_t i = 0; i < w->count; i++) {
-		float n = sum_from(w->weight[i], 0);
-		float k;
+		float share;
 
-		if ((int)i == h || n < CHANWATCH_MIN_SAMPLES) {
+		if ((int)i == h || !chanwatch_enough(w, i)) {
 			continue;
 		}
-		k = sum_from(w->weight[i], from);
-		if (best < 0 || k * best_n < best_harmful * n) {
+		share = chanwatch_share(w, i, threshold_bucket);
+		if (best < 0 || share < best_share) {
 			best = (int)i;
-			best_n = n;
-			best_harmful = k;
+			best_n = sum_from(w->weight[i], 0);
+			best_share = share;
 		}
 	}
 	if (best < 0) {
 		return;
 	}
-	best_share = best_harmful / best_n;
 	limit = home_share / 2.0f < home_share - 0.02f ? home_share / 2.0f : home_share - 0.02f;
 	gap = limit - best_share;
 	/*
@@ -166,8 +175,8 @@ void chanwatch_decide(struct chanwatch *w, uint8_t home, int8_t weakest_dbm, uin
 	chanwatch_hold(w, now_ms);
 	w->move = (struct chanwatch_move){
 		.to = w->channels[best],
-		.home_share = (uint16_t)(home_share * NOISE_SHARE_FULL + 0.5f),
-		.to_share = (uint16_t)(best_share * NOISE_SHARE_FULL + 0.5f),
+		.home_share = chanwatch_share_hundredths(home_share),
+		.to_share = chanwatch_share_hundredths(best_share),
 	};
 	w->move_waiting = true;
 }
