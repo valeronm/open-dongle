@@ -2,67 +2,45 @@
 
 ## [0.2.0] - 2026-11-16
 
-- One firmware runs the NuPhy Air75 V2 or a Logitech Unifying keyboard (tested with the MX Keys): `open-dongle protocol` switches between them, keeping each one's pairing.
-- A keyboard pairs only while pairing is open, after `open-dongle pair` or the dongle being plugged
-  in; a NuPhy dongle used to accept pairing whenever it had no link.
-- The history, events and noise map work in Unifying mode as well as NuPhy mode. A silence there is
-  logged but not counted as a link loss, because an idle MX Keys sleeps after a few minutes.
-- The dongle moves to a quieter channel on its own, judging noise at the keyboard's signal level,
-  and logs each move with the noise on both channels. A Unifying dongle moves only among the
-  pairing channels, the only ones the keyboard searches after a failed send; a NuPhy dongle moves
-  among the keyboard's three paired and seven fixed channels.
-- `open-dongle moves`, or `m` in the live view, shows the noise the dongle judges its moves by: each
-  watched channel's share of readings loud enough to count at the keyboard's signal, how those
-  readings spread over 10 dB steps, and how long until the next move may come. Unlike the noise
-  map it does not stop the keyboard.
-- The noise map marks the channels a move can reach: the live view dims the others, and
-  `open-dongle noise` labels them as move targets.
-- `open-dongle move`, or `[` and `]` in the live view, moves the link to one of the keyboard's
-  channels in either mode while a keyboard is paired and pairing is closed, for testing how the
-  keyboard follows and how the dongle moves away from noise. A NuPhy dongle does not move while
-  the PC is suspended.
-- A channel move, requested or for noise, waits until no key is held, since a release sent on the
-  channel just left reaches the host only once the keyboard finds the new one.
-- A paired NuPhy dongle that loses its keyboard waits on its channel while pairing is closed,
-  instead of spending every other 400 ms on pairing channel 2: the keyboard sweeps its channels
-  within milliseconds of a failed send.
-- The event that starts a silence records the minutes since the last key, and the event that ends it
-  records whether the keyboard woke.
-- The live view's `p` key switches the protocol after asking, which restarts the history, and `a`
-  opens pairing for 30 s.
-- The live view's status box has a row each for the link, the keyboard's channels (the current one
-  and the paired ones marked) and the dongle, colors the link state and signal, and names the
-  protocol in its title. The history panel charts channel changes per minute. In Unifying mode,
-  which counts no losses or gaps, the panel and `open-dongle history` leave them out.
-- In Unifying mode `open-dongle status` shows the name, serial and device type the keyboard
-  reported when it paired, and the live view's title names the keyboard. In NuPhy mode both show
-  the name the keyboard sends each time it connects, and `status` shows the keyboard's ID only once
-  a pairing has delivered it. A Unifying pairing event shows the device's type, and its name while
-  that device is the one paired.
-- An install script that installs the latest release.
-- The channels pairing offers can be set by hand, for interference too brief for the noise survey
-  to see.
+- One firmware runs either the NuPhy Air75 V2 or a Logitech Unifying keyboard such as the MX Keys.
+- `open-dongle protocol` switches between the two and keeps each one's pairing.
+- A keyboard pairs only while pairing is open, after `open-dongle pair` or plugging the dongle in.
+- A NuPhy dongle without a link no longer accepts pairing at any time.
+- The history, events and noise map work in Unifying mode too.
+- In Unifying mode a silence is logged but not counted as a link loss, since an idle MX Keys sleeps.
+- In Unifying mode the live view and `open-dongle history` leave out losses and gaps.
+- The dongle moves to a quieter channel on its own and logs the noise on both channels.
+- A Unifying dongle moves only among the pairing channels, the only ones its keyboard searches.
+- A NuPhy dongle moves among the keyboard's three paired and seven fixed channels.
+- `open-dongle moves`, or `m` in the live view, shows the noise behind those moves without stopping
+  the keyboard.
+- The noise map marks the channels a move can reach.
+- `open-dongle move`, or `[` and `]` in the live view, moves the link by hand for testing.
+- A NuPhy dongle does not move while the PC is suspended.
+- A channel move waits until no key is held, so no key release is lost on the old channel.
+- A paired NuPhy dongle that loses its keyboard stays on its channel instead of checking pairing
+  channel 2.
+- Silence events record the minutes since the last key and whether the keyboard woke.
+- In the live view, `p` switches the protocol after asking and `a` opens pairing for 30 s.
+- The live view's status box gives the link, the keyboard's channels and the dongle a row each.
+- The history panel charts channel changes per minute.
+- `open-dongle status` and the live view name the paired keyboard in both modes.
+- An install script installs the latest release.
+- The channels pairing offers can be set by hand, for interference too brief for the survey to see.
 - The tool names the errors the dongle reports.
-- Each minute of history records the home channel's noise, and each link loss or gap in the events
-  the noise on the channel the link was on, read between keyboard packets: the loudest reading and
-  the shares at or above -85 and -60 dBm.
-  The tool prints it, and the live view charts the loudest reading beside the signal and the share
-  at or above -85 dBm.
-- The live view labels its signal chart in dBm and wall-clock time, and draws link losses, gaps,
-  dropped packets and the noise share under it as bars that each carry their own scale, in one panel
-  that fits a 24-row terminal.
-- The live view shows why it lost the dongle or why a reply failed, and keeps its history through
-  a failed reply.
-- The live view's noise map fits its legend in 80 columns.
-- The diagnostic protocol is now 2, so the 0.1.0 tool reads only `flash` from new firmware.
+- The history and events record the noise on the link's channel, read between keyboard packets.
+- The live view charts that noise beside the signal.
+- The live view's signal chart is labeled in dBm and wall-clock time and fits a 24-row terminal.
+- The live view shows why it lost the dongle or why a reply failed.
+- The live view's noise map fits in 80 columns.
+- The diagnostic protocol is now 2, so the 0.1.0 tool can only `flash` new firmware.
 
 ## [0.1.0] - 2026-11-11
 
 First release.
 
-- Receiver for the NuPhy Air75 V2 in 2.4G mode on a Pro Micro nRF52840: keyboard, media and system
-  keys, with reports queued while USB is busy.
+- The dongle receives the NuPhy Air75 V2's keyboard, media and system keys in 2.4G mode.
+- It runs on a Pro Micro nRF52840 and queues reports while USB is busy.
 - Pairing measures the radio noise and gives the keyboard the three quietest channels.
-- `open-dongle`: a live view, status, per-minute history for the last day, recent events and a
-  radio noise map, and `flash`, which writes firmware to a running dongle, a board in its
-  bootloader, or a new board on its factory program.
+- `open-dongle` shows a live view, status, a day of per-minute history, events and a noise map.
+- `open-dongle flash` writes firmware to a running dongle, a board in its bootloader, or a new board.
