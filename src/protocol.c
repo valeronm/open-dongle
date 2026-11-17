@@ -18,3 +18,8 @@ bool protocol_from_arg(uint32_t arg, enum protocol *out)
 	*out = (enum protocol)arg;
 	return true;
 }
+
+bool protocol_has_esb(enum protocol p)
+{
+	return p != PROTOCOL_BLUETOOTH;
+}

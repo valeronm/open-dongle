@@ -245,7 +245,7 @@ static void scan(void)
 	size_t n;
 	int home;
 
-	if (now - last_scan_ms < SCAN_PERIOD_MS) {
+	if (!protocol_has_esb(active) || now - last_scan_ms < SCAN_PERIOD_MS) {
 		return;
 	}
 	last_scan_ms = now;
@@ -356,6 +356,9 @@ int core_set_channel(uint8_t channel)
 {
 	int err;
 
+	if (!protocol_has_esb(active)) {
+		return -ENOTSUP;
+	}
 	take_noise();
 	err = radio_set_channel(channel);
 	if (err == 0) {
@@ -369,6 +372,9 @@ const struct chan_survey *core_survey(void)
 {
 	static struct chan_survey survey;
 
+	if (!protocol_has_esb(active)) {
+		return NULL;
+	}
 	take_noise();
 	core_watchdog_feed();
 	if (radio_survey(&survey) != 0) {

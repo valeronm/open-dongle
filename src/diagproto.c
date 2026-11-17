@@ -17,7 +17,7 @@ bool diag_command_answered(uint8_t command, enum protocol active)
 	case DIAG_NOISE:
 	case DIAG_MOVE:
 	case DIAG_WATCH:
-		return active != PROTOCOL_BLUETOOTH;
+		return protocol_has_esb(active);
 	case DIAG_KEYBOARDS:
 	case DIAG_FORGET:
 		return active == PROTOCOL_BLUETOOTH;

@@ -35,11 +35,19 @@ static void test_an_arg_names_a_protocol_or_none(void)
 	CHECK(!protocol_from_arg(0x101, &p));
 }
 
+static void test_only_the_2g4_protocols_run_esb(void)
+{
+	CHECK(protocol_has_esb(PROTOCOL_NUPHY));
+	CHECK(protocol_has_esb(PROTOCOL_UNIFYING));
+	CHECK(!protocol_has_esb(PROTOCOL_BLUETOOTH));
+}
+
 int main(void)
 {
 	RUN(test_a_stored_protocol_is_used);
 	RUN(test_nothing_stored_runs_nuphy);
 	RUN(test_an_unknown_stored_value_runs_nuphy);
 	RUN(test_an_arg_names_a_protocol_or_none);
+	RUN(test_only_the_2g4_protocols_run_esb);
 	return TEST_EXIT();
 }
