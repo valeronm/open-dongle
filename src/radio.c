@@ -2,6 +2,8 @@
 #include <zephyr/kernel.h>
 #include <esb.h>
 #include <hal/nrf_radio.h>
+#include <mpsl/mpsl_lib.h>
+#include "multithreading_lock.h"
 #include "radio.h"
 
 #define SURVEY_ROUND_GAP_MS 35
@@ -16,6 +18,7 @@ static volatile bool listening;
 static volatile uint32_t listen_generation;
 static volatile uint32_t payloads_seen;
 static atomic_t replies_taken;
+static bool mpsl_down;
 
 static void on_esb_event(const struct esb_evt *evt)
 {
@@ -127,6 +130,20 @@ int radio_start(const struct radio_config *c, radio_rx_cb cb)
 	config.tx_output_power = 8;
 	config.payload_length = RADIO_MAX_PAYLOAD;
 	config.selective_auto_ack = false;
+
+	if (!mpsl_down) {
+		err = MULTITHREADING_LOCK_ACQUIRE();
+		if (err) {
+			return err;
+		}
+		/* MPSL reserves the radio, its interrupt and ECB while it is initialized. */
+		err = mpsl_lib_uninit();
+		MULTITHREADING_LOCK_RELEASE();
+		if (err) {
+			return err;
+		}
+		mpsl_down = true;
+	}
 
 	err = esb_init(&config);
 	if (!err) {

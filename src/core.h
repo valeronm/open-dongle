@@ -92,12 +92,12 @@ const struct chan_survey *core_survey(void);
 /* Sets the fields every protocol reports and zeroes the rest; loop.fill_status adds the
  * protocol's own. */
 void core_fill_status(struct diag_status *st);
-/* Answers status, protocol, reboot, bootloader, history, events, clear and noise requests, and
- * requests for the other protocol's commands, itself; returns true with the next request it does
- * not answer. */
+/* Answers the requests every loop shares and refuses those the running protocol lacks; returns
+ * true with the next request the loop must answer. */
 bool core_take_request(struct diag_request *out);
 
 FUNC_NORETURN void nuphy_run(int store_err);
 FUNC_NORETURN void unifying_run(int store_err);
+FUNC_NORETURN void bluetooth_run(int store_err);
 
 #endif

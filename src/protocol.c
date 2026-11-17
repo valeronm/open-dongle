@@ -2,7 +2,7 @@
 
 static bool known(uint32_t v)
 {
-	return v == PROTOCOL_NUPHY || v == PROTOCOL_UNIFYING;
+	return v == PROTOCOL_NUPHY || v == PROTOCOL_UNIFYING || v == PROTOCOL_BLUETOOTH;
 }
 
 enum protocol protocol_from_stored(bool loaded, uint8_t value)

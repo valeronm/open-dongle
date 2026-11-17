@@ -356,22 +356,27 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 	CHECK(!diag_channels_arg(0, channels));
 }
 
-static void test_a_command_belongs_to_one_protocol_or_to_all(void)
+static void test_a_protocol_answers_only_its_commands(void)
 {
-	CHECK_EQ(diag_command_protocol(DIAG_HISTORY), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_EVENTS), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_NOISE), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_FORCE_CHANNELS), PROTOCOL_NUPHY);
-	CHECK_EQ(diag_command_protocol(DIAG_PAIR), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_STATUS), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_REBOOT), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_BOOTLOADER), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_CLEAR), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_PROTOCOL), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_MOVE), 0);
-	CHECK_EQ(diag_command_protocol(DIAG_WATCH), 0);
-	CHECK_EQ(diag_command_protocol(0), 0);
-	CHECK_EQ(diag_command_protocol(200), 0);
+	static const uint8_t everywhere[] = {
+		DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_REBOOT, DIAG_BOOTLOADER,
+		DIAG_CLEAR,  DIAG_PROTOCOL, 0, 200,
+	};
+	static const uint8_t not_bluetooth[] = {DIAG_NOISE, DIAG_MOVE, DIAG_WATCH, DIAG_PAIR};
+
+	for (size_t i = 0; i < sizeof(everywhere); i++) {
+		CHECK(diag_command_answered(everywhere[i], PROTOCOL_NUPHY));
+		CHECK(diag_command_answered(everywhere[i], PROTOCOL_UNIFYING));
+		CHECK(diag_command_answered(everywhere[i], PROTOCOL_BLUETOOTH));
+	}
+	for (size_t i = 0; i < sizeof(not_bluetooth); i++) {
+		CHECK(diag_command_answered(not_bluetooth[i], PROTOCOL_NUPHY));
+		CHECK(diag_command_answered(not_bluetooth[i], PROTOCOL_UNIFYING));
+		CHECK(!diag_command_answered(not_bluetooth[i], PROTOCOL_BLUETOOTH));
+	}
+	CHECK(diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_NUPHY));
+	CHECK(!diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_UNIFYING));
+	CHECK(!diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_BLUETOOTH));
 }
 
 int main(void)
@@ -397,6 +402,6 @@ int main(void)
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);
-	RUN(test_a_command_belongs_to_one_protocol_or_to_all);
+	RUN(test_a_protocol_answers_only_its_commands);
 	return TEST_EXIT();
 }

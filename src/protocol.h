@@ -7,6 +7,7 @@
 enum protocol {
 	PROTOCOL_NUPHY = 1,
 	PROTOCOL_UNIFYING = 2,
+	PROTOCOL_BLUETOOTH = 3,
 };
 
 /* A dongle that never chose, or holds a value this firmware does not know, runs NuPhy. */

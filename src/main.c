@@ -21,6 +21,9 @@ int main(void)
 	}
 	active = protocol_from_stored(loaded, stored);
 	core_start(active, reset_cause);
+	if (active == PROTOCOL_BLUETOOTH) {
+		bluetooth_run(store_err);
+	}
 	if (active == PROTOCOL_UNIFYING) {
 		unifying_run(store_err);
 	}

@@ -5,6 +5,11 @@
   `src/chanwatch.*` and `src/chanmove.h` include only the C standard library and each other.
   Their tests build them with the host compiler, where no Zephyr, nrfx or ESB header exists.
 - Radio, USB, flash and the clock reach those modules only through `src/core.c`,
-  `src/nuphy_main.c`, `src/unifying_main.c`, `src/main.c`, `src/diag.c` and `src/store.c`.
+  `src/nuphy_main.c`, `src/unifying_main.c`, `src/bluetooth_main.c`, `src/main.c`, `src/diag.c`
+  and `src/store.c`.
 - `src/radio.c` is the only file that uses the ESB library, and `src/radio.h` must not change if
   it is replaced by a receiver that checks the NuPhy checksum before acknowledging.
+- `src/ble.c` is the only file that uses the Bluetooth stack, and one radio stack starts per boot:
+  `src/bluetooth_main.c` starts Bluetooth and never starts ESB, and `src/nuphy_main.c` and
+  `src/unifying_main.c` start ESB through `src/radio.c`, which first shuts down the Bluetooth
+  controller's radio layer.

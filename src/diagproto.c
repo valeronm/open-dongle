@@ -9,13 +9,18 @@ static uint8_t *put_le(uint8_t *p, uint64_t v, size_t bytes)
 	return p;
 }
 
-uint8_t diag_command_protocol(uint8_t command)
+bool diag_command_answered(uint8_t command, enum protocol active)
 {
 	switch (command) {
 	case DIAG_FORCE_CHANNELS:
-		return PROTOCOL_NUPHY;
+		return active == PROTOCOL_NUPHY;
+	case DIAG_NOISE:
+	case DIAG_MOVE:
+	case DIAG_WATCH:
+	case DIAG_PAIR:
+		return active != PROTOCOL_BLUETOOTH;
 	default:
-		return 0;
+		return true;
 	}
 }
 

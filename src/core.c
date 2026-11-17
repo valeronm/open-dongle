@@ -599,9 +599,7 @@ bool core_take_request(struct diag_request *out)
 	static uint8_t payload[DIAG_PAYLOAD_MAX];
 
 	while (diag_take_request(out)) {
-		uint8_t owner = diag_command_protocol(out->command);
-
-		if (owner != 0 && owner != active) {
+		if (!diag_command_answered(out->command, active)) {
 			diag_reply_error(out, DIAG_ERR_WRONG_PROTOCOL, active);
 			continue;
 		}
