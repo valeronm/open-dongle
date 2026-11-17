@@ -2,6 +2,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
@@ -508,6 +509,37 @@ int ble_set_leds(uint8_t report_id, uint8_t leds)
 	}
 	/* The library refuses a write without a completion callback. */
 	return bt_hogp_rep_write_wo_rsp(&hogp, rep, &leds, sizeof(leds), on_leds_written);
+}
+
+int ble_rssi(int8_t *dbm)
+{
+	struct bt_hci_cp_read_rssi *cp;
+	struct net_buf *buf;
+	struct net_buf *rsp;
+	uint16_t handle;
+	int8_t rssi;
+	int err;
+
+	if (!keyboard || bt_hci_get_conn_handle(keyboard, &handle)) {
+		return -ENOTCONN;
+	}
+	buf = bt_hci_cmd_alloc(K_MSEC(10));
+	if (!buf) {
+		return -ENOBUFS;
+	}
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->handle = sys_cpu_to_le16(handle);
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_READ_RSSI, buf, &rsp);
+	if (err) {
+		return err;
+	}
+	rssi = ((struct bt_hci_rp_read_rssi *)rsp->data)->rssi;
+	net_buf_unref(rsp);
+	if (rssi == BT_HCI_LE_RSSI_NOT_AVAILABLE) {
+		return -ENODATA;
+	}
+	*dbm = rssi;
+	return 0;
 }
 
 const char *ble_stage_name(enum ble_stage stage)

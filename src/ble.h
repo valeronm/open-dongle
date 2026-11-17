@@ -82,6 +82,9 @@ void ble_disconnect(void);
 /* Writes the lock LEDs to the keyboard's output report with this ID; fails until the keyboard's
  * reports are discovered and while an earlier write is still being sent. */
 int ble_set_leds(uint8_t report_id, uint8_t leds);
+/* Reads the connected keyboard's signal from the controller; fails with -ENOTCONN without a
+ * keyboard and -ENODATA when the controller has no reading yet. */
+int ble_rssi(int8_t *dbm);
 const char *ble_stage_name(enum ble_stage stage);
 
 #endif

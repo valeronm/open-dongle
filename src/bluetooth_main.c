@@ -15,6 +15,7 @@
 #include "store.h"
 
 #define TICK_MS 10
+#define RSSI_PERIOD_MS 1000
 
 static int no_home(void)
 {
@@ -40,6 +41,9 @@ static struct pairwin window;
 static char name[BLE_NAME_MAX + 1];
 static int start_err;
 static bool passkey_asked;
+static bool rssi_read;
+static int8_t rssi;
+static uint32_t rssi_tried_ms;
 
 static void fill_status(struct diag_status *st)
 {
@@ -47,6 +51,9 @@ static void fill_status(struct diag_status *st)
 			 : btpolicy_is_ready(&policy)	? LINK_CONNECTED
 							: LINK_NO_KEYBOARD;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
+	if (rssi_read) {
+		st->last_rssi = rssi;
+	}
 	if (btpolicy_is_ready(&policy)) {
 		strncpy((char *)st->keyboard_name, name, sizeof(st->keyboard_name));
 	}
@@ -216,6 +223,7 @@ static void on_disconnected(uint8_t reason)
 	}
 	btpolicy_disconnected(&policy, k_uptime_get_32(), reason == BLE_REASON_NOT_ESTABLISHED);
 	hidkeys_reset(&keys);
+	rssi_read = false;
 }
 
 static void on_report(const struct ble_event *ev)
@@ -347,6 +355,21 @@ static void on_request(const struct diag_request *req)
 	}
 }
 
+static void read_rssi(uint32_t now)
+{
+	int8_t dbm;
+
+	if (!btpolicy_is_ready(&policy) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
+		return;
+	}
+	rssi_tried_ms = now;
+	if (ble_rssi(&dbm) == 0) {
+		rssi = dbm;
+		rssi_read = true;
+		core_rssi(dbm);
+	}
+}
+
 static enum indicator_mode indicator(uint32_t now)
 {
 	if (start_err) {
@@ -400,6 +423,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 			passkey_asked = false;
 			ble_offer_passkey(false, 0);
 		}
+		read_rssi(now);
 		btpolicy_window(&policy, pairwin_is_open(&window, now), passkey_asked);
 		if (start_err == 0) {
 			int err = ble_scan(btpolicy_scanning(&policy));
