@@ -6,6 +6,10 @@
 
 #define REPORTS_QUEUE_LEN 64
 #define REPORT_KEYBOARD_LEN 8
+/* The usages the USB report descriptors declare. */
+#define REPORT_CONSUMER_MAX 0x2a0
+#define REPORT_SYSTEM_MIN 0x81
+#define REPORT_SYSTEM_MAX 0x83
 
 enum report_kind {
 	REPORT_KEYBOARD,

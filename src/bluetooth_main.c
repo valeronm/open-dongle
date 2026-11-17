@@ -3,6 +3,8 @@
 #include "ble.h"
 #include "core.h"
 #include "diag.h"
+#include "hidkeys.h"
+#include "hidmap.h"
 #include "indicator.h"
 
 #define TICK_MS 10
@@ -46,41 +48,101 @@ static const struct core_loop loop = {
 	.move = no_move,
 };
 
-static void print_hex(const uint8_t *data, size_t len)
+static uint8_t map_bytes[BLE_MAP_MAX];
+static struct hidmap map;
+static struct hidkeys keys;
+static bool ready;
+
+static const char *map_fault(enum hidmap_result result)
 {
-	for (size_t i = 0; i < len; i++) {
-		printk("%02x%s", data[i], i % 32 == 31 ? "\n" : "");
+	switch (result) {
+	case HIDMAP_MALFORMED:
+		return "malformed";
+	case HIDMAP_TOO_LARGE:
+		return "too large";
+	case HIDMAP_NO_KEYBOARD:
+		return "without a keyboard";
+	case HIDMAP_OK:
+		break;
 	}
-	if (len % 32 != 0 || len == 0) {
-		printk("\n");
+	return "usable";
+}
+
+static void send_leds(uint8_t leds)
+{
+	int err;
+
+	if (!ready || !map.has_leds) {
+		return;
+	}
+	err = ble_set_leds(map.led_report_id, leds);
+	if (err) {
+		printk("bluetooth leds not sent: %d\n", err);
 	}
 }
 
-static void print_event(const struct ble_event *ev)
+static void on_map_read(void)
 {
-	const uint8_t *map;
-	size_t len;
+	char name[BLE_NAME_MAX + 1];
+	size_t len = ble_copy_map(map_bytes, sizeof(map_bytes));
+	enum hidmap_result result = hidmap_parse(map_bytes, len, &map);
+	uint8_t leds;
 
+	ble_copy_name(name);
+	if (result != HIDMAP_OK) {
+		printk("bluetooth keyboard \"%s\" refused: report map %s\n", name,
+		       map_fault(result));
+		ble_disconnect();
+		return;
+	}
+	printk("bluetooth keyboard \"%s\" ready\n", name);
+	ready = true;
+	core_take_leds(&leds);
+	send_leds(leds);
+}
+
+static void on_disconnected(void)
+{
+	if (ready) {
+		core_release_keys();
+	}
+	ready = false;
+	hidkeys_reset(&keys);
+}
+
+static void on_report(const struct ble_event *ev)
+{
+	struct report out[REPORT_KINDS];
+	size_t n;
+
+	if (!ready) {
+		return;
+	}
+	n = hidkeys_translate(&keys, &map, ev->report.id, ev->report.data, ev->report.len, out);
+	for (size_t i = 0; i < n; i++) {
+		core_submit(&out[i]);
+	}
+}
+
+static void on_event(const struct ble_event *ev)
+{
 	switch (ev->type) {
 	case BLE_CONNECTED:
 		printk("bluetooth connected: %s\n", ev->address);
 		break;
 	case BLE_DISCONNECTED:
 		printk("bluetooth disconnected: reason 0x%02x\n", ev->reason);
+		on_disconnected();
 		break;
 	case BLE_FAILED:
 		printk("bluetooth %s failed: %d\n", ble_stage_name(ev->failed.stage),
 		       ev->failed.error);
 		break;
 	case BLE_MAP_READ:
-		len = ble_report_map(&map);
-		printk("bluetooth keyboard \"%s\", report map %u bytes:\n", ble_name(),
-		       (unsigned int)len);
-		print_hex(map, len);
+		on_map_read();
 		break;
 	case BLE_REPORT:
-		printk("bluetooth report %u: ", ev->report.id);
-		print_hex(ev->report.data, ev->report.len);
+		on_report(ev);
 		break;
 	}
 }
@@ -101,6 +163,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 	for (;;) {
 		struct diag_request req;
 		struct ble_event ev;
+		uint8_t leds;
 
 		k_msleep(TICK_MS);
 		core_poll();
@@ -108,9 +171,12 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 			diag_reply_error(&req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		}
 		while (ble_take_event(&ev)) {
-			print_event(&ev);
+			on_event(&ev);
 		}
-		core_show_state(err ? IND_ERROR : IND_IDLE);
+		if (core_take_leds(&leds)) {
+			send_leds(leds);
+		}
+		core_show_state(err ? IND_ERROR : ready ? IND_CONNECTED : IND_IDLE);
 		core_watchdog_feed();
 	}
 }

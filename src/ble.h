@@ -53,10 +53,14 @@ struct ble_event {
  * once the first has run. */
 int ble_start(void);
 bool ble_take_event(struct ble_event *ev);
-/* Valid from BLE_MAP_READ until the next BLE_CONNECTED. */
-size_t ble_report_map(const uint8_t **map);
-/* The connected keyboard's name, empty if it gave none; valid as the report map is. */
-const char *ble_name(void);
+/* Copies the report map read at this connection and returns its length, 0 before BLE_MAP_READ. */
+size_t ble_copy_map(uint8_t *out, size_t cap);
+/* The connected keyboard's name, empty if it gave none. */
+void ble_copy_name(char out[BLE_NAME_MAX + 1]);
+void ble_disconnect(void);
+/* Writes the lock LEDs to the keyboard's output report with this ID; fails until the keyboard's
+ * reports are discovered and while an earlier write is still being sent. */
+int ble_set_leds(uint8_t report_id, uint8_t leds);
 const char *ble_stage_name(enum ble_stage stage);
 
 #endif

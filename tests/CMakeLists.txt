@@ -26,3 +26,9 @@ suite(history ../src/history.c ../src/noise.c)
 suite(unifying ../src/unifying.c ../src/pairwin.c)
 suite(protocol ../src/protocol.c)
 suite(pairwin ../src/pairwin.c)
+suite(hidmap ../src/hidmap.c)
+target_compile_definitions(test_hidmap PRIVATE
+  FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+suite(hidkeys ../src/hidkeys.c ../src/hidmap.c)
+target_compile_definitions(test_hidkeys PRIVATE
+  FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

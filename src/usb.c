@@ -70,9 +70,9 @@ static const uint8_t extra_desc[] = {
 	HID_COLLECTION(HID_COLLECTION_APPLICATION),
 	HID_REPORT_ID(EXTRA_ID_CONSUMER),
 	HID_LOGICAL_MIN8(0x01),
-	HID_LOGICAL_MAX16(0xa0, 0x02),
+	HID_LOGICAL_MAX16(REPORT_CONSUMER_MAX & 0xff, REPORT_CONSUMER_MAX >> 8),
 	HID_USAGE_MIN8(0x01),
-	HID_USAGE_MAX16(0xa0, 0x02),
+	HID_USAGE_MAX16(REPORT_CONSUMER_MAX & 0xff, REPORT_CONSUMER_MAX >> 8),
 	HID_REPORT_SIZE(16),
 	HID_REPORT_COUNT(1),
 	HID_INPUT(0x00),
@@ -85,10 +85,10 @@ static const uint8_t extra_desc[] = {
 	 * Generic Desktop usages outside power, sleep and wake include joystick and D-pad ones, which
 	 * make a host treat the interface as a joystick.
 	 */
-	HID_LOGICAL_MIN16(0x81, 0x00), /* One-byte 0x81 and 0x83 would be negative. */
-	HID_LOGICAL_MAX16(0x83, 0x00),
-	HID_USAGE_MIN8(0x81),
-	HID_USAGE_MAX8(0x83),
+	HID_LOGICAL_MIN16(REPORT_SYSTEM_MIN, 0x00), /* One-byte 0x81 and 0x83 would be negative. */
+	HID_LOGICAL_MAX16(REPORT_SYSTEM_MAX, 0x00),
+	HID_USAGE_MIN8(REPORT_SYSTEM_MIN),
+	HID_USAGE_MAX8(REPORT_SYSTEM_MAX),
 	HID_REPORT_SIZE(16),
 	HID_REPORT_COUNT(1),
 	HID_INPUT(0x00),

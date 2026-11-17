@@ -39,9 +39,7 @@ static void emit_failed(enum ble_stage stage, int error)
 static void fail(enum ble_stage stage, int error)
 {
 	emit_failed(stage, error);
-	if (keyboard) {
-		bt_conn_disconnect(keyboard, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-	}
+	ble_disconnect();
 }
 
 static uint8_t on_report(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err,
@@ -342,15 +340,51 @@ bool ble_take_event(struct ble_event *ev)
 	return k_msgq_get(&ble_events, ev, K_NO_WAIT) == 0;
 }
 
-size_t ble_report_map(const uint8_t **out)
+size_t ble_copy_map(uint8_t *out, size_t cap)
 {
-	*out = map;
-	return map_len;
+	size_t len;
+
+	k_sched_lock();
+	len = MIN(map_len, cap);
+	memcpy(out, map, len);
+	k_sched_unlock();
+	return len;
 }
 
-const char *ble_name(void)
+void ble_copy_name(char out[BLE_NAME_MAX + 1])
 {
-	return name;
+	k_sched_lock();
+	memcpy(out, name, sizeof(name));
+	k_sched_unlock();
+}
+
+void ble_disconnect(void)
+{
+	if (keyboard) {
+		bt_conn_disconnect(keyboard, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+	}
+}
+
+static void on_leds_written(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err)
+{
+	ARG_UNUSED(h);
+	ARG_UNUSED(rep);
+	ARG_UNUSED(err);
+}
+
+int ble_set_leds(uint8_t report_id, uint8_t leds)
+{
+	struct bt_hogp_rep_info *rep;
+
+	if (!bt_hogp_ready_check(&hogp)) {
+		return -ENOTCONN;
+	}
+	rep = bt_hogp_rep_find(&hogp, BT_HIDS_REPORT_TYPE_OUTPUT, report_id);
+	if (!rep) {
+		return -ENOENT;
+	}
+	/* The library refuses a write without a completion callback. */
+	return bt_hogp_rep_write_wo_rsp(&hogp, rep, &leds, sizeof(leds), on_leds_written);
 }
 
 const char *ble_stage_name(enum ble_stage stage)

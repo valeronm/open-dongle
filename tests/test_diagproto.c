@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "fixture.h"
 #include "test.h"
 #include "chanpick.h"
 #include "chanwatch.h"
@@ -7,27 +8,6 @@
 #include "link.h"
 #include "protocol.h"
 #include "unifying.h"
-
-static size_t load_fixture(const char *name, uint8_t *out, size_t max)
-{
-	char path[512];
-	unsigned int byte;
-	size_t n = 0;
-	FILE *f;
-
-	snprintf(path, sizeof(path), "%s/%s", FIXTURES_DIR, name);
-	f = fopen(path, "r");
-	if (f == NULL) {
-		printf("cannot open %s\n", path);
-		test_failures++;
-		return 0;
-	}
-	while (n < max && fscanf(f, "%2x", &byte) == 1) {
-		out[n++] = byte;
-	}
-	fclose(f);
-	return n;
-}
 
 static void test_request_carries_command_seq_and_arg(void)
 {
