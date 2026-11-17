@@ -83,6 +83,15 @@ enum Cmd {
         #[arg(long)]
         no_passkey: bool,
     },
+    /// List the Bluetooth keyboards the dongle stores, the most recently connected first
+    Keyboards,
+    /// Remove a stored Bluetooth keyboard, by its number in `keyboards`
+    Forget {
+        /// The keyboard's number in the list `keyboards` prints
+        place: usize,
+        #[command(flatten)]
+        confirm: Confirm,
+    },
     /// Move the link to one of the keyboard's channels until the dongle moves it again or reboots
     Move {
         /// One of the keyboard's channels
@@ -141,6 +150,10 @@ fn main() -> Result<()> {
             let (mut dev, s) = device::open(serial)?;
             println!("{}", cli::pair(&mut dev, s.protocol(), no_passkey)?);
             Ok(())
+        }
+        Cmd::Keyboards => cli::keyboards(&mut device::open(serial)?.0),
+        Cmd::Forget { place, confirm } => {
+            cli::forget(&mut device::open(serial)?.0, place, confirm.yes)
         }
         Cmd::Move { channel } => {
             let (mut dev, s) = device::open(serial)?;

@@ -18,6 +18,9 @@ bool diag_command_answered(uint8_t command, enum protocol active)
 	case DIAG_MOVE:
 	case DIAG_WATCH:
 		return active != PROTOCOL_BLUETOOTH;
+	case DIAG_KEYBOARDS:
+	case DIAG_FORGET:
+		return active == PROTOCOL_BLUETOOTH;
 	default:
 		return true;
 	}
@@ -28,9 +31,12 @@ bool diag_parse_request(const uint8_t *buf, size_t len, struct diag_request *out
 	if (len < DIAG_REQUEST_LEN) {
 		return false;
 	}
+	*out = (struct diag_request){0};
 	out->command = buf[0];
 	out->seq = buf[1];
 	out->arg = buf[2] | buf[3] << 8 | buf[4] << 16 | (uint32_t)buf[5] << 24;
+	len -= DIAG_REQUEST_LEN;
+	memcpy(out->data, &buf[DIAG_REQUEST_LEN], len < sizeof(out->data) ? len : sizeof(out->data));
 	return true;
 }
 
@@ -208,4 +214,27 @@ size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 		}
 	}
 	return p - out;
+}
+
+_Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored keyboard's name is sent whole");
+
+size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l, const uint8_t *connected)
+{
+	uint8_t *p = out;
+
+	*p++ = l->count;
+	for (uint8_t i = 0; i < l->count; i++) {
+		const struct btlist_entry *e = &l->entries[i];
+		uint8_t flags = e->no_passkey ? DIAG_KEYBOARD_NO_PASSKEY : 0;
+
+		if (connected && memcmp(e->addr, connected, sizeof(e->addr)) == 0) {
+			flags |= DIAG_KEYBOARD_CONNECTED;
+		}
+		memcpy(p, e->addr, sizeof(e->addr));
+		p += sizeof(e->addr);
+		*p++ = flags;
+		memcpy(p, e->name, sizeof(e->name));
+		p += sizeof(e->name);
+	}
+	return (size_t)(p - out);
 }

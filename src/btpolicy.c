@@ -48,6 +48,11 @@ void btpolicy_connected(struct btpolicy *p)
 	p->state = BTPOLICY_CONNECTED;
 }
 
+const uint8_t *btpolicy_peer(const struct btpolicy *p)
+{
+	return p->state == BTPOLICY_IDLE ? NULL : p->peer;
+}
+
 static void refuse_peer(struct btpolicy *p)
 {
 	if (!refused(p, p->peer) && p->refused_count < BTPOLICY_STORED_MAX) {

@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
     Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
-    Reader, Status, VersionMismatch, Watch, channels_arg, decode_events, decode_minutes,
-    decode_noise, decode_watch, parse_part, read_status, request,
+    Reader, Status, StoredKeyboard, VersionMismatch, Watch, channels_arg, decode_events,
+    decode_minutes, decode_noise, decode_watch, parse_part, read_keyboards, read_status, request,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -79,9 +79,19 @@ impl<T: Transport> Device<T> {
 
     /// Sends one request and returns the joined payload of its reply, padding included.
     pub fn call(&mut self, command: Command, arg: u32, timeout: Duration) -> Result<Vec<u8>> {
+        self.call_with(command, arg, &[], timeout)
+    }
+
+    fn call_with(
+        &mut self,
+        command: Command,
+        arg: u32,
+        data: &[u8],
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
         self.seq = self.seq.wrapping_add(1);
         let seq = self.seq;
-        self.transport.write(&request(command, seq, arg))?;
+        self.transport.write(&request(command, seq, arg, data))?;
         let deadline = Instant::now() + timeout;
         let mut payload = Vec::new();
         let mut received: Vec<bool> = Vec::new();
@@ -186,6 +196,15 @@ impl<T: Transport> Device<T> {
         let mut r = Reader::new(&reply);
         let running = Protocol::read(&mut r)?;
         Ok((running, r.u8()? != 0))
+    }
+
+    pub fn keyboards(&mut self) -> Result<Vec<StoredKeyboard>> {
+        read_keyboards(&self.call(Command::Keyboards, 0, TIMEOUT)?)
+    }
+
+    pub fn forget(&mut self, keyboard: &StoredKeyboard) -> Result<()> {
+        self.call_with(Command::Forget, 0, &keyboard.addr, TIMEOUT)
+            .map(drop)
     }
 
     pub fn noise(&mut self) -> Result<Vec<NoiseChannel>> {

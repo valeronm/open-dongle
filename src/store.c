@@ -7,6 +7,7 @@
 #define FORCED_KEY "dongle/forced"
 #define UNIFYING_KEY "dongle/unifying"
 #define PROTOCOL_KEY "dongle/protocol"
+#define BLUETOOTH_KEY "dongle/bluetooth"
 
 static bool load_exact(const char *key, void *out, size_t len)
 {
@@ -66,4 +67,14 @@ bool store_load_protocol(uint8_t *out)
 int store_save_protocol(uint8_t value)
 {
 	return settings_save_one(PROTOCOL_KEY, &value, 1);
+}
+
+bool store_load_bluetooth(void *out, size_t len)
+{
+	return load_exact(BLUETOOTH_KEY, out, len);
+}
+
+int store_save_bluetooth(const void *in, size_t len)
+{
+	return settings_save_one(BLUETOOTH_KEY, in, len);
 }

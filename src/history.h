@@ -35,7 +35,17 @@ enum history_event_type {
 	HISTORY_NOISE, HISTORY_USB_SUSPEND, HISTORY_USB_RESUME,
 	HISTORY_CLEAR, HISTORY_LINK_UP, HISTORY_LINK_MOVED, HISTORY_LINK_GAP,
 	HISTORY_UNIFYING_PAIRED, HISTORY_PAIRING_OPENED, HISTORY_PAIRING_CLOSED,
-	HISTORY_PAIRING_TIMEOUT, HISTORY_RECONNECT, HISTORY_ATTACK
+	HISTORY_PAIRING_TIMEOUT, HISTORY_RECONNECT, HISTORY_ATTACK,
+	HISTORY_BT_CONNECTED, HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
+	HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST
+};
+
+#define HISTORY_ADDR_LEN 7
+
+/* Byte a of HISTORY_BT_REFUSED. */
+enum history_bt_refused {
+	HISTORY_REFUSED_BY_KEYBOARD,
+	HISTORY_REFUSED_NO_PASSKEY,
 };
 
 /* Byte c of HISTORY_LINK_UP. */
@@ -97,6 +107,12 @@ void history_event(struct history *h, const struct history_event *e);
 
 /* Readings off the home channel count toward a gap or loss but not toward the minute. */
 void history_noise(struct history *h, const struct noise_tally *t, bool home);
+
+/* addr is the address type, then the six address bytes, least significant first; the event leaves
+ * out the type and holds the bytes in a, b and value, most significant first. c is 1 for a
+ * HISTORY_BT_PAIRED with a passkey. */
+struct history_event history_keyboard_event(uint8_t type, const uint8_t addr[HISTORY_ADDR_LEN],
+					    uint8_t c);
 
 /* Copies up to max held records from index from, or from the oldest held if that is later. */
 size_t history_minutes(const struct history *h, uint32_t from, uint32_t *first,

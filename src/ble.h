@@ -66,7 +66,10 @@ int ble_connect(const uint8_t addr[BTPOLICY_ADDR_LEN]);
 /* While on, a keyboard able to take a passkey is asked for this six-digit one as it pairs. */
 int ble_offer_passkey(bool on, uint32_t value);
 uint8_t ble_stored_count(void);
-int ble_forget_connected(void);
+/* Copies up to cap bonded addresses and returns how many bonds there are. */
+uint8_t ble_stored(uint8_t addrs[][BTPOLICY_ADDR_LEN], uint8_t cap);
+/* Deletes the keyboard's bond, disconnecting it first if it is connected. */
+int ble_forget(const uint8_t addr[BTPOLICY_ADDR_LEN]);
 bool ble_take_event(struct ble_event *ev);
 /* Copies the report map read at this connection and returns its length, 0 before BLE_MAP_READ. */
 size_t ble_copy_map(uint8_t *out, size_t cap);

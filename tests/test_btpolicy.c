@@ -85,7 +85,9 @@ static void nothing_is_wanted_while_connecting_or_connected(void)
 
 	btpolicy_init(&policy);
 	CHECK(btpolicy_scanning(&policy));
+	CHECK(btpolicy_peer(&policy) == NULL);
 	btpolicy_connecting(&policy, &first);
+	CHECK_MEM(btpolicy_peer(&policy), first.addr, BTPOLICY_ADDR_LEN);
 	CHECK(!btpolicy_scanning(&policy));
 	CHECK(!btpolicy_wants(&policy, &second, true, 2, 0));
 	btpolicy_connected(&policy);

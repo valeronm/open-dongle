@@ -68,6 +68,8 @@ bool btpolicy_wants(const struct btpolicy *p, const struct btpolicy_advert *a, b
 		    uint8_t stored_count, uint32_t now_ms);
 void btpolicy_connecting(struct btpolicy *p, const struct btpolicy_advert *a);
 void btpolicy_connected(struct btpolicy *p);
+/* The keyboard being connected to or connected, or NULL. */
+const uint8_t *btpolicy_peer(const struct btpolicy *p);
 /* A keyboard that paired without the passkey its window demands is to be forgotten; it is not
  * wanted again until the window closes. */
 enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, bool passkey_used);

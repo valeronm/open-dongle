@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "btlist.h"
 #include "chanpick.h"
 #include "chanwatch.h"
 #include "history.h"
@@ -16,15 +17,20 @@
 #define DIAG_HEADER_LEN 4
 #define DIAG_CHUNK (DIAG_REPORT_LEN - DIAG_HEADER_LEN)
 #define DIAG_REQUEST_LEN 6
+#define DIAG_REQUEST_DATA_LEN 7
 #define DIAG_ERROR_FLAG 0x80
 #define DIAG_PAYLOAD_MAX 704
 #define DIAG_MINUTES_PER_PAGE 40
 #define DIAG_EVENTS_PER_PAGE 32
 #define DIAG_NAME_MAX 24
+#define DIAG_KEYBOARD_CONNECTED 0x01
+#define DIAG_KEYBOARD_NO_PASSKEY 0x02
 /* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */
 #define DIAG_PAIR_NO_PASSKEY 1
 /* The reply under Bluetooth: 1 if a passkey is to be typed, then the passkey. */
 #define DIAG_PAIR_REPLY_LEN 5
+#define DIAG_KEYBOARD_LEN (BTPOLICY_ADDR_LEN + 1 + BTLIST_NAME_LEN)
+#define DIAG_KEYBOARDS_MAX (1 + BTPOLICY_STORED_MAX * DIAG_KEYBOARD_LEN)
 
 enum diag_command {
 	DIAG_STATUS = 1,
@@ -42,6 +48,10 @@ enum diag_command {
 	/* arg is the channel; the reply is the channel the link was on. */
 	DIAG_MOVE,
 	DIAG_WATCH,
+	/* The stored Bluetooth keyboards, the most recently connected first. */
+	DIAG_KEYBOARDS,
+	/* data is the keyboard's address as DIAG_KEYBOARDS gives it. */
+	DIAG_FORGET,
 };
 
 enum diag_error {
@@ -53,12 +63,15 @@ enum diag_error {
 	DIAG_ERR_NOT_MOVABLE,
 	DIAG_ERR_KEY_HELD,
 	DIAG_ERR_LIST_FULL,
+	DIAG_ERR_NO_SUCH_KEYBOARD,
 };
 
 struct diag_request {
 	uint8_t command;
 	uint8_t seq;
 	uint32_t arg;
+	/* The bytes after arg; zeros where the report ends before them. */
+	uint8_t data[DIAG_REQUEST_DATA_LEN];
 };
 
 struct diag_status {
@@ -107,6 +120,8 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
 			 size_t n);
 size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
+/* connected is the connected keyboard's address, or NULL. */
+size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l, const uint8_t *connected);
 /* No home is sent as 0, no threshold as CHANWATCH_NO_THRESHOLD. */
 size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 			 uint8_t threshold_bucket, bool paused, uint64_t now_ms);

@@ -44,6 +44,8 @@ pub enum Command {
     Protocol,
     Move,
     Watch,
+    Keyboards,
+    Forget,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +59,7 @@ pub enum ErrorCode {
     NotMovable,
     KeyHeld,
     ListFull,
+    NoSuchKeyboard,
 }
 
 impl ErrorCode {
@@ -70,6 +73,7 @@ impl ErrorCode {
             6 => Some(Self::NotMovable),
             7 => Some(Self::KeyHeld),
             8 => Some(Self::ListFull),
+            9 => Some(Self::NoSuchKeyboard),
             _ => None,
         }
     }
@@ -87,7 +91,10 @@ impl ErrorCode {
             Self::KeyHeld => {
                 "a key stayed down for a second, and a move then would lose its release: release every key and move again"
             }
-            Self::ListFull => "the dongle already stores as many keyboards as it can hold",
+            Self::ListFull => {
+                "the dongle already stores as many keyboards as it can hold: see them with `open-dongle keyboards` and remove one with `open-dongle forget`"
+            }
+            Self::NoSuchKeyboard => "the dongle stores no keyboard at that place in its list",
         }
     }
 }
@@ -214,11 +221,13 @@ impl Action {
     }
 }
 
-pub fn request(command: Command, seq: u8, arg: u32) -> [u8; REPORT_LEN] {
+/// `data` follows the argument; only `Command::Forget` reads it.
+pub fn request(command: Command, seq: u8, arg: u32, data: &[u8]) -> [u8; REPORT_LEN] {
     let mut r = [0u8; REPORT_LEN];
     r[0] = command as u8;
     r[1] = seq;
     r[2..6].copy_from_slice(&arg.to_le_bytes());
+    r[6..6 + data.len()].copy_from_slice(data);
     r
 }
 
@@ -585,18 +594,10 @@ fn unknown(what: &str) -> anyhow::Error {
     anyhow::anyhow!("the dongle reports a {what} this tool does not know")
 }
 
-fn read_link(
-    r: &mut Reader,
-    protocol: Protocol,
-    state: u8,
-    own: [u8; 3],
-    forced: [u8; 3],
-    id: [u8; 4],
-) -> Result<Link> {
-    let serial = r.bytes::<4>()?;
-    let kind = r.u8()?;
-    let name = r.bytes::<NAME_MAX>()?;
-    let name: String = name
+/// Printable ASCII only; `None` for an empty name.
+fn read_name(r: &mut Reader) -> Result<Option<String>> {
+    let name: String = r
+        .bytes::<NAME_MAX>()?
         .iter()
         .take_while(|&&b| b != 0)
         .map(|&b| {
@@ -607,7 +608,50 @@ fn read_link(
             }
         })
         .collect();
-    let name = (!name.is_empty()).then_some(name);
+    Ok((!name.is_empty()).then_some(name))
+}
+
+/// A Bluetooth keyboard the dongle holds a bond for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredKeyboard {
+    /// The address type, then the address bytes, least significant first.
+    pub addr: [u8; 7],
+    pub name: Option<String>,
+    pub connected: bool,
+    pub no_passkey: bool,
+}
+
+const KEYBOARD_CONNECTED: u8 = 0x01;
+const KEYBOARD_NO_PASSKEY: u8 = 0x02;
+
+/// The stored keyboards, the most recently connected first.
+pub fn read_keyboards(payload: &[u8]) -> Result<Vec<StoredKeyboard>> {
+    let mut r = Reader::new(payload);
+    (0..r.u8()?)
+        .map(|_| {
+            let addr = r.bytes::<7>()?;
+            let flags = r.u8()?;
+            Ok(StoredKeyboard {
+                addr,
+                name: read_name(&mut r)?,
+                connected: flags & KEYBOARD_CONNECTED != 0,
+                no_passkey: flags & KEYBOARD_NO_PASSKEY != 0,
+            })
+        })
+        .collect()
+}
+
+fn read_link(
+    r: &mut Reader,
+    protocol: Protocol,
+    state: u8,
+    own: [u8; 3],
+    forced: [u8; 3],
+    id: [u8; 4],
+) -> Result<Link> {
+    let serial = r.bytes::<4>()?;
+    let kind = r.u8()?;
+    let name = read_name(r)?;
     Ok(match protocol {
         Protocol::Bluetooth => Link::Bluetooth(match state {
             0 => BluetoothLink::NoKeyboard,
@@ -740,6 +784,11 @@ pub enum EventKind {
     PairingTimeout,
     Reconnect,
     Attack,
+    BluetoothConnected,
+    BluetoothDisconnected,
+    BluetoothPaired,
+    BluetoothRefused,
+    BluetoothBondLost,
     Unknown(u8),
 }
 
@@ -763,6 +812,11 @@ impl From<u8> for EventKind {
             15 => Self::PairingTimeout,
             16 => Self::Reconnect,
             17 => Self::Attack,
+            18 => Self::BluetoothConnected,
+            19 => Self::BluetoothDisconnected,
+            20 => Self::BluetoothPaired,
+            21 => Self::BluetoothRefused,
+            22 => Self::BluetoothBondLost,
             other => Self::Unknown(other),
         }
     }
@@ -991,6 +1045,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn stored_keyboards_match_fixture() {
+        let keyboards = read_keyboards(&fixture("keyboards.hex")).unwrap();
+        assert_eq!(
+            keyboards,
+            [
+                StoredKeyboard {
+                    addr: [1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
+                    name: Some("MX Keys".into()),
+                    connected: true,
+                    no_passkey: false,
+                },
+                StoredKeyboard {
+                    addr: [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6],
+                    name: Some("NuPhy Air75 V2-1".into()),
+                    connected: false,
+                    no_passkey: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_keyboard_list_cut_short_is_refused() {
+        let mut payload = fixture("keyboards.hex");
+        payload.truncate(20);
+        assert!(read_keyboards(&payload).is_err());
+        assert_eq!(read_keyboards(&[0]).unwrap(), []);
+    }
+
+    #[test]
     fn a_bluetooth_status_reads_its_link_states() {
         let mut payload = status_running(Protocol::Bluetooth as u8);
         payload[LINK_STATE_AT] = 1;
@@ -1070,7 +1154,7 @@ pub(crate) mod tests {
 
     #[test]
     fn request_carries_command_seq_and_arg() {
-        let r = request(Command::History, 9, 0x1234_5678);
+        let r = request(Command::History, 9, 0x1234_5678, &[]);
         assert_eq!(&r[..6], &[2, 9, 0x78, 0x56, 0x34, 0x12]);
         assert!(r[6..].iter().all(|&b| b == 0));
     }
@@ -1444,6 +1528,8 @@ pub(crate) mod tests {
             Command::Protocol,
             Command::Move,
             Command::Watch,
+            Command::Keyboards,
+            Command::Forget,
         ];
         assert_eq!(fixture("commands.hex"), all.map(|c| c as u8));
     }
@@ -1459,6 +1545,7 @@ pub(crate) mod tests {
             ErrorCode::NotMovable,
             ErrorCode::KeyHeld,
             ErrorCode::ListFull,
+            ErrorCode::NoSuchKeyboard,
         ];
         assert_eq!(fixture("error-codes.hex"), all.map(|c| c as u8));
         assert_eq!(all.map(|c| ErrorCode::from_code(c as u8)), all.map(Some));
@@ -1497,6 +1584,11 @@ pub(crate) mod tests {
                 EventKind::PairingTimeout,
                 EventKind::Reconnect,
                 EventKind::Attack,
+                EventKind::BluetoothConnected,
+                EventKind::BluetoothDisconnected,
+                EventKind::BluetoothPaired,
+                EventKind::BluetoothRefused,
+                EventKind::BluetoothBondLost,
             ]
         );
     }

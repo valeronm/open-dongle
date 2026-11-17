@@ -403,28 +403,41 @@ int ble_offer_passkey(bool on, uint32_t value)
 	return err;
 }
 
-static void count_bond(const struct bt_bond_info *info, void *user_data)
-{
-	uint8_t *count = user_data;
+struct bonds {
+	uint8_t (*addrs)[BTPOLICY_ADDR_LEN];
+	uint8_t cap;
+	uint8_t count;
+};
 
-	ARG_UNUSED(info);
-	(*count)++;
+static void add_bond(const struct bt_bond_info *info, void *user_data)
+{
+	struct bonds *bonds = user_data;
+
+	if (bonds->count < bonds->cap) {
+		memcpy(bonds->addrs[bonds->count], &info->addr, BTPOLICY_ADDR_LEN);
+	}
+	bonds->count++;
+}
+
+uint8_t ble_stored(uint8_t addrs[][BTPOLICY_ADDR_LEN], uint8_t cap)
+{
+	struct bonds bonds = {.addrs = addrs, .cap = cap};
+
+	bt_foreach_bond(BT_ID_DEFAULT, add_bond, &bonds);
+	return bonds.count;
 }
 
 uint8_t ble_stored_count(void)
 {
-	uint8_t count = 0;
-
-	bt_foreach_bond(BT_ID_DEFAULT, count_bond, &count);
-	return count;
+	return ble_stored(NULL, 0);
 }
 
-int ble_forget_connected(void)
+int ble_forget(const uint8_t addr[BTPOLICY_ADDR_LEN])
 {
-	if (!keyboard) {
-		return -ENOTCONN;
-	}
-	return bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(keyboard));
+	bt_addr_le_t peer;
+
+	memcpy(&peer, addr, sizeof(peer));
+	return bt_unpair(BT_ID_DEFAULT, &peer);
 }
 
 int ble_start(void)

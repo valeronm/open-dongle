@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include "fixture.h"
 #include "test.h"
+#include "btlist.h"
 #include "chanpick.h"
 #include "chanwatch.h"
 #include "diagproto.h"
@@ -19,6 +20,19 @@ static void test_request_carries_command_seq_and_arg(void)
 	CHECK_EQ(req.seq, 9);
 	CHECK_EQ(req.arg, 0x12345678);
 	CHECK(!diag_parse_request(buf, DIAG_REQUEST_LEN - 1, &req));
+}
+
+static void test_request_carries_the_bytes_after_arg(void)
+{
+	const uint8_t buf[DIAG_REPORT_LEN] = {DIAG_FORGET, 9, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8};
+	const uint8_t none[DIAG_REQUEST_DATA_LEN] = {0};
+	struct diag_request req;
+
+	CHECK(diag_parse_request(buf, sizeof(buf), &req));
+	CHECK_MEM(req.data, &buf[DIAG_REQUEST_LEN], DIAG_REQUEST_DATA_LEN);
+	CHECK(diag_parse_request(buf, DIAG_REQUEST_LEN + 2, &req));
+	CHECK_MEM(req.data, &buf[DIAG_REQUEST_LEN], 2);
+	CHECK_MEM(&req.data[2], none, DIAG_REQUEST_DATA_LEN - 2);
 }
 
 static void test_status_matches_fixture(void)
@@ -278,7 +292,8 @@ static void test_command_numbers_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
 			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS,
-			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE, DIAG_WATCH};
+			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE, DIAG_WATCH,
+			       DIAG_KEYBOARDS, DIAG_FORGET};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -294,7 +309,9 @@ static void test_event_type_numbers_match_fixture(void)
 			       HISTORY_LINK_MOVED, HISTORY_LINK_GAP,
 			       HISTORY_UNIFYING_PAIRED, HISTORY_PAIRING_OPENED,
 			       HISTORY_PAIRING_CLOSED, HISTORY_PAIRING_TIMEOUT,
-			       HISTORY_RECONNECT, HISTORY_ATTACK};
+			       HISTORY_RECONNECT, HISTORY_ATTACK, HISTORY_BT_CONNECTED,
+			       HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
+			       HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 
@@ -306,7 +323,7 @@ static void test_error_codes_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
 			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL, DIAG_ERR_NOT_MOVABLE,
-			       DIAG_ERR_KEY_HELD, DIAG_ERR_LIST_FULL};
+			       DIAG_ERR_KEY_HELD, DIAG_ERR_LIST_FULL, DIAG_ERR_NO_SUCH_KEYBOARD};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
 
@@ -336,6 +353,24 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 	CHECK(!diag_channels_arg(0, channels));
 }
 
+static void test_keyboards_match_fixture(void)
+{
+	struct btlist list = {.count = 2};
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture("keyboards.hex", want, sizeof(want));
+
+	memcpy(list.entries[0].addr, (uint8_t[]){1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb}, 7);
+	memcpy(list.entries[0].name, "MX Keys", 7);
+	memcpy(list.entries[1].addr, (uint8_t[]){1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6}, 7);
+	memcpy(list.entries[1].name, "NuPhy Air75 V2-1", 16);
+	list.entries[1].no_passkey = true;
+	CHECK_EQ(diag_encode_keyboards(got, &list, list.entries[0].addr), want_len);
+	CHECK_MEM(got, want, want_len);
+	CHECK_EQ(diag_encode_keyboards(got, &list, NULL), want_len);
+	CHECK_EQ(got[8], 0);
+}
+
 static void test_a_protocol_answers_only_its_commands(void)
 {
 	static const uint8_t everywhere[] = {
@@ -354,6 +389,10 @@ static void test_a_protocol_answers_only_its_commands(void)
 		CHECK(diag_command_answered(not_bluetooth[i], PROTOCOL_UNIFYING));
 		CHECK(!diag_command_answered(not_bluetooth[i], PROTOCOL_BLUETOOTH));
 	}
+	CHECK(diag_command_answered(DIAG_KEYBOARDS, PROTOCOL_BLUETOOTH));
+	CHECK(diag_command_answered(DIAG_FORGET, PROTOCOL_BLUETOOTH));
+	CHECK(!diag_command_answered(DIAG_KEYBOARDS, PROTOCOL_NUPHY));
+	CHECK(!diag_command_answered(DIAG_FORGET, PROTOCOL_UNIFYING));
 	CHECK(diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_NUPHY));
 	CHECK(!diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_UNIFYING));
 	CHECK(!diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_BLUETOOTH));
@@ -363,6 +402,7 @@ int main(void)
 {
 	RUN(test_keyboard_channel_tables_match_fixtures);
 	RUN(test_request_carries_command_seq_and_arg);
+	RUN(test_request_carries_the_bytes_after_arg);
 	RUN(test_status_matches_fixture);
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);
 	RUN(test_an_empty_payload_is_one_part);
@@ -382,6 +422,7 @@ int main(void)
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);
+	RUN(test_keyboards_match_fixture);
 	RUN(test_a_protocol_answers_only_its_commands);
 	return TEST_EXIT();
 }

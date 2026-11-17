@@ -18,4 +18,4 @@ target_sources(app PRIVATE
   src/indicator.c src/nuphy.c src/unifying.c src/protocol.c src/reports.c src/chanpick.c
   src/link.c src/store.c src/diag.c src/diagproto.c src/history.c src/pairwin.c src/chanwatch.c
   src/ble.c src/bluetooth_main.c src/hidmap.c src/hidkeys.c
-  src/btpolicy.c)
+  src/btpolicy.c src/btlist.c)

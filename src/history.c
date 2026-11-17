@@ -155,3 +155,16 @@ bool history_weakest(const struct history *h, int8_t *out)
 	}
 	return found;
 }
+
+struct history_event history_keyboard_event(uint8_t type, const uint8_t addr[HISTORY_ADDR_LEN],
+					    uint8_t c)
+{
+	return (struct history_event){
+		.type = type,
+		.a = addr[6],
+		.b = addr[5],
+		.c = c,
+		.value = (uint32_t)addr[1] | (uint32_t)addr[2] << 8 | (uint32_t)addr[3] << 16 |
+			 (uint32_t)addr[4] << 24,
+	};
+}

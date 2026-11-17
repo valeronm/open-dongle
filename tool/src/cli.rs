@@ -150,6 +150,29 @@ pub fn pair<T: Transport>(
     Ok(format::pairing_open(protocol, passkey))
 }
 
+pub fn keyboards<T: Transport>(dev: &mut Device<T>) -> Result<()> {
+    for line in format::keyboard_lines(&dev.keyboards()?) {
+        println!("{line}");
+    }
+    Ok(())
+}
+
+/// `place` is the keyboard's number in the list `keyboards` prints, from 1.
+pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Result<()> {
+    let list = dev.keyboards()?;
+    let Some(keyboard) = place.checked_sub(1).and_then(|i| list.get(i)) else {
+        bail!(
+            "there is no keyboard {place}; `open-dongle keyboards` lists the {} stored",
+            list.len()
+        );
+    };
+    if confirm(&format::forget_question(keyboard), yes)? {
+        dev.forget(keyboard)?;
+        println!("forgotten");
+    }
+    Ok(())
+}
+
 /// Moves the link and returns the line that reports it, with the dongle's refusals explained.
 pub fn move_link<T: Transport>(dev: &mut Device<T>, s: &Status, channel: u8) -> Result<String> {
     let from = dev.move_to(channel).map_err(|err| {
@@ -613,6 +636,47 @@ mod tests {
             }),
             0,
         )
+    }
+
+    #[test]
+    fn forgetting_a_place_outside_the_list_sends_nothing() {
+        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                assert_eq!(req[0], Command::Keyboards as u8);
+                parts(req[0], req[1], &list)
+            }),
+            0,
+        );
+        for place in [0, 3] {
+            let err = forget(&mut dev, place, true).unwrap_err().to_string();
+            assert!(err.contains("lists the 2 stored"), "{err}");
+        }
+    }
+
+    #[test]
+    fn forgetting_sends_the_address_of_the_keyboard_at_that_place() {
+        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = sent.clone();
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                if req[0] == Command::Keyboards as u8 {
+                    return parts(req[0], req[1], &list);
+                }
+                seen.set(Some((req[0], <[u8; 7]>::try_from(&req[6..13]).unwrap())));
+                parts(req[0], req[1], &[])
+            }),
+            0,
+        );
+        forget(&mut dev, 2, true).unwrap();
+        assert_eq!(
+            sent.get(),
+            Some((
+                Command::Forget as u8,
+                [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6]
+            ))
+        );
     }
 
     #[test]

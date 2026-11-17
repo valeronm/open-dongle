@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Local};
 use crate::board::State;
 use crate::protocol::{
     Action, BUSY_DBM, BluetoothLink, Event, EventKind, Link, Noise, NuphyState, Protocol,
-    STRONG_DBM, Status, UnifyingState, VersionMismatch, Watch, bucket_floor,
+    STRONG_DBM, Status, StoredKeyboard, UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -16,6 +16,59 @@ pub fn action_question(action: Action) -> &'static str {
         Action::Bootloader => "Reboot the dongle into its bootloader?",
         Action::Clear => "Clear the counters, history and events?",
     }
+}
+
+fn address(most_significant_first: impl Iterator<Item = u8>) -> String {
+    let bytes: Vec<String> = most_significant_first.map(|b| format!("{b:02X}")).collect();
+    bytes.join(":")
+}
+
+fn keyboard_address(k: &StoredKeyboard) -> String {
+    address(k.addr[1..].iter().rev().copied())
+}
+
+fn keyboard_name(k: &StoredKeyboard) -> &str {
+    k.name.as_deref().unwrap_or("unnamed")
+}
+
+/// One numbered line per stored keyboard, in the order `forget` counts them.
+pub fn keyboard_lines(list: &[StoredKeyboard]) -> Vec<String> {
+    if list.is_empty() {
+        return vec!["no keyboard is stored".into()];
+    }
+    let width = list
+        .iter()
+        .map(|k| keyboard_name(k).len())
+        .max()
+        .unwrap_or(0);
+    list.iter()
+        .enumerate()
+        .map(|(i, k)| {
+            let marks: Vec<&str> = [
+                k.connected.then_some("connected"),
+                k.no_passkey.then_some("paired without a passkey"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+            let line = format!(
+                "{}  {:width$}  {}  {}",
+                i + 1,
+                keyboard_name(k),
+                keyboard_address(k),
+                marks.join(", ")
+            );
+            line.trim_end().to_string()
+        })
+        .collect()
+}
+
+pub fn forget_question(k: &StoredKeyboard) -> String {
+    format!(
+        "Forget {} ({})? It has to be paired again to be used.",
+        keyboard_name(k),
+        keyboard_address(k)
+    )
 }
 
 pub fn switch_question(to: Protocol) -> String {
@@ -399,6 +452,11 @@ fn saving(err: u32) -> String {
     }
 }
 
+fn event_address(e: &Event) -> String {
+    let v = e.value.to_be_bytes();
+    address([e.a, e.b, v[0], v[1], v[2], v[3]].into_iter())
+}
+
 pub fn describe_event(e: &Event, link: &Link) -> String {
     let protocol = link.protocol();
     match e.kind {
@@ -493,6 +551,30 @@ pub fn describe_event(e: &Event, link: &Link) -> String {
         EventKind::Reconnect if e.a == 1 => "keyboard reconnected, held keys released".into(),
         EventKind::Reconnect => "keyboard reconnected".into(),
         EventKind::Attack => "forged keystroke, attack mode for 5 s".into(),
+        EventKind::BluetoothConnected => format!("keyboard {} connected", event_address(e)),
+        EventKind::BluetoothDisconnected => format!(
+            "keyboard disconnected: {}, {}",
+            match e.a {
+                0x08 => "it went silent".into(),
+                0x13 => "it closed the link".into(),
+                0x16 => "the dongle closed the link".into(),
+                reason => format!("reason {reason:#04x}"),
+            },
+            since_key(e)
+        ),
+        EventKind::BluetoothPaired => format!(
+            "paired keyboard {} {} a passkey",
+            event_address(e),
+            if e.c == 1 { "with" } else { "without" }
+        ),
+        EventKind::BluetoothRefused if e.a == 1 => {
+            "pairing refused: the passkey was not typed".into()
+        }
+        EventKind::BluetoothRefused => "pairing refused by the keyboard".into(),
+        EventKind::BluetoothBondLost => format!(
+            "keyboard {} lost its pairing; forget it and pair again",
+            event_address(e)
+        ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -546,6 +628,83 @@ mod tests {
             "offers channels 62 52 44, set by hand"
         );
         assert_eq!(pairing_offer(None), "picks channels by survey");
+    }
+
+    #[test]
+    fn reads_an_event_address_as_the_firmware_packs_it() {
+        let f = fixture("event-address.hex");
+        let (addr, packed) = f.split_at(7);
+        let value = u32::from_le_bytes(packed[2..6].try_into().unwrap());
+        let e = event(
+            EventKind::BluetoothConnected,
+            packed[0],
+            packed[1],
+            0,
+            value,
+        );
+        assert_eq!(event_address(&e), address(addr[1..].iter().rev().copied()));
+    }
+
+    #[test]
+    fn describes_bluetooth_keyboards_by_address() {
+        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        let at = |kind, c| event(kind, 0xeb, 0xbb, c, 0x49a6_9ad9);
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothConnected, 0), &bt),
+            "keyboard EB:BB:49:A6:9A:D9 connected"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothPaired, 1), &bt),
+            "paired keyboard EB:BB:49:A6:9A:D9 with a passkey"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothPaired, 0), &bt),
+            "paired keyboard EB:BB:49:A6:9A:D9 without a passkey"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothBondLost, 0), &bt),
+            "keyboard EB:BB:49:A6:9A:D9 lost its pairing; forget it and pair again"
+        );
+    }
+
+    #[test]
+    fn describes_a_bluetooth_disconnect_by_its_reason() {
+        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        let gone = |reason| {
+            describe_event(
+                &event(EventKind::BluetoothDisconnected, reason, 3, 0, 0),
+                &bt,
+            )
+        };
+        assert_eq!(
+            gone(0x08),
+            "keyboard disconnected: it went silent, 3 min after the last key"
+        );
+        assert_eq!(
+            gone(0x13),
+            "keyboard disconnected: it closed the link, 3 min after the last key"
+        );
+        assert_eq!(
+            gone(0x16),
+            "keyboard disconnected: the dongle closed the link, 3 min after the last key"
+        );
+        assert_eq!(
+            gone(0x3d),
+            "keyboard disconnected: reason 0x3d, 3 min after the last key"
+        );
+    }
+
+    #[test]
+    fn describes_a_refused_bluetooth_pairing_by_who_refused() {
+        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        assert_eq!(
+            describe_event(&event(EventKind::BluetoothRefused, 0, 0, 0, 0), &bt),
+            "pairing refused by the keyboard"
+        );
+        assert_eq!(
+            describe_event(&event(EventKind::BluetoothRefused, 1, 0, 0, 0), &bt),
+            "pairing refused: the passkey was not typed"
+        );
     }
 
     #[test]
@@ -663,6 +822,46 @@ mod tests {
             describe_event(&noisy, &NUPHY),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, \
              noise -50 dBm, 25.00% at -85, 3.00% at -60"
+        );
+    }
+
+    #[test]
+    fn stored_keyboards_are_numbered_with_their_marks() {
+        let list = [
+            StoredKeyboard {
+                addr: [1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
+                name: Some("MX Keys".into()),
+                connected: true,
+                no_passkey: false,
+            },
+            StoredKeyboard {
+                addr: [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6],
+                name: None,
+                connected: false,
+                no_passkey: true,
+            },
+        ];
+        assert_eq!(
+            keyboard_lines(&list),
+            [
+                "1  MX Keys  EB:BB:49:A6:9A:D9  connected",
+                "2  unnamed  D6:7D:3C:4B:A8:24  paired without a passkey",
+            ]
+        );
+        assert_eq!(keyboard_lines(&[]), ["no keyboard is stored"]);
+    }
+
+    #[test]
+    fn forgetting_asks_about_the_keyboard_by_name_and_address() {
+        let k = StoredKeyboard {
+            addr: [1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
+            name: Some("MX Keys".into()),
+            connected: false,
+            no_passkey: false,
+        };
+        assert_eq!(
+            forget_question(&k),
+            "Forget MX Keys (EB:BB:49:A6:9A:D9)? It has to be paired again to be used."
         );
     }
 

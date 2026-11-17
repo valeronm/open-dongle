@@ -1,5 +1,6 @@
 #include "test.h"
 #include "history.h"
+#include "fixture.h"
 
 #define MINUTE HISTORY_MINUTE_MS
 
@@ -265,6 +266,22 @@ static void test_weakest_spans_the_current_and_the_previous_minute(void)
 	CHECK(!history_weakest(&h, &weakest));
 }
 
+static void test_a_keyboard_event_packs_the_address_as_the_fixture_has_it(void)
+{
+	uint8_t f[HISTORY_ADDR_LEN + 6 + 1];
+	size_t n = load_fixture("event-address.hex", f, sizeof(f));
+	const uint8_t *packed = &f[HISTORY_ADDR_LEN];
+	struct history_event e = history_keyboard_event(HISTORY_BT_PAIRED, f, 1);
+
+	CHECK_EQ(n, sizeof(f) - 1);
+	CHECK_EQ(e.type, HISTORY_BT_PAIRED);
+	CHECK_EQ(e.a, packed[0]);
+	CHECK_EQ(e.b, packed[1]);
+	CHECK_EQ(e.c, 1);
+	CHECK_EQ(e.value, (uint32_t)packed[2] | (uint32_t)packed[3] << 8 |
+				  (uint32_t)packed[4] << 16 | (uint32_t)packed[5] << 24);
+}
+
 int main(void)
 {
 	RUN(test_weakest_is_absent_without_packets);
@@ -281,5 +298,6 @@ int main(void)
 	RUN(test_a_gap_records_the_readings_since_the_last_keyboard_packet);
 	RUN(test_a_loss_records_the_readings_and_starts_over);
 	RUN(test_other_events_leave_the_readings_for_the_next_gap);
+	RUN(test_a_keyboard_event_packs_the_address_as_the_fixture_has_it);
 	return TEST_EXIT();
 }

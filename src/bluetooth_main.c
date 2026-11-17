@@ -4,6 +4,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include "ble.h"
+#include "btlist.h"
 #include "btpolicy.h"
 #include "core.h"
 #include "diag.h"
@@ -11,6 +12,7 @@
 #include "hidmap.h"
 #include "indicator.h"
 #include "pairwin.h"
+#include "store.h"
 
 #define TICK_MS 10
 
@@ -33,6 +35,7 @@ static uint8_t map_bytes[BLE_MAP_MAX];
 static struct hidmap map;
 static struct hidkeys keys;
 static struct btpolicy policy;
+static struct btlist list;
 static struct pairwin window;
 static char name[BLE_NAME_MAX + 1];
 static int start_err;
@@ -89,6 +92,47 @@ static const char *map_fault(enum hidmap_result result)
 	return "usable";
 }
 
+static void save_list(bool changed)
+{
+	if (changed && store_save_bluetooth(&list, sizeof(list)) != 0) {
+		printk("bluetooth keyboard list not saved\n");
+	}
+}
+
+/* Bonds decide which keyboards are listed; the list adds their names, passkey mark and order. */
+static void load_list(void)
+{
+	uint8_t bonded[BTPOLICY_STORED_MAX][BTPOLICY_ADDR_LEN];
+	uint8_t n = ble_stored(bonded, BTPOLICY_STORED_MAX);
+
+	if (!store_load_bluetooth(&list, sizeof(list)) || list.count > BTPOLICY_STORED_MAX) {
+		list = (struct btlist){0};
+	}
+	save_list(btlist_reconcile(&list, bonded, MIN(n, BTPOLICY_STORED_MAX)));
+}
+
+static int forget(const uint8_t *addr)
+{
+	int err = ble_forget(addr);
+
+	if (err) {
+		printk("bluetooth bond not deleted: %d\n", err);
+		return err;
+	}
+	save_list(btlist_remove(&list, addr));
+	return 0;
+}
+
+BUILD_ASSERT(HISTORY_ADDR_LEN == BTPOLICY_ADDR_LEN);
+BUILD_ASSERT(DIAG_REQUEST_DATA_LEN == BTPOLICY_ADDR_LEN);
+
+static void log_keyboard(uint8_t type, const uint8_t *addr, uint8_t c)
+{
+	struct history_event e = history_keyboard_event(type, addr, c);
+
+	core_log(e.type, e.a, e.b, e.c, e.value);
+}
+
 static void send_leds(uint8_t leds)
 {
 	int err;
@@ -128,9 +172,11 @@ static void on_failed(const struct ble_event *ev)
 	switch (btpolicy_security_failed(&policy, ev->failed.why)) {
 	case BTPOLICY_PAIRING_REFUSED:
 		printk("bluetooth pairing refused\n");
+		core_log(HISTORY_BT_REFUSED, HISTORY_REFUSED_BY_KEYBOARD, 0, 0, 0);
 		break;
 	case BTPOLICY_BOND_LOST:
 		printk("bluetooth keyboard lost its bond\n");
+		log_keyboard(HISTORY_BT_BOND_LOST, btpolicy_peer(&policy), 0);
 		break;
 	case BTPOLICY_REFUSED_BEFORE:
 	case BTPOLICY_SECURITY_FAILED:
@@ -149,20 +195,23 @@ static void on_map_read(void)
 		printk("bluetooth keyboard \"%s\" refused: report map %s\n", name,
 		       map_fault(result));
 		if (result == HIDMAP_NO_KEYBOARD) {
-			ble_forget_connected();
+			forget(btpolicy_peer(&policy));
 		}
 		ble_disconnect();
 		return;
 	}
 	printk("bluetooth keyboard \"%s\" ready\n", name);
 	btpolicy_ready(&policy);
+	log_keyboard(HISTORY_BT_CONNECTED, btpolicy_peer(&policy), 0);
+	save_list(btlist_connected(&list, btpolicy_peer(&policy), name));
 	core_take_leds(&leds);
 	send_leds(leds);
 }
 
-static void on_disconnected(void)
+static void on_disconnected(uint8_t reason)
 {
 	if (btpolicy_is_ready(&policy)) {
+		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_key(), 0, 0);
 		core_release_keys();
 	}
 	btpolicy_disconnected(&policy, k_uptime_get_32());
@@ -195,7 +244,7 @@ static void on_event(const struct ble_event *ev)
 		break;
 	case BLE_DISCONNECTED:
 		printk("bluetooth disconnected: reason 0x%02x\n", ev->reason);
-		on_disconnected();
+		on_disconnected(ev->reason);
 		break;
 	case BLE_FAILED:
 		on_failed(ev);
@@ -203,11 +252,14 @@ static void on_event(const struct ble_event *ev)
 	case BLE_PAIRED:
 		if (btpolicy_paired(&policy, ev->passkey_used) == BTPOLICY_PAIRING_FORGOTTEN) {
 			printk("bluetooth pairing refused: no passkey typed\n");
-			ble_forget_connected();
+			core_log(HISTORY_BT_REFUSED, HISTORY_REFUSED_NO_PASSKEY, 0, 0, 0);
+			forget(btpolicy_peer(&policy));
 			ble_disconnect();
 			break;
 		}
 		printk("bluetooth paired\n");
+		log_keyboard(HISTORY_BT_PAIRED, btpolicy_peer(&policy), ev->passkey_used);
+		save_list(btlist_paired(&list, btpolicy_peer(&policy), !ev->passkey_used));
 		pairwin_paired(&window);
 		break;
 	case BLE_MAP_READ:
@@ -255,11 +307,39 @@ static void open_pairing(const struct diag_request *req)
 	diag_reply(req, reply, sizeof(reply), DIAG_AFTER_NONE);
 }
 
+static void send_keyboards(const struct diag_request *req)
+{
+	uint8_t payload[DIAG_KEYBOARDS_MAX];
+	const uint8_t *connected = btpolicy_is_ready(&policy) ? btpolicy_peer(&policy) : NULL;
+
+	diag_reply(req, payload, diag_encode_keyboards(payload, &list, connected),
+		   DIAG_AFTER_NONE);
+}
+
+static void forget_listed(const struct diag_request *req)
+{
+	if (!btlist_has(&list, req->data)) {
+		diag_reply_error(req, DIAG_ERR_NO_SUCH_KEYBOARD, 0);
+		return;
+	}
+	if (forget(req->data) != 0) {
+		diag_reply_error(req, DIAG_ERR_STORE, 0);
+		return;
+	}
+	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
 static void on_request(const struct diag_request *req)
 {
 	switch (req->command) {
 	case DIAG_PAIR:
 		open_pairing(req);
+		break;
+	case DIAG_KEYBOARDS:
+		send_keyboards(req);
+		break;
+	case DIAG_FORGET:
+		forget_listed(req);
 		break;
 	default:
 		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
@@ -289,6 +369,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 	} else {
 		uint8_t stored = ble_stored_count();
 
+		load_list();
 		printk("bluetooth started, %u stored\n", stored);
 		if (stored == 0) {
 			pairwin_open(&window, PAIRWIN_BOOT, false, k_uptime_get_32());
@@ -313,6 +394,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 		now = k_uptime_get_32();
 		if (pairwin_ran_out(&window, now)) {
 			printk("pairing closed\n");
+			core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
 		}
 		if (!pairwin_is_open(&window, now)) {
 			passkey_asked = false;
