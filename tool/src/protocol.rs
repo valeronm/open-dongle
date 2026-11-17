@@ -94,17 +94,23 @@ impl ErrorCode {
 pub enum Protocol {
     Nuphy = 1,
     Unifying = 2,
+    Bluetooth = 3,
 }
 
 impl Protocol {
-    pub const ALL: [Self; 2] = [Self::Nuphy, Self::Unifying];
+    pub const ALL: [Self; 3] = [Self::Nuphy, Self::Unifying, Self::Bluetooth];
 
     pub fn from_code(code: u8) -> Option<Self> {
         match code {
             1 => Some(Self::Nuphy),
             2 => Some(Self::Unifying),
+            3 => Some(Self::Bluetooth),
             _ => None,
         }
+    }
+
+    pub fn has_channel_and_signal(self) -> bool {
+        self != Self::Bluetooth
     }
 
     pub fn counts(self, counter: Counter) -> bool {
@@ -123,6 +129,7 @@ impl Protocol {
         match self {
             Self::Nuphy => "NuPhy",
             Self::Unifying => "Unifying",
+            Self::Bluetooth => "Bluetooth",
         }
     }
 
@@ -149,6 +156,7 @@ impl Protocol {
                 UsbRetries,
                 Merges,
             ],
+            Self::Bluetooth => &[Packets, Dropped, UsbRetries, Merges],
         }
     }
 }
@@ -396,6 +404,7 @@ pub enum Link {
     Nuphy(NuphyLink),
     /// `None` until a keyboard pairs.
     Unifying(Option<UnifyingLink>),
+    Bluetooth,
 }
 
 impl Link {
@@ -403,6 +412,7 @@ impl Link {
         match self {
             Self::Nuphy(_) => Protocol::Nuphy,
             Self::Unifying(_) => Protocol::Unifying,
+            Self::Bluetooth => Protocol::Bluetooth,
         }
     }
 
@@ -411,6 +421,7 @@ impl Link {
         match self {
             Self::Nuphy(nuphy) => nuphy.keyboard_name.as_deref(),
             Self::Unifying(unifying) => unifying.as_ref()?.name.as_deref(),
+            Self::Bluetooth => None,
         }
     }
 }
@@ -449,6 +460,7 @@ impl Status {
     pub fn keyboard_channels(&self) -> Vec<u8> {
         let mut channels: Vec<u8> = match &self.link {
             Link::Unifying(_) => UNIFYING_CHANNELS.to_vec(),
+            Link::Bluetooth => Vec::new(),
             Link::Nuphy(nuphy) => NUPHY_FIXED_CHANNELS
                 .into_iter()
                 .chain(nuphy.own.into_iter().flatten())
@@ -586,6 +598,10 @@ fn read_link(
         .collect();
     let name = (!name.is_empty()).then_some(name);
     Ok(match protocol {
+        Protocol::Bluetooth => match state {
+            0 => Link::Bluetooth,
+            _ => return Err(unknown("link state")),
+        },
         Protocol::Unifying => Link::Unifying(match state {
             0 => None,
             state => Some(UnifyingLink {
@@ -886,6 +902,13 @@ fn decode_page<T>(
 pub(crate) mod tests {
     use super::*;
 
+    #[test]
+    fn only_the_esb_protocols_show_a_channel_and_signal() {
+        assert!(Protocol::Nuphy.has_channel_and_signal());
+        assert!(Protocol::Unifying.has_channel_and_signal());
+        assert!(!Protocol::Bluetooth.has_channel_and_signal());
+    }
+
     fn fixture_text(name: &str) -> String {
         let path = format!("{}/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read_to_string(path).unwrap()
@@ -918,6 +941,9 @@ pub(crate) mod tests {
             payload[CHANNEL_AT] = 62;
             payload[OWN_AT..KEYBOARD_ID_AT].fill(0);
         }
+        if code == Protocol::Bluetooth as u8 {
+            payload[LINK_STATE_AT] = 0;
+        }
         payload
     }
 
@@ -930,7 +956,7 @@ pub(crate) mod tests {
     pub(crate) fn nuphy(s: &mut Status) -> &mut NuphyLink {
         match &mut s.link {
             Link::Nuphy(nuphy) => nuphy,
-            Link::Unifying(_) => panic!("a Unifying status"),
+            _ => panic!("not a NuPhy status"),
         }
     }
 
@@ -955,6 +981,25 @@ pub(crate) mod tests {
     fn keyboard_channel_tables_match_fixtures() {
         assert_eq!(fixture("nuphy-fixed-channels.hex"), NUPHY_FIXED_CHANNELS);
         assert_eq!(fixture("unifying-channels.hex"), UNIFYING_CHANNELS);
+    }
+
+    #[test]
+    fn a_bluetooth_status_reads_as_bluetooth_with_no_channels() {
+        let s = status_of(Protocol::Bluetooth);
+        assert_eq!(s.protocol(), Protocol::Bluetooth);
+        assert_eq!(s.link, Link::Bluetooth);
+        assert!(s.keyboard_channels().is_empty());
+        assert_eq!(Protocol::from_code(3), Some(Protocol::Bluetooth));
+        assert_eq!(Protocol::Bluetooth.name(), "Bluetooth");
+    }
+
+    #[test]
+    fn a_bluetooth_dongle_counts_no_channel_or_link_events() {
+        use Counter::*;
+        assert_eq!(
+            Protocol::Bluetooth.counters(),
+            [Packets, Dropped, UsbRetries, Merges]
+        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ pub fn pairing_open(protocol: Protocol) -> &'static str {
         Protocol::Unifying => {
             "pairing is open for 30 s; switch the keyboard off and on, after holding an Easy-Switch key until it blinks fast if it has them"
         }
+        Protocol::Bluetooth => "pairing is open; put the keyboard in Bluetooth pairing mode",
     }
 }
 
@@ -204,6 +205,7 @@ pub fn state_name(s: &Status) -> &'static str {
             UnifyingState::Connected => "connected",
             UnifyingState::Silent => "silent",
         },
+        Link::Bluetooth => "no keyboard",
     }
 }
 
@@ -229,6 +231,7 @@ pub fn link_health(s: &Status) -> LinkHealth {
             UnifyingState::Connected => LinkHealth::Connected,
             UnifyingState::Silent => LinkHealth::Waiting,
         },
+        Link::Bluetooth => LinkHealth::NotPaired,
     }
 }
 
@@ -403,6 +406,7 @@ pub fn describe_event(e: &Event, link: &Link) -> String {
             match protocol {
                 Protocol::Nuphy => "link lost",
                 Protocol::Unifying => "keyboard silent",
+                Protocol::Bluetooth => "keyboard disconnected",
             },
             duration(e.value),
             e.a as i8,
@@ -475,6 +479,7 @@ pub fn describe_event(e: &Event, link: &Link) -> String {
                 "pairing attempt timed out waiting for the keyboard's confirm".into()
             }
             Protocol::Unifying => format!("pairing attempt timed out at request {}", e.a + 1),
+            Protocol::Bluetooth => "pairing attempt timed out".into(),
         },
         EventKind::Reconnect if e.a == 1 => "keyboard reconnected, held keys released".into(),
         EventKind::Reconnect => "keyboard reconnected".into(),

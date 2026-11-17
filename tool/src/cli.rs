@@ -54,7 +54,9 @@ fn status_lines(s: &Status) -> Vec<String> {
                 row,
             )
         }
+        Link::Bluetooth => (String::new(), String::new(), None),
     };
+    let channel_and_signal = s.protocol().has_channel_and_signal();
     let counters: Vec<String> = s
         .protocol()
         .counters()
@@ -66,15 +68,21 @@ fn status_lines(s: &Status) -> Vec<String> {
         ("protocol", s.protocol().name().to_string()),
         (
             "link",
-            format!("{} on channel {}{link}", state_name(s), s.channel),
+            if channel_and_signal {
+                format!("{} on channel {}{link}", state_name(s), s.channel)
+            } else {
+                state_name(s).to_string()
+            },
         ),
     ];
     rows.extend(keyboard);
-    rows.extend([
-        (
+    if channel_and_signal {
+        rows.push((
             "signal",
             format!("{} dBm, {}", s.last_rssi, last_packet(s.last_rx_age_ms)),
-        ),
+        ));
+    }
+    rows.extend([
         (
             "pairing",
             format!("{}{offer}", if s.pairing_open { "open" } else { "closed" }),
@@ -451,6 +459,19 @@ mod tests {
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn a_bluetooth_status_shows_no_channel_or_signal() {
+        let lines = status_lines(&status_of(Protocol::Bluetooth));
+        let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
+        assert!(link.ends_with("no keyboard"), "{link}");
+        assert!(!lines.iter().any(|l| l.starts_with("signal")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("protocol") && l.ends_with("Bluetooth"))
+        );
     }
 
     #[test]

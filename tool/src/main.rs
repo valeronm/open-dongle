@@ -33,6 +33,7 @@ struct Confirm {
 enum ProtocolName {
     Nuphy,
     Unifying,
+    Bluetooth,
 }
 
 impl From<ProtocolName> for Protocol {
@@ -40,6 +41,7 @@ impl From<ProtocolName> for Protocol {
         match name {
             ProtocolName::Nuphy => Protocol::Nuphy,
             ProtocolName::Unifying => Protocol::Unifying,
+            ProtocolName::Bluetooth => Protocol::Bluetooth,
         }
     }
 }

@@ -109,7 +109,7 @@ const STRIPS: [Strip; 5] = [
     },
 ];
 
-/// With no protocol, only the strips both protocols' firmware count.
+/// With no protocol, only the strips every protocol's firmware counts.
 fn strips(protocol: Option<Protocol>) -> impl Iterator<Item = &'static Strip> {
     let counting = protocol.map_or(Protocol::ALL.to_vec(), |protocol| vec![protocol]);
     STRIPS.iter().filter(move |strip| match strip.source {
@@ -427,9 +427,31 @@ impl Prompt {
     }
 }
 
+fn other_protocols(running: Protocol) -> impl Iterator<Item = Protocol> {
+    Protocol::ALL.into_iter().filter(move |p| *p != running)
+}
+
+fn choice_question(running: Protocol) -> String {
+    let choices: Vec<String> = other_protocols(running)
+        .zip(1..)
+        .map(|(p, n)| format!("{n} {}", p.name()))
+        .collect();
+    format!(
+        "Switch to which protocol? {}  (any other key cancels)",
+        choices.join("  ")
+    )
+}
+
+fn chosen(running: Protocol, key: KeyCode) -> Option<Protocol> {
+    let KeyCode::Char(c) = key else { return None };
+    let n = c.to_digit(10)? as usize;
+    other_protocols(running).nth(n.checked_sub(1)?)
+}
+
 #[derive(Clone, Copy)]
 enum Key {
     Ask(Prompt),
+    Choose,
     Pair(Protocol),
     Moves,
 }
@@ -444,12 +466,8 @@ fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 7] {
         Key::Ask(Prompt::Action(Action::Bootloader)),
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
-    let (label, other) = match protocol {
-        Protocol::Nuphy => ("unifying", Protocol::Unifying),
-        Protocol::Unifying => ("nuphy", Protocol::Nuphy),
-    };
     let pair = ('a', "pair", Key::Pair(protocol));
-    let switch = ('p', label, Key::Ask(Prompt::Switch(other)));
+    let switch = ('p', "protocol", Key::Choose);
     [NOISE, MOVES, pair, switch, REBOOT, BOOTLOADER, CLEAR]
 }
 
@@ -487,6 +505,7 @@ struct Session<T: Transport> {
     refresh_error: Option<String>,
     pane: Pane,
     prompt: Option<Prompt>,
+    choosing: bool,
     message: String,
 }
 
@@ -591,6 +610,7 @@ impl<T: Transport> Session<T> {
             refresh_error: None,
             pane: Pane::History,
             prompt: None,
+            choosing: false,
             message: String::new(),
         }
     }
@@ -601,6 +621,10 @@ impl<T: Transport> Session<T> {
 
     fn handle(&mut self, key: KeyCode, drawn: Drawn) -> Option<Outcome> {
         self.message.clear();
+        if std::mem::take(&mut self.choosing) {
+            self.prompt = chosen(self.protocol(), key).map(Prompt::Switch);
+            return None;
+        }
         if let Some(prompt) = self.prompt.take() {
             return (key == KeyCode::Char('y')).then(|| {
                 self.message = "working…".into();
@@ -615,6 +639,7 @@ impl<T: Transport> Session<T> {
             KeyCode::Char(']') => self.step(Step::Up),
             KeyCode::Char(c) => match self.key(c) {
                 Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
+                Some(Key::Choose) => self.choosing = true,
                 Some(Key::Pair(protocol)) => self.pair(protocol),
                 Some(Key::Moves) => self.show_moves(),
                 None => {}
@@ -719,6 +744,9 @@ impl<T: Transport> Session<T> {
     }
 
     fn help(&self, width: usize) -> Vec<String> {
+        if self.choosing {
+            return flow(choice_question(self.protocol()).split(' '), " ", width);
+        }
         match self.prompt {
             Some(p) => flow(p.question().split(' '), " ", width),
             None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
@@ -845,12 +873,18 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
         Some(_) => Style::new().fg(signal_color(s.last_rssi)),
         None => Style::new(),
     };
-    let link = vec![
-        Span::styled(state_name(s), Style::new().fg(link_color(link_health(s)))),
-        Span::raw(SEPARATOR),
-        Span::styled(format!("{} dBm", s.last_rssi), signal_style),
-        Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
-    ];
+    let channel_and_signal = s.protocol().has_channel_and_signal();
+    let mut link = vec![Span::styled(
+        state_name(s),
+        Style::new().fg(link_color(link_health(s))),
+    )];
+    if channel_and_signal {
+        link.extend([
+            Span::raw(SEPARATOR),
+            Span::styled(format!("{} dBm", s.last_rssi), signal_style),
+            Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
+        ]);
+    }
     let mut dongle = vec![Span::raw(format!(
         "usb {}{SEPARATOR}up {}",
         usb_state(s.usb_live, s.usb_suspended),
@@ -863,11 +897,12 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
             Style::new().fg(link_color(LinkHealth::Pairing)),
         ));
     }
-    vec![
-        status_row("link", link),
-        status_row("channels", channel_spans(s)),
-        status_row("dongle", dongle),
-    ]
+    let mut rows = vec![status_row("link", link)];
+    if channel_and_signal {
+        rows.push(status_row("channels", channel_spans(s)));
+    }
+    rows.push(status_row("dongle", dongle));
+    rows
 }
 
 fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Session<T>>) -> usize {
@@ -1343,7 +1378,7 @@ mod tests {
         "n noise",
         "m moves",
         "a pair",
-        "p nuphy",
+        "p protocol",
         "r reboot",
         "b bootloader",
         "c clear",
@@ -1359,8 +1394,8 @@ mod tests {
         assert_eq!(
             lines,
             [
-                "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  ←/→ history",
-                "↑/↓ events  esc back  q quit",
+                "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear",
+                "←/→ history  ↑/↓ events  esc back  q quit",
             ]
         );
         assert!(lines.iter().all(|l| l.chars().count() <= 80));
@@ -1370,7 +1405,7 @@ mod tests {
     fn text_that_fits_stays_on_one_line() {
         let nuphy = [
             "n noise",
-            "p unifying",
+            "p protocol",
             "r reboot",
             "b bootloader",
             "c clear",
@@ -1401,11 +1436,11 @@ mod tests {
         let rows = screen(&drawn(&mut app));
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel"
+            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear"
         );
         assert_eq!(
             rows[23].trim_end(),
-            "←/→ history  ↑/↓ events  esc back  q quit"
+            "[/] channel  ←/→ history  ↑/↓ events  esc back  q quit"
         );
         let text = rows.join("\n");
         for part in ["OpenDongle", "signal dBm", "events"] {
@@ -1454,7 +1489,7 @@ mod tests {
         );
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel  ←/→ history"
+            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear  [/] channel  ←/→ history"
         );
         assert_eq!(rows[23].trim_end(), "↑/↓ events  esc back  q quit");
     }
@@ -1475,7 +1510,7 @@ mod tests {
             "n noise",
             "m moves",
             "a pair",
-            "p unifying",
+            "p protocol",
             "r reboot",
             "b bootloader",
             "c clear",
@@ -1489,18 +1524,39 @@ mod tests {
     }
 
     #[test]
-    fn each_mode_offers_switching_to_the_other() {
+    fn the_protocol_key_asks_which_of_the_other_two() {
         let mut app = app_with(status_of(Protocol::Unifying));
+        let s = session(&mut app);
+        assert!(matches!(s.key('p'), Some(Key::Choose)));
+        s.handle(KeyCode::Char('p'), Drawn::default());
+        assert_eq!(
+            s.help(200),
+            ["Switch to which protocol? 1 NuPhy  2 Bluetooth  (any other key cancels)"]
+        );
+        assert!(s.handle(KeyCode::Char('2'), Drawn::default()).is_none());
         assert!(matches!(
-            session(&mut app).key('p'),
-            Some(Key::Ask(Prompt::Switch(Protocol::Nuphy)))
+            s.prompt,
+            Some(Prompt::Switch(Protocol::Bluetooth))
         ));
-        assert!(matches!(session(&mut app).key('a'), Some(Key::Pair(_))));
-        history(&mut app).status = status_of(Protocol::Nuphy);
+        let outcome = s.handle(KeyCode::Char('y'), Drawn::default());
         assert!(matches!(
-            session(&mut app).key('p'),
-            Some(Key::Ask(Prompt::Switch(Protocol::Unifying)))
+            outcome,
+            Some(Outcome::Answer(Prompt::Switch(Protocol::Bluetooth)))
         ));
+    }
+
+    #[test]
+    fn any_other_key_cancels_the_protocol_choice() {
+        let mut app = app_with(status_of(Protocol::Nuphy));
+        let s = session(&mut app);
+        s.handle(KeyCode::Char('p'), Drawn::default());
+        assert!(s.handle(KeyCode::Char('3'), Drawn::default()).is_none());
+        assert!(s.prompt.is_none() && !s.choosing);
+    }
+
+    #[test]
+    fn every_mode_offers_pairing_and_noise() {
+        let mut app = app_with(status_of(Protocol::Unifying));
         assert!(matches!(session(&mut app).key('a'), Some(Key::Pair(_))));
         assert!(matches!(
             session(&mut app).key('n'),
@@ -1674,7 +1730,7 @@ mod tests {
         assert_eq!(session(&mut app).message, "");
         assert_eq!(
             footer(&mut app),
-            "n noise  m moves  a pair  p nuphy  r reboot  b bootloader  c clear  [/] channel\n←/→ history  ↑/↓ events  esc back  q quit"
+            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear\n[/] channel  ←/→ history  ↑/↓ events  esc back  q quit"
         );
     }
 
@@ -2206,6 +2262,15 @@ mod tests {
     }
 
     #[test]
+    fn a_bluetooth_status_box_shows_no_signal_or_channels() {
+        let rows = screen(&status_box(&status_of(Protocol::Bluetooth)));
+        let rows = &rows[..usize::from(STATUS_ROWS) + 2];
+        assert!(rows.iter().any(|r| r.contains("no keyboard")));
+        assert!(!rows.iter().any(|r| r.contains("dBm")));
+        assert!(!rows.iter().any(|r| r.contains("channels")));
+    }
+
+    #[test]
     fn a_unifying_status_box_names_the_keyboard_in_its_title() {
         let terminal = status_box(&status_of(Protocol::Unifying));
         let rows = screen(&terminal);
@@ -2289,16 +2354,23 @@ mod tests {
     }
 
     #[test]
-    fn the_unifying_panel_leaves_out_the_strips_its_firmware_never_counts() {
+    fn a_panel_leaves_out_the_strips_its_firmware_never_counts() {
         let nuphy = strip_names(Some(Protocol::Nuphy));
         for name in ["losses", "gaps", "dropped", "channel", "busy"] {
             assert!(nuphy.contains(name), "{name} missing from {nuphy}");
         }
-        for shared in [strip_names(Some(Protocol::Unifying)), strip_names(None)] {
-            for name in ["dropped", "channel", "busy"] {
+        let unifying = strip_names(Some(Protocol::Unifying));
+        for name in ["dropped", "channel", "busy"] {
+            assert!(unifying.contains(name), "{name} missing from {unifying}");
+        }
+        for name in ["losses", "gaps"] {
+            assert!(!unifying.contains(name), "{name} shown in {unifying}");
+        }
+        for shared in [strip_names(Some(Protocol::Bluetooth)), strip_names(None)] {
+            for name in ["dropped", "busy"] {
                 assert!(shared.contains(name), "{name} missing from {shared}");
             }
-            for name in ["losses", "gaps"] {
+            for name in ["losses", "gaps", "channel"] {
                 assert!(!shared.contains(name), "{name} shown in {shared}");
             }
         }

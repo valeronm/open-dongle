@@ -31,7 +31,7 @@ impl std::fmt::Display for Refused {
         match self.code {
             Ok(ErrorCode::WrongProtocol) => write!(
                 f,
-                "{} runs; this needs the other protocol",
+                "not available while the dongle runs {}",
                 self.running.map_or("another protocol", Protocol::name)
             ),
             Ok(code) => f.write_str(code.name()),
@@ -491,6 +491,9 @@ pub(crate) mod tests {
             0,
         );
         let err = dev.pair().unwrap_err().to_string();
-        assert!(err.contains("Unifying"), "{err}");
+        assert!(
+            err.contains("not available while the dongle runs Unifying"),
+            "{err}"
+        );
     }
 }
