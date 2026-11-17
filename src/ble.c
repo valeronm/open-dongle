@@ -19,8 +19,7 @@ static uint8_t map[BLE_MAP_MAX];
 static size_t map_len;
 static char name[BLE_NAME_MAX + 1];
 static struct bt_gatt_read_params name_read;
-
-static void scan(void);
+static bool scanning;
 
 static void emit(const struct ble_event *ev)
 {
@@ -195,15 +194,17 @@ static void read_name(struct bt_conn *conn)
 }
 
 BUILD_ASSERT(BLE_ADDRESS_MAX >= BT_ADDR_LE_STR_LEN);
+BUILD_ASSERT(sizeof(bt_addr_le_t) == BTPOLICY_ADDR_LEN);
+BUILD_ASSERT(BLE_SECURITY_KEY_MISSING == BT_SECURITY_ERR_PIN_OR_KEY_MISSING);
 
-static void connect_failed(int error)
+static void connection_ended(uint8_t reason)
 {
-	if (keyboard) {
-		bt_conn_unref(keyboard);
-		keyboard = NULL;
+	if (bt_hogp_assign_check(&hogp)) {
+		bt_hogp_release(&hogp);
 	}
-	emit_failed(BLE_STAGE_CONNECT, error);
-	scan();
+	bt_conn_unref(keyboard);
+	keyboard = NULL;
+	emit(&(struct ble_event){.type = BLE_DISCONNECTED, .reason = reason});
 }
 
 static void on_connected(struct bt_conn *conn, uint8_t err)
@@ -215,7 +216,8 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 	if (err) {
-		connect_failed(err);
+		emit_failed(BLE_STAGE_CONNECT, err);
+		connection_ended(err);
 		return;
 	}
 	map_len = 0;
@@ -230,16 +232,9 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 
 static void on_disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	if (conn != keyboard) {
-		return;
+	if (conn == keyboard) {
+		connection_ended(reason);
 	}
-	if (bt_hogp_assign_check(&hogp)) {
-		bt_hogp_release(&hogp);
-	}
-	bt_conn_unref(keyboard);
-	keyboard = NULL;
-	emit(&(struct ble_event){.type = BLE_DISCONNECTED, .reason = reason});
-	scan();
 }
 
 static void on_security_changed(struct bt_conn *conn, bt_security_t level,
@@ -262,6 +257,17 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.security_changed = on_security_changed,
 };
 
+static void on_pairing_complete(struct bt_conn *conn, bool bonded)
+{
+	if (conn == keyboard && bonded) {
+		emit(&(struct ble_event){.type = BLE_PAIRED});
+	}
+}
+
+static struct bt_conn_auth_info_cb pairing_callbacks = {
+	.pairing_complete = on_pairing_complete,
+};
+
 static bool is_hid_uuid(struct bt_data *data, void *user_data)
 {
 	bool *hid = user_data;
@@ -281,44 +287,89 @@ static bool is_hid_uuid(struct bt_data *data, void *user_data)
 static void on_advert(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		      struct net_buf_simple *data)
 {
-	bool wanted = false;
-	int err;
+	struct ble_event ev = {.type = BLE_ADVERT};
+	struct btpolicy_advert *a = &ev.advert;
 
 	ARG_UNUSED(rssi);
+	a->directed = type == BT_GAP_ADV_TYPE_ADV_DIRECT_IND;
+	a->connectable = a->directed || type == BT_GAP_ADV_TYPE_ADV_IND;
+	a->stored = bt_le_bond_exists(BT_ID_DEFAULT, addr);
+	if (!a->directed) {
+		bt_data_parse(data, is_hid_uuid, &a->hid_service);
+	}
+	/* Adverts from other devices would fill the event queue. */
+	if (!btpolicy_interesting(a)) {
+		return;
+	}
+	memcpy(a->addr, addr, sizeof(a->addr));
+	k_msgq_put(&ble_events, &ev, K_NO_WAIT);
+}
+
+int ble_scan(bool on)
+{
+	int err;
+
+	if (on == scanning) {
+		return 0;
+	}
+	if (on) {
+		err = bt_le_scan_start(BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE,
+							BT_LE_SCAN_OPT_NONE,
+							BT_GAP_SCAN_FAST_INTERVAL,
+							BT_GAP_SCAN_FAST_WINDOW),
+				       on_advert);
+	} else {
+		err = bt_le_scan_stop();
+	}
+	if (!err) {
+		scanning = on;
+	}
+	return err;
+}
+
+/* Reading a keyboard's services takes dozens of exchanges, each two connection intervals long. */
+#define SHORTEST_INTERVAL 6 /* 7.5 ms */
+#define SETUP_CONN_PARAM                                                                           \
+	BT_LE_CONN_PARAM(SHORTEST_INTERVAL, SHORTEST_INTERVAL, 0, BT_GAP_MS_TO_CONN_TIMEOUT(4000))
+
+int ble_connect(const uint8_t addr[BTPOLICY_ADDR_LEN])
+{
+	bt_addr_le_t peer;
+	int err;
+
 	if (keyboard) {
-		return;
+		return -EALREADY;
 	}
-	/* A bonded keyboard reconnects with directed adverts, which carry no data. */
-	if (type == BT_GAP_ADV_TYPE_ADV_DIRECT_IND) {
-		wanted = true;
-	} else if (type == BT_GAP_ADV_TYPE_ADV_IND) {
-		bt_data_parse(data, is_hid_uuid, &wanted);
-	}
-	if (!wanted || bt_le_scan_stop() != 0) {
-		return;
-	}
-	err = bt_conn_le_create(addr, BT_CONN_LE_CREATE_CONN, BT_LE_CONN_PARAM_DEFAULT, &keyboard);
+	memcpy(&peer, addr, sizeof(peer));
+	err = bt_conn_le_create(&peer, BT_CONN_LE_CREATE_CONN, SETUP_CONN_PARAM, &keyboard);
 	if (err) {
 		keyboard = NULL;
-		connect_failed(err);
 	}
+	return err;
 }
 
-static int start_scan(void)
+static void count_bond(const struct bt_bond_info *info, void *user_data)
 {
-	return bt_le_scan_start(BT_LE_SCAN_PARAM(BT_LE_SCAN_TYPE_PASSIVE, BT_LE_SCAN_OPT_NONE,
-						 BT_GAP_SCAN_FAST_INTERVAL,
-						 BT_GAP_SCAN_FAST_WINDOW),
-				on_advert);
+	uint8_t *count = user_data;
+
+	ARG_UNUSED(info);
+	(*count)++;
 }
 
-static void scan(void)
+uint8_t ble_stored_count(void)
 {
-	int err = start_scan();
+	uint8_t count = 0;
 
-	if (err) {
-		emit_failed(BLE_STAGE_SCAN, err);
+	bt_foreach_bond(BT_ID_DEFAULT, count_bond, &count);
+	return count;
+}
+
+int ble_forget_connected(void)
+{
+	if (!keyboard) {
+		return -ENOTCONN;
 	}
+	return bt_unpair(BT_ID_DEFAULT, bt_conn_get_dst(keyboard));
 }
 
 int ble_start(void)
@@ -329,8 +380,10 @@ int ble_start(void)
 		err = settings_load();
 	}
 	if (!err) {
+		err = bt_conn_auth_info_cb_register(&pairing_callbacks);
+	}
+	if (!err) {
 		bt_hogp_init(&hogp, &hogp_params);
-		err = start_scan();
 	}
 	return err;
 }
@@ -390,8 +443,6 @@ int ble_set_leds(uint8_t report_id, uint8_t leds)
 const char *ble_stage_name(enum ble_stage stage)
 {
 	switch (stage) {
-	case BLE_STAGE_SCAN:
-		return "scan";
 	case BLE_STAGE_CONNECT:
 		return "connect";
 	case BLE_STAGE_SECURITY:

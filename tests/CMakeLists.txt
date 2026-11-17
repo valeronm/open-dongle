@@ -32,3 +32,4 @@ target_compile_definitions(test_hidmap PRIVATE
 suite(hidkeys ../src/hidkeys.c ../src/hidmap.c)
 target_compile_definitions(test_hidkeys PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
+suite(btpolicy ../src/btpolicy.c)

@@ -5,21 +5,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "btpolicy.h"
+
 #define BLE_REPORT_MAX 64
 #define BLE_MAP_MAX 1024
 #define BLE_NAME_MAX 32
 #define BLE_ADDRESS_MAX 30
+/* The BLE_FAILED error of the security stage when a stored keyboard no longer holds its bond. */
+#define BLE_SECURITY_KEY_MISSING 2
 
 enum ble_event_type {
+	BLE_ADVERT,
 	BLE_CONNECTED,
 	BLE_DISCONNECTED,
 	BLE_FAILED,
+	BLE_PAIRED,
 	BLE_MAP_READ,
 	BLE_REPORT,
 };
 
 enum ble_stage {
-	BLE_STAGE_SCAN,
 	BLE_STAGE_CONNECT,
 	BLE_STAGE_SECURITY,
 	BLE_STAGE_DISCOVERY,
@@ -31,6 +36,8 @@ enum ble_stage {
 struct ble_event {
 	enum ble_event_type type;
 	union {
+		/* BLE_ADVERT: from a stored keyboard or one offering the HID service. */
+		struct btpolicy_advert advert;
 		/* BLE_CONNECTED: the keyboard's address as text. */
 		char address[BLE_ADDRESS_MAX];
 		/* BLE_DISCONNECTED: the stack's reason code. */
@@ -49,9 +56,15 @@ struct ble_event {
 	};
 };
 
-/* Starts the Bluetooth stack and scans for HID keyboards; a second call fails with -EALREADY
- * once the first has run. */
+/* Starts the Bluetooth stack; a second call fails with -EALREADY once the first has run. */
 int ble_start(void);
+/* Does nothing when scanning is already in the state asked for. */
+int ble_scan(bool on);
+/* Every call that returns 0 ends in one BLE_DISCONNECTED, after a BLE_FAILED when a stage
+ * failed. */
+int ble_connect(const uint8_t addr[BTPOLICY_ADDR_LEN]);
+uint8_t ble_stored_count(void);
+int ble_forget_connected(void);
 bool ble_take_event(struct ble_event *ev);
 /* Copies the report map read at this connection and returns its length, 0 before BLE_MAP_READ. */
 size_t ble_copy_map(uint8_t *out, size_t cap);

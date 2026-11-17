@@ -54,7 +54,10 @@ fn status_lines(s: &Status) -> Vec<String> {
                 row,
             )
         }
-        Link::Bluetooth => (String::new(), String::new(), None),
+        Link::Bluetooth(_) => {
+            let row = s.link.keyboard_name().map(|n| ("keyboard", n.to_string()));
+            (String::new(), String::new(), row)
+        }
     };
     let channel_and_signal = s.protocol().has_channel_and_signal();
     let counters: Vec<String> = s
@@ -468,7 +471,7 @@ mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
     use crate::protocol::tests::{nuphy, status_of, unifying};
-    use crate::protocol::{Command, Protocol};
+    use crate::protocol::{BluetoothLink, Command, Link, Protocol};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
@@ -485,6 +488,28 @@ mod tests {
                 .iter()
                 .any(|l| l.starts_with("protocol") && l.ends_with("Bluetooth"))
         );
+    }
+
+    #[test]
+    fn a_connected_bluetooth_keyboard_is_named() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.link = Link::Bluetooth(BluetoothLink::Connected {
+            name: Some("MX Keys".into()),
+        });
+        let lines = status_lines(&s);
+        let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
+        assert!(link.ends_with("connected"), "{link}");
+        let keyboard = lines.iter().find(|l| l.starts_with("keyboard")).unwrap();
+        assert!(keyboard.ends_with("MX Keys"), "{keyboard}");
+    }
+
+    #[test]
+    fn a_failed_bluetooth_start_is_reported() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.link = Link::Bluetooth(BluetoothLink::StartFailed);
+        let lines = status_lines(&s);
+        let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
+        assert!(link.ends_with("Bluetooth failed to start"), "{link}");
     }
 
     #[test]

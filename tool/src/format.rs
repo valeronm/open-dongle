@@ -3,8 +3,8 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Event, EventKind, Link, Noise, NuphyState, Protocol, STRONG_DBM, Status,
-    UnifyingState, VersionMismatch, Watch, bucket_floor,
+    Action, BUSY_DBM, BluetoothLink, Event, EventKind, Link, Noise, NuphyState, Protocol,
+    STRONG_DBM, Status, UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -205,7 +205,9 @@ pub fn state_name(s: &Status) -> &'static str {
             UnifyingState::Connected => "connected",
             UnifyingState::Silent => "silent",
         },
-        Link::Bluetooth => "no keyboard",
+        Link::Bluetooth(BluetoothLink::NoKeyboard) => "no keyboard",
+        Link::Bluetooth(BluetoothLink::Connected { .. }) => "connected",
+        Link::Bluetooth(BluetoothLink::StartFailed) => "Bluetooth failed to start",
     }
 }
 
@@ -231,7 +233,8 @@ pub fn link_health(s: &Status) -> LinkHealth {
             UnifyingState::Connected => LinkHealth::Connected,
             UnifyingState::Silent => LinkHealth::Waiting,
         },
-        Link::Bluetooth => LinkHealth::NotPaired,
+        Link::Bluetooth(BluetoothLink::Connected { .. }) => LinkHealth::Connected,
+        Link::Bluetooth(_) => LinkHealth::NotPaired,
     }
 }
 
