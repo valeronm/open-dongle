@@ -6,7 +6,6 @@
 #include "indicator.h"
 
 #define TICK_MS 10
-#define REPORT_PERIOD_MS 10000
 
 static int no_home(void)
 {
@@ -47,9 +46,47 @@ static const struct core_loop loop = {
 	.move = no_move,
 };
 
+static void print_hex(const uint8_t *data, size_t len)
+{
+	for (size_t i = 0; i < len; i++) {
+		printk("%02x%s", data[i], i % 32 == 31 ? "\n" : "");
+	}
+	if (len % 32 != 0 || len == 0) {
+		printk("\n");
+	}
+}
+
+static void print_event(const struct ble_event *ev)
+{
+	const uint8_t *map;
+	size_t len;
+
+	switch (ev->type) {
+	case BLE_CONNECTED:
+		printk("bluetooth connected: %s\n", ev->address);
+		break;
+	case BLE_DISCONNECTED:
+		printk("bluetooth disconnected: reason 0x%02x\n", ev->reason);
+		break;
+	case BLE_FAILED:
+		printk("bluetooth %s failed: %d\n", ble_stage_name(ev->failed.stage),
+		       ev->failed.error);
+		break;
+	case BLE_MAP_READ:
+		len = ble_report_map(&map);
+		printk("bluetooth keyboard \"%s\", report map %u bytes:\n", ble_name(),
+		       (unsigned int)len);
+		print_hex(map, len);
+		break;
+	case BLE_REPORT:
+		printk("bluetooth report %u: ", ev->report.id);
+		print_hex(ev->report.data, ev->report.len);
+		break;
+	}
+}
+
 FUNC_NORETURN void bluetooth_run(int store_err)
 {
-	int64_t reported_ms = 0;
 	int err;
 
 	ARG_UNUSED(store_err);
@@ -63,17 +100,15 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 
 	for (;;) {
 		struct diag_request req;
-		int64_t now;
+		struct ble_event ev;
 
 		k_msleep(TICK_MS);
-		now = k_uptime_get();
 		core_poll();
 		while (core_take_request(&req)) {
 			diag_reply_error(&req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		}
-		if (IS_ENABLED(CONFIG_COUNTERS) && err == 0 && now - reported_ms >= REPORT_PERIOD_MS) {
-			reported_ms = now;
-			printk("adverts heard: %u\n", ble_adverts_heard());
+		while (ble_take_event(&ev)) {
+			print_event(&ev);
 		}
 		core_show_state(err ? IND_ERROR : IND_IDLE);
 		core_watchdog_feed();
