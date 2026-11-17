@@ -1,9 +1,10 @@
-# Supported protocols and parity with the official dongles
+# Supported protocols and how they compare
 
-OpenDongle speaks two keyboard radio protocols, one at a time: NuPhy's 2.4G link, tested with the
-Air75 V2, and Logitech Unifying, tested with an original MX Keys. This page compares each with the
-receiver the keyboard ships with, then lists what OpenDongle adds in both. How each link works on
-air is in [nuphy-v2-2.4ghz.md](nuphy-v2-2.4ghz.md) and [unifying.md](unifying.md).
+OpenDongle speaks three keyboard radio protocols, one at a time: NuPhy's 2.4G link, tested with
+the Air75 V2; Logitech Unifying, tested with an original MX Keys; and Bluetooth LE, tested with
+both. This page compares NuPhy and Unifying with each keyboard's own receiver and Bluetooth with
+the PC's own Bluetooth, then lists what OpenDongle adds. How the 2.4G links work on air is in
+[nuphy-v2-2.4ghz.md](nuphy-v2-2.4ghz.md) and [unifying.md](unifying.md).
 
 In the tables, 🟢 marks a row where OpenDongle does better, ⚪ one where both do the same, and 🔴
 one where the official receiver does better.
@@ -125,12 +126,47 @@ the link key, then read and type keystrokes.[^mengs-1]
 | Link key read over USB (CVE-2019-13055) | refused on RQR24[^rqr-10][^logi-advisory] | no command returns it | ⚪ |
 | Firmware | Logitech-signed only[^mengs-2] | any image, see [Firmware updates](#firmware-updates) | 🔴 |
 
-## Added in both protocols
+## Bluetooth LE
 
-- **Noise-aware channel moves.** The dongle keeps measuring the noise on the keyboard's channels
-  between packets and moves to a clearly quieter one. Only noise strong enough to matter at the
-  keyboard's signal counts, so a keyboard close to the dongle rarely causes a move.
-- **One firmware for both protocols**, [switched by the tool](../README.md#keyboard-protocols).
+The dongle is a HID over GATT host: it reads the keyboard's report map at every connection and
+translates its keyboard, media and system reports into the dongle's own USB reports.
+
+| | PC's Bluetooth | OpenDongle |  |
+|---|---|---|---|
+| Keyboard keys (6KRO) | yes | yes | ⚪ |
+| Media and system keys | yes | yes | ⚪ |
+| Vendor reports, such as keys set up by Logitech Options | yes | ignored | 🔴 |
+| Mice | yes | no | 🔴 |
+| Keyboards | as many as the PC pairs | four stored, one connected | 🔴 |
+| Bluetooth Classic keyboards | yes | no | 🔴 |
+| Boot menus and PCs without Bluetooth | no | yes | 🟢 |
+| Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
+| Keyboard name and signal | in the PC's settings | shown by the tool | ⚪ |
+
+The nRF52840 has no Bluetooth Classic radio. A report map the dongle cannot parse, or one with no
+keyboard in it, refuses the keyboard.
+
+### Reliability
+
+The dongle connects to whichever stored keyboard it hears first, and the others wait until that one
+disconnects. The MX Keys reconnects with adverts aimed at the dongle alone, and after the dongle
+restarts several times in a row it waits for a key press before it reconnects.
+
+### Security
+
+Both keyboards tested pair only with LE legacy pairing, so the dongle allows it. Anyone who
+records a legacy pairing can derive its key and read the keyboard afterwards, with or without a
+passkey.[^crackle] The passkey makes the dongle pair the keyboard it was typed on; without one, any
+keyboard in pairing mode nearby can pair while the window is open. After pairing the link is
+encrypted, and only a stored keyboard connects.
+
+## Added by OpenDongle
+
+- **Noise-aware channel moves**, in NuPhy and Unifying mode. The dongle keeps measuring the noise
+  on the keyboard's channels between packets and moves to a clearly quieter one. Only noise strong
+  enough to matter at the keyboard's signal counts, so a keyboard close to the dongle rarely causes
+  a move.
+- **One firmware for every protocol**, [switched by the tool](../README.md#keyboard-protocols).
 - **Diagnostics** through the [open-dongle tool](tool.md).
 - **An [LED](../README.md#led) that shows the link state.**
 - **Open firmware**, [flashed by the tool](../README.md#flashing-the-firmware).
@@ -182,6 +218,8 @@ Unifying link key.
     CVE-2019-13054/55.
 [^forced]: Logitech's release notes for [RQR12.05](https://github.com/Logitech/fw_updates/blob/master/RQR12/RQR12.05/RQR12.05_B0028.txt), fixing
     Bastille's [advisory 1](https://github.com/BastilleResearch/mousejack/blob/master/doc/advisories/bastille-1.logitech.public.txt), which tested only RQR12 firmware.
+[^crackle]: Mike Ryan, [crackle](https://github.com/mikeryan/crackle): recovers the key of a recorded
+    LE legacy pairing, by brute force when a passkey was used.
 [^rqr-10]: Logitech's release notes for [RQR24.10](https://github.com/Logitech/fw_updates/blob/master/RQR24/RQR24.10/RQR24.10_B0036.txt), fixing
     CVE-2019-13055 and refusing some keystrokes from pointing devices, and for
     [RQR12.10](https://github.com/Logitech/fw_updates/blob/master/RQR12/RQR12.10/RQR12.10_B0032.txt), refusing the keystrokes only.

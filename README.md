@@ -1,10 +1,10 @@
 # OpenDongle
 
-An open replacement 2.4 GHz receiver for wireless keyboards, running on a [Pro Micro
-nRF52840](#hardware). It supports the NuPhy Air75 V2 and Logitech Unifying keyboards, one
-[protocol](#keyboard-protocols) at a time; the Unifying keyboard tested is the MX Keys.
-[docs/protocols.md](docs/protocols.md) compares it with each keyboard's own receiver. The keyboard
-keeps its own firmware.
+An open receiver for wireless keyboards, running on a [Pro Micro nRF52840](#hardware). It
+supports the NuPhy Air75 V2's 2.4G link, Logitech Unifying keyboards and Bluetooth LE keyboards,
+one [protocol](#keyboard-protocols) at a time; the keyboards tested are the Air75 V2 and the MX
+Keys. [docs/protocols.md](docs/protocols.md) compares it with each keyboard's own receiver and with
+pairing a Bluetooth keyboard to the PC. The keyboard keeps its own firmware.
 
 ## Hardware
 
@@ -49,24 +49,34 @@ board still running its factory program, restarting it into the bootloader as ne
 
 ## Keyboard protocols
 
-One firmware speaks both radio protocols, but only one runs at a time, chosen by a setting the
-dongle keeps in flash. A new dongle runs NuPhy. `open-dongle protocol unifying` or
-`open-dongle protocol nuphy` switches it, and the dongle reboots into the new protocol. Each
-protocol keeps its own pairing, so switching back needs no new pairing.
+One firmware speaks all three protocols, but only one runs at a time, chosen by a setting the
+dongle keeps in flash. A new dongle runs NuPhy. `open-dongle protocol nuphy`, `unifying` or
+`bluetooth` switches it, and the dongle reboots into the new protocol. Each protocol keeps its own
+pairing, so switching back needs no new pairing.
 
 ## Pairing
 
-`open-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. Plugging the dongle in
-opens it too, until the paired keyboard connects or 30 seconds pass, so switch that keyboard off
-first or put it in pairing mode. A connected NuPhy keyboard keeps `open-dongle pair` from hearing
-another one, so switch it off too. A dongle with no keyboard paired keeps pairing open. A new
-keyboard replaces the one paired before.
+`open-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. A dongle with no
+keyboard paired keeps pairing open from the moment it is plugged in until one pairs.
+
+In NuPhy and Unifying mode, plugging the dongle in also opens pairing while a keyboard is paired,
+until that keyboard connects or 30 seconds pass, so switch it off first or put it in pairing mode.
+A connected NuPhy keyboard keeps `open-dongle pair` from hearing another one, so switch it off too.
+A new keyboard replaces the one paired before.
 
 **NuPhy:** in 2.4G mode, hold Fn+4 for 3 seconds. Keep the keyboard close, since it transmits at
 low power while pairing. If the link gets worse after the Wi-Fi around you changes, pair again.
 
 **Unifying:** switch the keyboard off and on. On a keyboard with Easy-Switch keys, such as the MX
 Keys, first hold an Easy-Switch key until it blinks fast.
+
+**Bluetooth:** `open-dongle pair` prints a six-digit passkey. Put the keyboard in Bluetooth pairing
+mode, type the passkey on it and press Enter. A keyboard with no passkey step, such as the Air75
+V2, pairs with `open-dongle pair --no-passkey`. Opening pairing drops the connected keyboard until
+the window closes, and once a keyboard is stored, plugging the dongle in opens nothing. The dongle
+stores up to four keyboards, and a full list refuses a new pairing until one is
+[forgotten](docs/tool.md#bluetooth-mode). The MX Keys pairs under a new address each time, so
+pairing it again leaves its old entry to forget.
 
 ## LED
 

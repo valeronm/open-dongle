@@ -2,8 +2,8 @@
 
 `open-dongle` reads and controls a running dongle over its vendor HID interface while the keyboard
 types, and flashes its firmware. `open-dongle --help` lists the commands and each one's options;
-`--serial` picks a board when more than one is plugged in. `noise`, `reboot`, `bootloader`, `flash`
-and `clear` ask first, and `--yes` skips the question.
+`--serial` picks a board when more than one is plugged in. `noise`, `reboot`, `bootloader`, `flash`,
+`clear` and `forget` ask first, and `--yes` skips the question.
 
 ## Live view
 
@@ -38,14 +38,27 @@ idle MX Keys sleeps after a few minutes.
 - `pair` opens pairing for 30 seconds.
 - `move <channel>` moves the link to one of the keyboard's channels, until the dongle moves it again
   or restarts.
-- `protocol` shows the protocol the dongle runs; `protocol nuphy` or `protocol unifying` switches
-  it, and the tool waits for the dongle to come back in the new one.
+- `protocol` shows the protocol the dongle runs; `protocol nuphy`, `unifying` or `bluetooth`
+  switches it, and the tool waits for the dongle to come back in the new one.
 
 ### Forced channels
 
 `channels <a> <b> <c>` makes every NuPhy pairing offer those three channels instead of the ones the
 noise survey picks, and `channels auto` returns to the survey. The dongle keeps them in flash. A
 Unifying keyboard's channels are fixed by its firmware, so the command exists only in NuPhy mode.
+
+## Bluetooth mode
+
+The keyboard hops across all channels, so the dongle has no channel, noise, gaps or moves to show,
+and refuses `noise`, `moves`, `move` and `channels`. The signal is the connection's, read from the
+radio once a second while a keyboard is connected. The events record each keyboard's connects,
+disconnects with their reason, pairings and refused pairings, and a keyboard that lost its pairing,
+which has to be forgotten and paired again.
+
+- `pair` prints the passkey to type on the keyboard; `pair --no-passkey` pairs a keyboard that has
+  no passkey step.
+- `keyboards` lists the stored keyboards, the most recently connected first, and `forget <n>`
+  removes the one at that place in the list.
 
 ## Firmware and reset
 

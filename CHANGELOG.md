@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+- A third protocol, Bluetooth LE: the dongle stores up to four Bluetooth keyboards, connects one at
+  a time and presents it over USB like the other two.
+- In Bluetooth mode `open-dongle pair` prints a passkey to type on the keyboard, and
+  `--no-passkey` pairs a keyboard without a passkey step, such as the Air75 V2.
+- `open-dongle keyboards` lists the stored Bluetooth keyboards and `open-dongle forget <n>` removes
+  the one at that place in the list.
+- The history records Bluetooth connects, disconnects with their reason, pairings, refused pairings
+  and a keyboard that lost its pairing.
+- The status and live view show a Bluetooth keyboard's name, signal and last packet.
+- Before the first packet the status shows no signal level instead of 0 dBm.
+- The diagnostic protocol is now 3, so the 0.2.0 tool can only `flash` new firmware.
+
 ## [0.2.0] - 2026-11-16
 
 - One firmware runs either the NuPhy Air75 V2 or a Logitech Unifying keyboard such as the MX Keys.
