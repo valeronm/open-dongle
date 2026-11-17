@@ -171,8 +171,13 @@ impl<T: Transport> Device<T> {
         Reader::new(&reply).u8()
     }
 
-    pub fn pair(&mut self) -> Result<()> {
-        self.call(Command::Pair, 0, TIMEOUT).map(drop)
+    /// Returns the passkey to type on the keyboard when the dongle asks for one, which only
+    /// Bluetooth does.
+    pub fn pair(&mut self, no_passkey: bool) -> Result<Option<u32>> {
+        let reply = self.call(Command::Pair, u32::from(no_passkey), TIMEOUT)?;
+        let mut r = Reader::new(&reply);
+        let asked = r.u8()? != 0;
+        Ok(asked.then_some(r.u32()?))
     }
 
     /// Returns the protocol running when the dongle answered, and whether it now reboots.
@@ -481,6 +486,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn pair_returns_the_passkey_a_bluetooth_dongle_chose() {
+        let mut dev = Device::new(
+            Fake::new(|req| parts(req[0], req[1], &[1, 0x40, 0xe2, 0x01, 0x00])),
+            0,
+        );
+        assert_eq!(dev.pair(false).unwrap(), Some(123_456));
+        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[1, 0, 0, 0, 0])), 0);
+        assert_eq!(dev.pair(false).unwrap(), Some(0));
+        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0);
+        assert_eq!(dev.pair(false).unwrap(), None);
+    }
+
+    #[test]
+    fn pairing_without_a_passkey_is_asked_for_in_the_request() {
+        let asked = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = asked.clone();
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                seen.set(Some(req[2]));
+                parts(req[0], req[1], &[])
+            }),
+            0,
+        );
+        dev.pair(true).unwrap();
+        assert_eq!(asked.get(), Some(1));
+        dev.pair(false).unwrap();
+        assert_eq!(asked.get(), Some(0));
+    }
+
+    #[test]
     fn a_wrong_protocol_refusal_names_the_running_one() {
         let mut dev = Device::new(
             Fake::new(|req| {
@@ -490,7 +525,7 @@ pub(crate) mod tests {
             }),
             0,
         );
-        let err = dev.pair().unwrap_err().to_string();
+        let err = dev.pair(false).unwrap_err().to_string();
         assert!(
             err.contains("not available while the dongle runs Unifying"),
             "{err}"

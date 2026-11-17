@@ -33,6 +33,15 @@ static void a_stored_keyboard_is_wanted_whatever_its_advert_carries(void)
 	CHECK(!btpolicy_wants(&policy, &a, false, 1, 0));
 }
 
+static void a_stored_keyboard_waits_while_a_window_is_open(void)
+{
+	struct btpolicy_advert known = stored_advert(1);
+
+	btpolicy_init(&policy);
+	CHECK(!btpolicy_wants(&policy, &known, true, 1, 0));
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 0));
+}
+
 static void an_unknown_keyboard_needs_an_open_window(void)
 {
 	struct btpolicy_advert a = new_advert(1);
@@ -66,7 +75,7 @@ static void a_full_list_takes_no_new_keyboard(void)
 	btpolicy_init(&policy);
 	CHECK(btpolicy_wants(&policy, &fresh, true, BTPOLICY_STORED_MAX - 1, 0));
 	CHECK(!btpolicy_wants(&policy, &fresh, true, BTPOLICY_STORED_MAX, 0));
-	CHECK(btpolicy_wants(&policy, &known, true, BTPOLICY_STORED_MAX, 0));
+	CHECK(btpolicy_wants(&policy, &known, false, BTPOLICY_STORED_MAX, 0));
 }
 
 static void nothing_is_wanted_while_connecting_or_connected(void)
@@ -126,7 +135,7 @@ static void a_failed_new_keyboard_sets_no_wait(void)
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &fresh);
 	btpolicy_disconnected(&policy, 10000);
-	CHECK(btpolicy_wants(&policy, &known, true, 1, 10000));
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
 	CHECK(btpolicy_wants(&policy, &fresh, true, 1, 10000));
 }
 
@@ -137,7 +146,7 @@ static void a_keyboard_paired_in_this_connection_waits_after_a_failure(void)
 
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &fresh);
-	btpolicy_paired(&policy);
+	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_KEPT);
 	btpolicy_disconnected(&policy, 10000);
 	CHECK(!btpolicy_wants(&policy, &known, false, 1, 10000));
 	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000 + BTPOLICY_RETRY_MS));
@@ -161,17 +170,17 @@ static void a_refused_keyboard_is_ignored_until_the_window_closes(void)
 	struct btpolicy_advert another = new_advert(2);
 
 	btpolicy_init(&policy);
-	btpolicy_window(&policy, true);
+	btpolicy_window(&policy, true, false);
 	btpolicy_connecting(&policy, &fresh);
-	CHECK_EQ(btpolicy_security_failed(&policy, false), BTPOLICY_PAIRING_REFUSED);
-	CHECK_EQ(btpolicy_security_failed(&policy, false), BTPOLICY_REFUSED_BEFORE);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_PAIRING_REFUSED);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_REFUSED_BEFORE);
 	btpolicy_disconnected(&policy, 100);
 	CHECK(!btpolicy_wants(&policy, &fresh, true, 0, 100));
 	CHECK(btpolicy_wants(&policy, &another, true, 0, 100));
-	btpolicy_window(&policy, true);
+	btpolicy_window(&policy, true, false);
 	CHECK(!btpolicy_wants(&policy, &fresh, true, 0, 100));
-	btpolicy_window(&policy, false);
-	btpolicy_window(&policy, true);
+	btpolicy_window(&policy, false, false);
+	btpolicy_window(&policy, true, false);
 	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 100));
 }
 
@@ -182,10 +191,52 @@ static void more_refusals_than_fit_are_still_counted_once_each(void)
 		struct btpolicy_advert a = new_advert(i);
 
 		btpolicy_connecting(&policy, &a);
-		CHECK_EQ(btpolicy_security_failed(&policy, false), BTPOLICY_PAIRING_REFUSED);
+		CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_PAIRING_REFUSED);
 		btpolicy_disconnected(&policy, 0);
 	}
 	CHECK_EQ(policy.refused_count, BTPOLICY_STORED_MAX);
+}
+
+static void a_pairing_cut_short_by_a_lost_link_is_not_a_refusal(void)
+{
+	struct btpolicy_advert fresh = new_advert(1);
+
+	btpolicy_init(&policy);
+	btpolicy_window(&policy, true, false);
+	btpolicy_connecting(&policy, &fresh);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_LINK), BTPOLICY_SECURITY_FAILED);
+	btpolicy_disconnected(&policy, 100);
+	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 100));
+}
+
+static void a_pairing_without_the_demanded_passkey_is_forgotten(void)
+{
+	struct btpolicy_advert fresh = new_advert(1);
+
+	btpolicy_init(&policy);
+	btpolicy_window(&policy, true, true);
+	btpolicy_connecting(&policy, &fresh);
+	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_FORGOTTEN);
+	btpolicy_disconnected(&policy, 100);
+	CHECK(!btpolicy_wants(&policy, &fresh, true, 0, 100));
+	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 100 + BTPOLICY_RETRY_MS) == false);
+	btpolicy_window(&policy, false, false);
+	btpolicy_window(&policy, true, true);
+	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 5000));
+}
+
+static void a_pairing_with_the_demanded_passkey_is_kept(void)
+{
+	struct btpolicy_advert fresh = new_advert(1);
+	struct btpolicy_advert known = stored_advert(1);
+
+	btpolicy_init(&policy);
+	btpolicy_window(&policy, true, true);
+	btpolicy_connecting(&policy, &fresh);
+	CHECK_EQ(btpolicy_paired(&policy, true), BTPOLICY_PAIRING_KEPT);
+	btpolicy_disconnected(&policy, 10000);
+	btpolicy_window(&policy, false, false);
+	CHECK(!btpolicy_wants(&policy, &known, false, 1, 10000));
 }
 
 static void a_stored_keyboard_without_its_key_lost_its_bond(void)
@@ -195,12 +246,12 @@ static void a_stored_keyboard_without_its_key_lost_its_bond(void)
 
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &known);
-	CHECK_EQ(btpolicy_security_failed(&policy, true), BTPOLICY_BOND_LOST);
-	CHECK_EQ(btpolicy_security_failed(&policy, false), BTPOLICY_SECURITY_FAILED);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_KEY_MISSING), BTPOLICY_BOND_LOST);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_SECURITY_FAILED);
 	btpolicy_disconnected(&policy, 0);
 	btpolicy_connecting(&policy, &fresh);
-	btpolicy_paired(&policy);
-	CHECK_EQ(btpolicy_security_failed(&policy, false), BTPOLICY_SECURITY_FAILED);
+	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_KEPT);
+	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_SECURITY_FAILED);
 }
 
 static void only_connectable_stored_or_hid_adverts_are_of_interest(void)
@@ -219,6 +270,7 @@ static void only_connectable_stored_or_hid_adverts_are_of_interest(void)
 int main(void)
 {
 	RUN(a_stored_keyboard_is_wanted_whatever_its_advert_carries);
+	RUN(a_stored_keyboard_waits_while_a_window_is_open);
 	RUN(an_unknown_keyboard_needs_an_open_window);
 	RUN(an_unknown_keyboard_needs_the_hid_service_undirected);
 	RUN(a_full_list_takes_no_new_keyboard);
@@ -230,6 +282,9 @@ int main(void)
 	RUN(the_wait_holds_across_the_clock_wrap);
 	RUN(a_refused_keyboard_is_ignored_until_the_window_closes);
 	RUN(more_refusals_than_fit_are_still_counted_once_each);
+	RUN(a_pairing_cut_short_by_a_lost_link_is_not_a_refusal);
+	RUN(a_pairing_without_the_demanded_passkey_is_forgotten);
+	RUN(a_pairing_with_the_demanded_passkey_is_kept);
 	RUN(a_stored_keyboard_without_its_key_lost_its_bond);
 	RUN(only_connectable_stored_or_hid_adverts_are_of_interest);
 	return TEST_EXIT();

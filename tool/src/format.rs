@@ -25,14 +25,20 @@ pub fn switch_question(to: Protocol) -> String {
     )
 }
 
-pub fn pairing_open(protocol: Protocol) -> &'static str {
-    match protocol {
-        Protocol::Nuphy => "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s",
-        Protocol::Unifying => {
-            "pairing is open for 30 s; switch the keyboard off and on, after holding an Easy-Switch key until it blinks fast if it has them"
+pub const PAIRING_OPEN: &str = "pairing is open";
+
+pub fn pairing_open(protocol: Protocol, passkey: Option<u32>) -> String {
+    let how = match (protocol, passkey) {
+        (Protocol::Nuphy, _) => "hold Fn+4 on the keyboard for 3 s".into(),
+        (Protocol::Unifying, _) => {
+            "switch the keyboard off and on, after holding an Easy-Switch key until it blinks fast if it has them".into()
         }
-        Protocol::Bluetooth => "pairing is open; put the keyboard in Bluetooth pairing mode",
-    }
+        (Protocol::Bluetooth, Some(passkey)) => format!(
+            "put the keyboard in Bluetooth pairing mode, then type {passkey:06} on it and press Enter"
+        ),
+        (Protocol::Bluetooth, None) => "put the keyboard in Bluetooth pairing mode".into(),
+    };
+    format!("{PAIRING_OPEN} for 30 s; {how}")
 }
 
 pub fn moved(from: u8, to: u8) -> String {
@@ -658,6 +664,19 @@ mod tests {
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, \
              noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
+    }
+
+    #[test]
+    fn a_bluetooth_pairing_prints_the_passkey_with_its_leading_zeros() {
+        let line = pairing_open(Protocol::Bluetooth, Some(1234));
+        assert!(line.contains("type 001234"), "{line}");
+        assert!(line.contains("Enter"), "{line}");
+        assert!(line.contains("30 s"), "{line}");
+        let line = pairing_open(Protocol::Bluetooth, None);
+        assert!(line.contains("pairing mode"), "{line}");
+        assert!(!line.contains("type"), "{line}");
+        let line = pairing_open(Protocol::Nuphy, None);
+        assert!(line.contains("Fn+4"), "{line}");
     }
 
     #[test]

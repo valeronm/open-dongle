@@ -17,7 +17,6 @@ bool diag_command_answered(uint8_t command, enum protocol active)
 	case DIAG_NOISE:
 	case DIAG_MOVE:
 	case DIAG_WATCH:
-	case DIAG_PAIR:
 		return active != PROTOCOL_BLUETOOTH;
 	default:
 		return true;

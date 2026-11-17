@@ -134,10 +134,20 @@ pub fn open_nuphy(
     Ok((dev, s))
 }
 
-pub fn pair<T: Transport>(dev: &mut Device<T>, protocol: Protocol) -> Result<()> {
-    dev.pair()?;
-    println!("{}", format::pairing_open(protocol));
-    Ok(())
+/// Opens pairing and returns the line that says what to do at the keyboard.
+pub fn pair<T: Transport>(
+    dev: &mut Device<T>,
+    protocol: Protocol,
+    no_passkey: bool,
+) -> Result<String> {
+    if no_passkey && protocol != Protocol::Bluetooth {
+        bail!(
+            "--no-passkey applies only while the dongle runs Bluetooth; it runs {}",
+            protocol.name()
+        );
+    }
+    let passkey = dev.pair(no_passkey)?;
+    Ok(format::pairing_open(protocol, passkey))
 }
 
 /// Moves the link and returns the line that reports it, with the dongle's refusals explained.
@@ -603,6 +613,26 @@ mod tests {
             }),
             0,
         )
+    }
+
+    #[test]
+    fn pairing_without_a_passkey_is_refused_outside_bluetooth() {
+        let mut dev = Device::new(Fake::new(|_| panic!("nothing should be sent")), 0);
+        let err = pair(&mut dev, Protocol::Unifying, true)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("only while the dongle runs Bluetooth"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn the_pairing_line_carries_the_passkey_the_dongle_sent() {
+        let reply = |req: &[u8; 64]| parts(req[0], req[1], &[1, 42, 0, 0, 0]);
+        let mut dev = Device::new(Fake::new(reply), 0);
+        let line = pair(&mut dev, Protocol::Bluetooth, false).unwrap();
+        assert!(line.contains("000042"), "{line}");
     }
 
     #[test]

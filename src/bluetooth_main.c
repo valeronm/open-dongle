@@ -1,5 +1,7 @@
 #include <string.h>
 #include <zephyr/kernel.h>
+#include <zephyr/random/random.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include "ble.h"
 #include "btpolicy.h"
@@ -34,6 +36,7 @@ static struct btpolicy policy;
 static struct pairwin window;
 static char name[BLE_NAME_MAX + 1];
 static int start_err;
+static bool passkey_asked;
 
 static void fill_status(struct diag_status *st)
 {
@@ -122,7 +125,7 @@ static void on_failed(const struct ble_event *ev)
 	if (ev->failed.stage != BLE_STAGE_SECURITY) {
 		return;
 	}
-	switch (btpolicy_security_failed(&policy, ev->failed.error == BLE_SECURITY_KEY_MISSING)) {
+	switch (btpolicy_security_failed(&policy, ev->failed.why)) {
 	case BTPOLICY_PAIRING_REFUSED:
 		printk("bluetooth pairing refused\n");
 		break;
@@ -198,8 +201,13 @@ static void on_event(const struct ble_event *ev)
 		on_failed(ev);
 		break;
 	case BLE_PAIRED:
+		if (btpolicy_paired(&policy, ev->passkey_used) == BTPOLICY_PAIRING_FORGOTTEN) {
+			printk("bluetooth pairing refused: no passkey typed\n");
+			ble_forget_connected();
+			ble_disconnect();
+			break;
+		}
 		printk("bluetooth paired\n");
-		btpolicy_paired(&policy);
 		pairwin_paired(&window);
 		break;
 	case BLE_MAP_READ:
@@ -207,6 +215,54 @@ static void on_event(const struct ble_event *ev)
 		break;
 	case BLE_REPORT:
 		on_report(ev);
+		break;
+	}
+}
+
+#define PASSKEY_LIMIT 1000000
+
+static void open_pairing(const struct diag_request *req)
+{
+	bool with_passkey = (req->arg & DIAG_PAIR_NO_PASSKEY) == 0;
+	uint8_t reply[DIAG_PAIR_REPLY_LEN] = {with_passkey};
+	uint32_t passkey = 0;
+	int err;
+
+	if (start_err) {
+		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		return;
+	}
+	if (ble_stored_count() >= BTPOLICY_STORED_MAX) {
+		diag_reply_error(req, DIAG_ERR_LIST_FULL, 0);
+		return;
+	}
+	if (with_passkey) {
+		sys_csrand_get(&passkey, sizeof(passkey));
+		passkey %= PASSKEY_LIMIT;
+	}
+	err = ble_offer_passkey(with_passkey, passkey);
+	if (err) {
+		printk("bluetooth passkey not offered: %d\n", err);
+		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		return;
+	}
+	passkey_asked = with_passkey;
+	pairwin_open(&window, PAIRWIN_REQUEST, true, k_uptime_get_32());
+	core_log_pairing_opened(&window);
+	printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
+	ble_disconnect();
+	sys_put_le32(passkey, &reply[1]);
+	diag_reply(req, reply, sizeof(reply), DIAG_AFTER_NONE);
+}
+
+static void on_request(const struct diag_request *req)
+{
+	switch (req->command) {
+	case DIAG_PAIR:
+		open_pairing(req);
+		break;
+	default:
+		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
 		break;
 	}
 }
@@ -249,13 +305,20 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 		k_msleep(TICK_MS);
 		core_poll();
 		while (core_take_request(&req)) {
-			diag_reply_error(&req, DIAG_ERR_UNKNOWN_COMMAND, 0);
+			on_request(&req);
 		}
 		while (ble_take_event(&ev)) {
 			on_event(&ev);
 		}
 		now = k_uptime_get_32();
-		btpolicy_window(&policy, pairwin_is_open(&window, now));
+		if (pairwin_ran_out(&window, now)) {
+			printk("pairing closed\n");
+		}
+		if (!pairwin_is_open(&window, now)) {
+			passkey_asked = false;
+			ble_offer_passkey(false, 0);
+		}
+		btpolicy_window(&policy, pairwin_is_open(&window, now), passkey_asked);
 		if (start_err == 0) {
 			int err = ble_scan(btpolicy_scanning(&policy));
 

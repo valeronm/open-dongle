@@ -20,6 +20,10 @@ static size_t map_len;
 static char name[BLE_NAME_MAX + 1];
 static struct bt_gatt_read_params name_read;
 static bool scanning;
+static uint32_t passkey;
+static bool offering;
+static bool failed;
+static bool passkey_used;
 
 static void emit(const struct ble_event *ev)
 {
@@ -28,15 +32,33 @@ static void emit(const struct ble_event *ev)
 	}
 }
 
+static enum btpolicy_failure failure_of(enum ble_stage stage, int error)
+{
+	if (stage != BLE_STAGE_SECURITY || error == BT_SECURITY_ERR_UNSPECIFIED) {
+		return BTPOLICY_FAILURE_LINK;
+	}
+	return error == BT_SECURITY_ERR_PIN_OR_KEY_MISSING ? BTPOLICY_FAILURE_KEY_MISSING
+							   : BTPOLICY_FAILURE_REFUSAL;
+}
+
 static void emit_failed(enum ble_stage stage, int error)
 {
-	struct ble_event ev = {.type = BLE_FAILED, .failed = {.stage = stage, .error = error}};
+	struct ble_event ev = {
+		.type = BLE_FAILED,
+		.failed = {.stage = stage, .error = error, .why = failure_of(stage, error)},
+	};
 
 	emit(&ev);
 }
 
 static void fail(enum ble_stage stage, int error)
 {
+	/* The stages still running when one fails, or when the connection is being closed, end in
+	 * errors of their own. */
+	if (failed) {
+		return;
+	}
+	failed = true;
 	emit_failed(stage, error);
 	ble_disconnect();
 }
@@ -195,7 +217,6 @@ static void read_name(struct bt_conn *conn)
 
 BUILD_ASSERT(BLE_ADDRESS_MAX >= BT_ADDR_LE_STR_LEN);
 BUILD_ASSERT(sizeof(bt_addr_le_t) == BTPOLICY_ADDR_LEN);
-BUILD_ASSERT(BLE_SECURITY_KEY_MISSING == BT_SECURITY_ERR_PIN_OR_KEY_MISSING);
 
 static void connection_ended(uint8_t reason)
 {
@@ -224,6 +245,8 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 	name[0] = '\0';
 	bt_addr_le_to_str(bt_conn_get_dst(conn), ev.address, sizeof(ev.address));
 	emit(&ev);
+	passkey_used = false;
+	failed = false;
 	ret = bt_conn_set_security(conn, BT_SECURITY_L2);
 	if (ret) {
 		fail(BLE_STAGE_SECURITY, ret);
@@ -260,7 +283,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 static void on_pairing_complete(struct bt_conn *conn, bool bonded)
 {
 	if (conn == keyboard && bonded) {
-		emit(&(struct ble_event){.type = BLE_PAIRED});
+		emit(&(struct ble_event){.type = BLE_PAIRED, .passkey_used = passkey_used});
 	}
 }
 
@@ -348,6 +371,38 @@ int ble_connect(const uint8_t addr[BTPOLICY_ADDR_LEN])
 	return err;
 }
 
+static uint32_t on_app_passkey(struct bt_conn *conn)
+{
+	ARG_UNUSED(conn);
+	passkey_used = true;
+	return passkey;
+}
+
+static void on_pairing_cancel(struct bt_conn *conn)
+{
+	ARG_UNUSED(conn);
+}
+
+static const struct bt_conn_auth_cb passkey_callbacks = {
+	.app_passkey = on_app_passkey,
+	.cancel = on_pairing_cancel,
+};
+
+int ble_offer_passkey(bool on, uint32_t value)
+{
+	int err;
+
+	passkey = value;
+	if (on == offering) {
+		return 0;
+	}
+	err = bt_conn_auth_cb_register(on ? &passkey_callbacks : NULL);
+	if (!err) {
+		offering = on;
+	}
+	return err;
+}
+
 static void count_bond(const struct bt_bond_info *info, void *user_data)
 {
 	uint8_t *count = user_data;
@@ -413,6 +468,7 @@ void ble_copy_name(char out[BLE_NAME_MAX + 1])
 
 void ble_disconnect(void)
 {
+	failed = true;
 	if (keyboard) {
 		bt_conn_disconnect(keyboard, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
 	}

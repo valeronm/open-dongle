@@ -29,7 +29,8 @@ bool btpolicy_wants(const struct btpolicy *p, const struct btpolicy_advert *a, b
 		return false;
 	}
 	if (a->stored) {
-		return !p->retry_pending || (int32_t)(now_ms - p->retry_at_ms) >= 0;
+		return !window_open &&
+		       (!p->retry_pending || (int32_t)(now_ms - p->retry_at_ms) >= 0);
 	}
 	return window_open && !a->directed && stored_count < BTPOLICY_STORED_MAX &&
 	       !refused(p, a->addr);
@@ -47,9 +48,21 @@ void btpolicy_connected(struct btpolicy *p)
 	p->state = BTPOLICY_CONNECTED;
 }
 
-void btpolicy_paired(struct btpolicy *p)
+static void refuse_peer(struct btpolicy *p)
 {
+	if (!refused(p, p->peer) && p->refused_count < BTPOLICY_STORED_MAX) {
+		memcpy(p->refused[p->refused_count++], p->peer, BTPOLICY_ADDR_LEN);
+	}
+}
+
+enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, bool passkey_used)
+{
+	if (p->window_open && p->passkey_demanded && !passkey_used) {
+		refuse_peer(p);
+		return BTPOLICY_PAIRING_FORGOTTEN;
+	}
 	p->peer_stored = true;
+	return BTPOLICY_PAIRING_KEPT;
 }
 
 void btpolicy_ready(struct btpolicy *p)
@@ -69,26 +82,29 @@ void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms)
 	p->state = BTPOLICY_IDLE;
 }
 
-enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, bool key_missing)
+enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum btpolicy_failure why)
 {
 	if (p->peer_stored) {
-		return key_missing ? BTPOLICY_BOND_LOST : BTPOLICY_SECURITY_FAILED;
+		return why == BTPOLICY_FAILURE_KEY_MISSING ? BTPOLICY_BOND_LOST
+							   : BTPOLICY_SECURITY_FAILED;
+	}
+	if (why != BTPOLICY_FAILURE_REFUSAL) {
+		return BTPOLICY_SECURITY_FAILED;
 	}
 	if (refused(p, p->peer)) {
 		return BTPOLICY_REFUSED_BEFORE;
 	}
-	if (p->refused_count < BTPOLICY_STORED_MAX) {
-		memcpy(p->refused[p->refused_count++], p->peer, BTPOLICY_ADDR_LEN);
-	}
+	refuse_peer(p);
 	return BTPOLICY_PAIRING_REFUSED;
 }
 
-void btpolicy_window(struct btpolicy *p, bool open)
+void btpolicy_window(struct btpolicy *p, bool open, bool passkey_demanded)
 {
 	if (p->window_open && !open) {
 		p->refused_count = 0;
 	}
 	p->window_open = open;
+	p->passkey_demanded = open && passkey_demanded;
 }
 
 bool btpolicy_scanning(const struct btpolicy *p)

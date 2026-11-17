@@ -78,7 +78,11 @@ enum Cmd {
         name: Option<ProtocolName>,
     },
     /// Open pairing for 30 s
-    Pair,
+    Pair {
+        /// Under Bluetooth, pair a keyboard that cannot be typed a passkey
+        #[arg(long)]
+        no_passkey: bool,
+    },
     /// Move the link to one of the keyboard's channels until the dongle moves it again or reboots
     Move {
         /// One of the keyboard's channels
@@ -133,9 +137,10 @@ fn main() -> Result<()> {
             cli::channels(&mut cli::open_nuphy(serial, "forced channels")?.0, forced)
         }
         Cmd::Protocol { name } => cli::protocol(serial, name.map(Into::into)),
-        Cmd::Pair => {
+        Cmd::Pair { no_passkey } => {
             let (mut dev, s) = device::open(serial)?;
-            cli::pair(&mut dev, s.protocol())
+            println!("{}", cli::pair(&mut dev, s.protocol(), no_passkey)?);
+            Ok(())
         }
         Cmd::Move { channel } => {
             let (mut dev, s) = device::open(serial)?;

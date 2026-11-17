@@ -306,7 +306,7 @@ static void test_error_codes_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
 			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL, DIAG_ERR_NOT_MOVABLE,
-			       DIAG_ERR_KEY_HELD};
+			       DIAG_ERR_KEY_HELD, DIAG_ERR_LIST_FULL};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
 
@@ -340,9 +340,9 @@ static void test_a_protocol_answers_only_its_commands(void)
 {
 	static const uint8_t everywhere[] = {
 		DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_REBOOT, DIAG_BOOTLOADER,
-		DIAG_CLEAR,  DIAG_PROTOCOL, 0, 200,
+		DIAG_CLEAR,  DIAG_PROTOCOL, DIAG_PAIR, 0, 200,
 	};
-	static const uint8_t not_bluetooth[] = {DIAG_NOISE, DIAG_MOVE, DIAG_WATCH, DIAG_PAIR};
+	static const uint8_t not_bluetooth[] = {DIAG_NOISE, DIAG_MOVE, DIAG_WATCH};
 
 	for (size_t i = 0; i < sizeof(everywhere); i++) {
 		CHECK(diag_command_answered(everywhere[i], PROTOCOL_NUPHY));

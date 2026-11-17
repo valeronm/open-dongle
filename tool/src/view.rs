@@ -19,10 +19,10 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, LinkHealth, NOISE_QUESTION, action_question, bucket_label, channel_role,
-    counted_share, describe_event, last_packet, link_health, noise_level, noise_ruler, paired,
-    pairing_open, share, state_name, status_label, switch_question, uptime, usb_state, wall_clock,
-    watch_role, watch_summary,
+    ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
+    channel_role, counted_share, describe_event, last_packet, link_health, noise_level,
+    noise_ruler, paired, share, state_name, status_label, switch_question, uptime, usb_state,
+    wall_clock, watch_role, watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
@@ -673,10 +673,8 @@ impl<T: Transport> Session<T> {
     }
 
     fn pair(&mut self, protocol: Protocol) {
-        self.message = match self.device.pair() {
-            Ok(()) => pairing_open(protocol).into(),
-            Err(e) => format!("failed: {}", error_text(&e)),
-        };
+        self.message = crate::cli::pair(&mut self.device, protocol, false)
+            .unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
     }
 
     fn step(&mut self, step: Step) {
@@ -720,7 +718,7 @@ impl<T: Transport> Session<T> {
     /// The dongle closes its pairing window on its own, so the message outlives the window.
     fn drop_pairing_message_once_closed(&mut self) {
         let status = &self.history.status;
-        if !status.pairing_open && self.message == pairing_open(status.protocol()) {
+        if !status.pairing_open && self.message.starts_with(PAIRING_OPEN) {
             self.message.clear();
         }
     }
@@ -1159,6 +1157,7 @@ fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
+    use crate::format::pairing_open;
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::{nuphy, status_of, status_running};
     use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
@@ -1419,10 +1418,11 @@ mod tests {
 
     #[test]
     fn a_message_breaks_between_words() {
-        let lines = flow(pairing_open(Protocol::Unifying).split(' '), " ", 80);
+        let message = pairing_open(Protocol::Unifying, None);
+        let lines = flow(message.split(' '), " ", 80);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 80), "{lines:?}");
-        assert_eq!(lines.join(" "), pairing_open(Protocol::Unifying));
+        assert_eq!(lines.join(" "), message);
     }
 
     #[test]
@@ -1694,7 +1694,7 @@ mod tests {
             0,
         );
         let mut app = app_on(device, status_of(Protocol::Nuphy));
-        session(&mut app).message = pairing_open(Protocol::Nuphy).into();
+        session(&mut app).message = pairing_open(Protocol::Nuphy, None);
         let status = session(&mut app).device.status();
         app.refresh(status);
         assert_eq!(session(&mut app).message, "");
@@ -1717,15 +1717,15 @@ mod tests {
     #[test]
     fn the_pairing_message_stays_while_the_status_reads_pairing() {
         for protocol in Protocol::ALL {
-            let mut app = app_showing(pairing_open(protocol));
+            let mut app = app_showing(&pairing_open(protocol, None));
             refreshed_with_pairing(&mut app, protocol, true);
-            assert_eq!(session(&mut app).message, pairing_open(protocol));
+            assert_eq!(session(&mut app).message, pairing_open(protocol, None));
         }
     }
 
     #[test]
     fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
-        let mut app = app_showing(pairing_open(Protocol::Unifying));
+        let mut app = app_showing(&pairing_open(Protocol::Unifying, None));
         refreshed_with_pairing(&mut app, Protocol::Unifying, false);
         assert_eq!(session(&mut app).message, "");
         assert_eq!(

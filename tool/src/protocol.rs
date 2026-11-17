@@ -56,6 +56,7 @@ pub enum ErrorCode {
     WrongProtocol,
     NotMovable,
     KeyHeld,
+    ListFull,
 }
 
 impl ErrorCode {
@@ -68,6 +69,7 @@ impl ErrorCode {
             5 => Some(Self::WrongProtocol),
             6 => Some(Self::NotMovable),
             7 => Some(Self::KeyHeld),
+            8 => Some(Self::ListFull),
             _ => None,
         }
     }
@@ -85,6 +87,7 @@ impl ErrorCode {
             Self::KeyHeld => {
                 "a key stayed down for a second, and a move then would lose its release: release every key and move again"
             }
+            Self::ListFull => "the dongle already stores as many keyboards as it can hold",
         }
     }
 }
@@ -1455,6 +1458,7 @@ pub(crate) mod tests {
             ErrorCode::WrongProtocol,
             ErrorCode::NotMovable,
             ErrorCode::KeyHeld,
+            ErrorCode::ListFull,
         ];
         assert_eq!(fixture("error-codes.hex"), all.map(|c| c as u8));
         assert_eq!(all.map(|c| ErrorCode::from_code(c as u8)), all.map(Some));

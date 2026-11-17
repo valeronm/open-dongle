@@ -11,9 +11,6 @@
 #define BLE_MAP_MAX 1024
 #define BLE_NAME_MAX 32
 #define BLE_ADDRESS_MAX 30
-/* The BLE_FAILED error of the security stage when a stored keyboard no longer holds its bond. */
-#define BLE_SECURITY_KEY_MISSING 2
-
 enum ble_event_type {
 	BLE_ADVERT,
 	BLE_CONNECTED,
@@ -46,7 +43,10 @@ struct ble_event {
 		struct {
 			enum ble_stage stage;
 			int error;
+			enum btpolicy_failure why;
 		} failed;
+		/* BLE_PAIRED: the keyboard was typed the offered passkey. */
+		bool passkey_used;
 		/* BLE_REPORT: the bytes exclude the report ID. */
 		struct {
 			uint8_t id;
@@ -63,6 +63,8 @@ int ble_scan(bool on);
 /* Every call that returns 0 ends in one BLE_DISCONNECTED, after a BLE_FAILED when a stage
  * failed. */
 int ble_connect(const uint8_t addr[BTPOLICY_ADDR_LEN]);
+/* While on, a keyboard able to take a passkey is asked for this six-digit one as it pairs. */
+int ble_offer_passkey(bool on, uint32_t value);
 uint8_t ble_stored_count(void);
 int ble_forget_connected(void);
 bool ble_take_event(struct ble_event *ev);

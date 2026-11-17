@@ -21,6 +21,10 @@
 #define DIAG_MINUTES_PER_PAGE 40
 #define DIAG_EVENTS_PER_PAGE 32
 #define DIAG_NAME_MAX 24
+/* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */
+#define DIAG_PAIR_NO_PASSKEY 1
+/* The reply under Bluetooth: 1 if a passkey is to be typed, then the passkey. */
+#define DIAG_PAIR_REPLY_LEN 5
 
 enum diag_command {
 	DIAG_STATUS = 1,
@@ -48,6 +52,7 @@ enum diag_error {
 	DIAG_ERR_WRONG_PROTOCOL,
 	DIAG_ERR_NOT_MOVABLE,
 	DIAG_ERR_KEY_HELD,
+	DIAG_ERR_LIST_FULL,
 };
 
 struct diag_request {
