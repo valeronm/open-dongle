@@ -179,8 +179,10 @@ static void fill_status(struct diag_status *s)
 	s->link_state = link.state;
 	s->pairing_open = link_pairing_open(&link, k_uptime_get_32());
 	s->channel = link.channel;
-	s->last_rssi = keyboard_rssi;
-	s->last_rx_age_ms = heard ? k_uptime_get_32() - last_packet_ms : UINT32_MAX;
+	if (heard) {
+		s->last_rssi = keyboard_rssi;
+		s->last_rx_age_ms = k_uptime_get_32() - last_packet_ms;
+	}
 	if (link.own_known) {
 		memcpy(s->own, link.own, sizeof(s->own));
 	}

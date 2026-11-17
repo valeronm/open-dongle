@@ -238,9 +238,10 @@ static void fill_status(struct diag_status *st)
 	st->link_state = unifying_session_status(&session, now);
 	st->pairing_open = unifying_pairing_window_open(&session.pairing, now);
 	st->channel = session.channel;
-	st->last_rssi = session.rssi;
-	st->last_rx_age_ms = session.heard ? (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1)
-					   : UINT32_MAX;
+	if (session.heard) {
+		st->last_rssi = session.rssi;
+		st->last_rx_age_ms = (uint32_t)MIN(now - session.heard_ms, UINT32_MAX - 1);
+	}
 	if (unifying_has_device(&session.pairing)) {
 		const struct unifying_device *d = &session.pairing.device;
 

@@ -59,7 +59,7 @@ fn status_lines(s: &Status) -> Vec<String> {
             (String::new(), String::new(), row)
         }
     };
-    let channel_and_signal = s.protocol().has_channel_and_signal();
+    let channels = s.protocol().has_channels();
     let counters: Vec<String> = s
         .protocol()
         .counters()
@@ -71,7 +71,7 @@ fn status_lines(s: &Status) -> Vec<String> {
         ("protocol", s.protocol().name().to_string()),
         (
             "link",
-            if channel_and_signal {
+            if channels {
                 format!("{} on channel {}{link}", state_name(s), s.channel)
             } else {
                 state_name(s).to_string()
@@ -79,10 +79,13 @@ fn status_lines(s: &Status) -> Vec<String> {
         ),
     ];
     rows.extend(keyboard);
-    if channel_and_signal {
+    if s.signal_shown() {
+        let level = s
+            .last_rssi
+            .map_or(String::new(), |dbm| format!("{dbm} dBm, "));
         rows.push((
             "signal",
-            format!("{} dBm, {}", s.last_rssi, last_packet(s.last_rx_age_ms)),
+            format!("{level}{}", last_packet(s.last_rx_age_ms)),
         ));
     }
     rows.extend([
@@ -512,7 +515,9 @@ mod tests {
 
     #[test]
     fn a_bluetooth_status_shows_no_channel_or_signal() {
-        let lines = status_lines(&status_of(Protocol::Bluetooth));
+        let mut s = status_of(Protocol::Bluetooth);
+        s.last_rssi = None;
+        let lines = status_lines(&s);
         let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
         assert!(link.ends_with("no keyboard"), "{link}");
         assert!(!lines.iter().any(|l| l.starts_with("signal")));
@@ -534,6 +539,33 @@ mod tests {
         assert!(link.ends_with("connected"), "{link}");
         let keyboard = lines.iter().find(|l| l.starts_with("keyboard")).unwrap();
         assert!(keyboard.ends_with("MX Keys"), "{keyboard}");
+    }
+
+    #[test]
+    fn a_connected_bluetooth_keyboard_shows_its_signal_and_last_packet() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.link = Link::Bluetooth(BluetoothLink::Connected { name: None });
+        s.last_rssi = Some(-58);
+        s.last_rx_age_ms = Some(400);
+        let lines = status_lines(&s);
+        let signal = lines.iter().find(|l| l.starts_with("signal")).unwrap();
+        assert!(
+            signal.ends_with(" -58 dBm, last packet 400 ms ago"),
+            "{signal}"
+        );
+        let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
+        assert!(!link.contains("channel"), "{link}");
+    }
+
+    #[test]
+    fn a_nuphy_status_with_no_reading_shows_no_signal_level() {
+        let mut s = status_of(Protocol::Nuphy);
+        s.last_rssi = None;
+        s.last_rx_age_ms = None;
+        let lines = status_lines(&s);
+        let signal = lines.iter().find(|l| l.starts_with("signal")).unwrap();
+        assert!(signal.ends_with(" no packet since boot"), "{signal}");
+        assert!(!signal.contains("dBm"), "{signal}");
     }
 
     #[test]

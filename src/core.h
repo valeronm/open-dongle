@@ -89,8 +89,8 @@ int core_set_channel(uint8_t channel);
 /* Takes the pending noise readings, which a survey drops. Blocks for about 1.5 s with the receiver
  * off; returns NULL when the radio failed. */
 const struct chan_survey *core_survey(void);
-/* Sets the fields every protocol reports and zeroes the rest; loop.fill_status adds the
- * protocol's own. */
+/* Sets the fields every protocol reports, marks the signal and last packet as absent and zeroes
+ * the rest; loop.fill_status adds the protocol's own. */
 void core_fill_status(struct diag_status *st);
 /* Answers the requests every loop shares and refuses those the running protocol lacks; returns
  * true with the next request the loop must answer. */

@@ -4,7 +4,9 @@ pub const REPORT_LEN: usize = 64;
 pub const HEADER_LEN: usize = 4;
 pub const CHUNK: usize = REPORT_LEN - HEADER_LEN;
 pub const ERROR_FLAG: u8 = 0x80;
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
+/// Equals `DIAG_NO_RSSI` in the firmware's `diagproto.h`.
+const NO_RSSI: i8 = i8::MIN;
 
 /// A status reply in a diagnostic protocol other than [`VERSION`].
 #[derive(Debug)]
@@ -119,7 +121,7 @@ impl Protocol {
         }
     }
 
-    pub fn has_channel_and_signal(self) -> bool {
+    pub fn has_channels(self) -> bool {
         self != Self::Bluetooth
     }
 
@@ -452,7 +454,7 @@ pub struct Status {
     pub uptime_ms: u64,
     pub reset_cause: u32,
     pub channel: u8,
-    pub last_rssi: i8,
+    pub last_rssi: Option<i8>,
     pub last_rx_age_ms: Option<u32>,
     pub usb_live: bool,
     pub usb_suspended: bool,
@@ -474,6 +476,10 @@ pub const UNIFYING_CHANNELS: [u8; 11] = [5, 8, 17, 32, 35, 41, 44, 62, 65, 71, 7
 impl Status {
     pub fn protocol(&self) -> Protocol {
         self.link.protocol()
+    }
+
+    pub fn signal_shown(&self) -> bool {
+        self.protocol().has_channels() || self.last_rssi.is_some()
     }
 
     /// The channels a move can send the link to, ascending.
@@ -531,7 +537,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let own = r.bytes::<3>()?;
     let forced = r.bytes::<3>()?;
     let keyboard_id = r.bytes::<4>()?;
-    let last_rssi = r.i8()?;
+    let rssi = r.i8()?;
     let age = r.u32()?;
     let usb = r.u8()?;
     let [
@@ -576,7 +582,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         uptime_ms,
         reset_cause,
         channel,
-        last_rssi,
+        last_rssi: (rssi != NO_RSSI).then_some(rssi),
         last_rx_age_ms: (age != u32::MAX).then_some(age),
         usb_live: usb & 1 != 0,
         usb_suspended: usb & 2 != 0,
@@ -970,10 +976,10 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
-    fn only_the_esb_protocols_show_a_channel_and_signal() {
-        assert!(Protocol::Nuphy.has_channel_and_signal());
-        assert!(Protocol::Unifying.has_channel_and_signal());
-        assert!(!Protocol::Bluetooth.has_channel_and_signal());
+    fn only_the_esb_protocols_have_channels() {
+        assert!(Protocol::Nuphy.has_channels());
+        assert!(Protocol::Unifying.has_channels());
+        assert!(!Protocol::Bluetooth.has_channels());
     }
 
     fn fixture_text(name: &str) -> String {
@@ -1153,6 +1159,14 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_reserved_signal_value_reads_as_no_reading() {
+        let mut payload = fixture("status.hex");
+        payload[KEYBOARD_ID_AT + 4] = 0x80;
+        let s = read_status(&payload).unwrap().unwrap();
+        assert_eq!(s.last_rssi, None);
+    }
+
+    #[test]
     fn request_carries_command_seq_and_arg() {
         let r = request(Command::History, 9, 0x1234_5678, &[]);
         assert_eq!(&r[..6], &[2, 9, 0x78, 0x56, 0x34, 0x12]);
@@ -1166,7 +1180,7 @@ pub(crate) mod tests {
         assert_eq!(s.uptime_ms, 0x01_0203_0405);
         assert_eq!(s.reset_cause, 1);
         assert_eq!(s.channel, 26);
-        assert_eq!(s.last_rssi, -71);
+        assert_eq!(s.last_rssi, Some(-71));
         assert_eq!(s.last_rx_age_ms, Some(12));
         assert!(s.usb_live && !s.usb_suspended);
         assert_eq!(
@@ -1402,7 +1416,7 @@ pub(crate) mod tests {
     fn an_older_dongle_is_told_to_take_this_tools_firmware() {
         assert_eq!(
             refusal(1),
-            "the dongle speaks diagnostic protocol 1, this tool 2; flash the firmware from this \
+            "the dongle speaks diagnostic protocol 1, this tool 3; flash the firmware from this \
              tool's release with `open-dongle flash`"
         );
     }
@@ -1410,8 +1424,8 @@ pub(crate) mod tests {
     #[test]
     fn a_newer_dongle_is_told_to_take_its_releases_tool() {
         assert_eq!(
-            refusal(3),
-            "the dongle speaks diagnostic protocol 3, this tool 2; install the open-dongle tool \
+            refusal(4),
+            "the dongle speaks diagnostic protocol 4, this tool 3; install the open-dongle tool \
              from the firmware's release"
         );
     }

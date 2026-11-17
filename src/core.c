@@ -530,6 +530,8 @@ void core_fill_status(struct diag_status *st)
 		.protocol = active,
 		.usb_live = usb_live(),
 		.usb_suspended = usb_suspended(),
+		.last_rssi = DIAG_NO_RSSI,
+		.last_rx_age_ms = UINT32_MAX,
 	};
 	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
 	st->totals = totals();

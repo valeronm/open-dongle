@@ -615,8 +615,8 @@ mod tests {
     #[test]
     fn a_flash_of_firmware_in_a_newer_protocol_says_to_update_the_tool() {
         assert_eq!(
-            flashed(read_status(&status_in_protocol(3)).unwrap()),
-            "flashed; the dongle speaks diagnostic protocol 3, this tool 2; install the \
+            flashed(read_status(&status_in_protocol(4)).unwrap()),
+            "flashed; the dongle speaks diagnostic protocol 4, this tool 3; install the \
              open-dongle tool from the firmware's release"
         );
     }

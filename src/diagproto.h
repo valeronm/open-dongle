@@ -11,8 +11,8 @@
 #include "history.h"
 #include "protocol.h"
 
-/* Bumped only when a layout that a release has shipped changes. */
-#define DIAG_VERSION 2
+/* Bumped only when a layout that a release has shipped, or what a value in it means, changes. */
+#define DIAG_VERSION 3
 #define DIAG_REPORT_LEN 64
 #define DIAG_HEADER_LEN 4
 #define DIAG_CHUNK (DIAG_REPORT_LEN - DIAG_HEADER_LEN)
@@ -23,6 +23,8 @@
 #define DIAG_MINUTES_PER_PAGE 40
 #define DIAG_EVENTS_PER_PAGE 32
 #define DIAG_NAME_MAX 24
+/* Marks last_rssi as absent: no receiver reports a signal this low. */
+#define DIAG_NO_RSSI INT8_MIN
 #define DIAG_KEYBOARD_CONNECTED 0x01
 #define DIAG_KEYBOARD_NO_PASSKEY 0x02
 /* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */

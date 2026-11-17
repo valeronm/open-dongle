@@ -867,21 +867,22 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
     let Some(s) = status else {
         return vec![Line::from("disconnected")];
     };
-    let signal_style = match s.last_rx_age_ms {
-        Some(_) => Style::new().fg(signal_color(s.last_rssi)),
-        None => Style::new(),
-    };
-    let channel_and_signal = s.protocol().has_channel_and_signal();
+    let channels = s.protocol().has_channels();
     let mut link = vec![Span::styled(
         state_name(s),
         Style::new().fg(link_color(link_health(s))),
     )];
-    if channel_and_signal {
-        link.extend([
-            Span::raw(SEPARATOR),
-            Span::styled(format!("{} dBm", s.last_rssi), signal_style),
-            Span::raw(format!("{SEPARATOR}{}", last_packet(s.last_rx_age_ms))),
-        ]);
+    if s.signal_shown() {
+        if let Some(dbm) = s.last_rssi {
+            link.extend([
+                Span::raw(SEPARATOR),
+                Span::styled(format!("{dbm} dBm"), Style::new().fg(signal_color(dbm))),
+            ]);
+        }
+        link.push(Span::raw(format!(
+            "{SEPARATOR}{}",
+            last_packet(s.last_rx_age_ms)
+        )));
     }
     let mut dongle = vec![Span::raw(format!(
         "usb {}{SEPARATOR}up {}",
@@ -896,7 +897,7 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
         ));
     }
     let mut rows = vec![status_row("link", link)];
-    if channel_and_signal {
+    if channels {
         rows.push(status_row("channels", channel_spans(s)));
     }
     rows.push(status_row("dongle", dongle));
@@ -1160,7 +1161,9 @@ mod tests {
     use crate::format::pairing_open;
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::{nuphy, status_of, status_running};
-    use crate::protocol::{Command, ErrorCode, EventKind, Noise, Protocol, Rssi};
+    use crate::protocol::{
+        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Protocol, Rssi,
+    };
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -2263,11 +2266,39 @@ mod tests {
 
     #[test]
     fn a_bluetooth_status_box_shows_no_signal_or_channels() {
-        let rows = screen(&status_box(&status_of(Protocol::Bluetooth)));
+        let mut s = status_of(Protocol::Bluetooth);
+        s.last_rssi = None;
+        let rows = screen(&status_box(&s));
         let rows = &rows[..usize::from(STATUS_ROWS) + 2];
         assert!(rows.iter().any(|r| r.contains("no keyboard")));
         assert!(!rows.iter().any(|r| r.contains("dBm")));
         assert!(!rows.iter().any(|r| r.contains("channels")));
+    }
+
+    #[test]
+    fn a_connected_bluetooth_status_box_shows_the_signal_and_last_packet() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.link = Link::Bluetooth(BluetoothLink::Connected { name: None });
+        s.last_rssi = Some(-58);
+        s.last_rx_age_ms = Some(400);
+        let rows = screen(&status_box(&s));
+        assert_eq!(
+            inside_box(&rows[1]),
+            "link      connected   -58 dBm   last packet 400 ms ago"
+        );
+        assert!(rows[2].starts_with("│dongle"), "{}", rows[2]);
+    }
+
+    #[test]
+    fn a_status_box_with_no_reading_shows_no_signal_level() {
+        let mut s = status_of(Protocol::Nuphy);
+        s.last_rssi = None;
+        s.last_rx_age_ms = None;
+        let rows = screen(&status_box(&s));
+        assert_eq!(
+            inside_box(&rows[1]),
+            "link      connected   no packet since boot"
+        );
     }
 
     #[test]
@@ -2340,7 +2371,7 @@ mod tests {
         assert_eq!(cell_at(&terminal, 1, "connected").fg, Color::Green);
         assert_eq!(cell_at(&terminal, 1, "-71 dBm").fg, Color::Yellow);
         let mut weak = status_of(Protocol::Nuphy);
-        weak.last_rssi = -80;
+        weak.last_rssi = Some(-80);
         assert_eq!(cell_at(&status_box(&weak), 1, "-80 dBm").fg, Color::Red);
         assert_eq!(cell_at(&terminal, 3, "pairing open").fg, Color::Cyan);
         let mut s = status_of(Protocol::Unifying);
