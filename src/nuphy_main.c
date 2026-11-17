@@ -20,7 +20,7 @@
 
 static struct link link;
 /* Pipe 1 is addressed to this dongle, so only its paired keyboard sends there. */
-static int8_t keyboard_rssi;
+static int8_t keyboard_rssi = DIAG_NO_RSSI;
 static uint32_t link_down_ms;
 static bool link_was_lost;
 static bool heard;
@@ -179,8 +179,8 @@ static void fill_status(struct diag_status *s)
 	s->link_state = link.state;
 	s->pairing_open = link_pairing_open(&link, k_uptime_get_32());
 	s->channel = link.channel;
+	s->last_rssi = keyboard_rssi;
 	if (heard) {
-		s->last_rssi = keyboard_rssi;
 		s->last_rx_age_ms = k_uptime_get_32() - last_packet_ms;
 	}
 	if (link.own_known) {
