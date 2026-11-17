@@ -415,14 +415,42 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
         return Ok(());
     }
     let port = board::into_bootloader(&board)?;
-    let mut bootloader = board::open_port(&port, 115_200)?;
+    let uploaded = match upload(&port, &image) {
+        // A dongle's watchdog cannot be stopped and keeps counting in the bootloader, which
+        // does not feed it while it erases; after that restart no watchdog runs.
+        Err(e) if e.is::<dfu::LostWhileErasing>() => {
+            println!(
+                "the firmware's watchdog restarted the bootloader while it erased; uploading again"
+            );
+            upload(&board::back_in_bootloader(&board.serial)?, &image)
+        }
+        other => other,
+    };
+    uploaded.context(
+        "the upload broke off; the board stays in its bootloader until it is unplugged and \
+         plugged back in, then run flash again",
+    )?;
+    println!();
+    board::wait_for(&board.serial, State::Dongle, RETURN_WAIT).context(
+        "the board did not come back after flashing; if a replug doesn't bring it back, this \
+         firmware can't run on it",
+    )?;
+    println!(
+        "{}",
+        flashed(device::open_unchecked(Some(&board.serial))?.read_status()?)
+    );
+    Ok(())
+}
+
+fn upload(port: &str, image: &[u8]) -> Result<()> {
+    let mut bootloader = board::open_port(port, 115_200)?;
     bootloader
         .write_data_terminal_ready(true)
         .context("raising DTR")?;
     let mut shown = None;
     dfu::upload(
         &mut bootloader,
-        &image,
+        image,
         &mut std::thread::sleep,
         &mut |done, total| {
             let percent = done * 100 / total;
@@ -433,21 +461,6 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
             }
         },
     )
-    .context(
-        "the upload broke off; the board stays in its bootloader until it is unplugged and \
-         plugged back in, then run flash again",
-    )?;
-    println!();
-    drop(bootloader);
-    board::wait_for(&board.serial, State::Dongle, RETURN_WAIT).context(
-        "the board did not come back after flashing; if a replug doesn't bring it back, this \
-         firmware can't run on it",
-    )?;
-    println!(
-        "{}",
-        flashed(device::open_unchecked(Some(&board.serial))?.read_status()?)
-    );
-    Ok(())
 }
 
 #[cfg(test)]

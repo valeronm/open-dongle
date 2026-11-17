@@ -10,6 +10,8 @@ const BOOTLOADER: u16 = 0x00b3;
 const FACTORY_PROGRAM: u16 = 0x8029;
 const POLL: Duration = Duration::from_millis(200);
 const BOOTLOADER_WAIT: Duration = Duration::from_secs(10);
+/// The bootloader stops answering if its drive is read during an upload, and the host scans
+/// the drive 1-2 s after the bootloader starts.
 const BOOTLOADER_SETTLE: Duration = Duration::from_secs(3);
 const ACCESS_RETRY: Duration = Duration::from_millis(100);
 const ACCESS_WAIT: Duration = Duration::from_secs(2);
@@ -180,8 +182,14 @@ pub fn into_bootloader(board: &Board) -> Result<String> {
             )?
         }
     };
-    // The bootloader stops answering if its drive is read during an upload, and the host scans
-    // the drive 1-2 s after the bootloader starts.
+    std::thread::sleep(BOOTLOADER_SETTLE);
+    Ok(port)
+}
+
+/// Waits for a board whose bootloader restarted on its own, and returns the bootloader's
+/// serial port.
+pub fn back_in_bootloader(serial: &str) -> Result<String> {
+    let port = bootloader_port(serial, "the board did not come back in its bootloader")?;
     std::thread::sleep(BOOTLOADER_SETTLE);
     Ok(port)
 }

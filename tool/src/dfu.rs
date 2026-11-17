@@ -97,6 +97,16 @@ fn payloads(image: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+/// The port failed on the first packet after the erase: the bootloader restarted while erasing.
+#[derive(Debug)]
+pub struct LostWhileErasing;
+
+impl std::fmt::Display for LostWhileErasing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the bootloader restarted while it erased the old firmware")
+    }
+}
+
 fn erase_time(len: usize) -> Duration {
     (PAGE_ERASE * (len / PAGE_SIZE + 1) as u32).max(Duration::from_millis(500))
 }
@@ -148,9 +158,18 @@ pub fn upload<P: Read + Write>(
     let payloads = payloads(image);
     let data = 2..payloads.len() - 1;
     let mut seq = Seq::FIRST;
+    let mut erased = false;
     for (i, payload) in payloads.iter().enumerate() {
         port.write_all(&frame(seq, payload))
-            .context("writing to the bootloader")?;
+            .context("writing to the bootloader")
+            .map_err(|e| {
+                if erased {
+                    e.context(LostWhileErasing)
+                } else {
+                    e
+                }
+            })?;
+        erased = false;
         let ack = read_ack(port)?;
         let due = seq.next();
         if ack != due.0 {
@@ -162,6 +181,7 @@ pub fn upload<P: Read + Write>(
         seq = due;
         if i == 0 {
             wait(erase_time(image.len()));
+            erased = true;
         }
         if data.contains(&i) {
             let n = i - data.start;
@@ -222,6 +242,7 @@ pub(crate) mod tests {
         ack: fn(u8) -> Option<u8>,
         leading_delimiter: bool,
         idle: io::ErrorKind,
+        frames_left: Option<usize>,
     }
 
     impl FakeBootloader {
@@ -232,12 +253,19 @@ pub(crate) mod tests {
                 ack,
                 leading_delimiter: false,
                 idle: io::ErrorKind::TimedOut,
+                frames_left: None,
             }
         }
     }
 
     impl io::Write for FakeBootloader {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            if let Some(left) = &mut self.frames_left {
+                if *left == 0 {
+                    return Err(io::ErrorKind::BrokenPipe.into());
+                }
+                *left -= 1;
+            }
             self.sent.extend_from_slice(buf);
             if let Some(ack) = (self.ack)(buf[1] & 7) {
                 if self.leading_delimiter {
@@ -316,5 +344,21 @@ pub(crate) mod tests {
         let mut port = FakeBootloader::new(|seq| Some((seq + 1) % 8));
         port.leading_delimiter = true;
         upload(&mut port, &test_image(), &mut |_| {}, &mut |_, _| {}).unwrap();
+    }
+
+    #[test]
+    fn a_port_that_vanishes_during_the_erase_is_told_apart() {
+        let mut port = FakeBootloader::new(|seq| Some((seq + 1) % 8));
+        port.frames_left = Some(1);
+        let err = upload(&mut port, &test_image(), &mut |_| {}, &mut |_, _| {}).unwrap_err();
+        assert!(err.is::<LostWhileErasing>(), "{err:#}");
+    }
+
+    #[test]
+    fn a_port_that_vanishes_later_is_an_ordinary_failure() {
+        let mut port = FakeBootloader::new(|seq| Some((seq + 1) % 8));
+        port.frames_left = Some(2);
+        let err = upload(&mut port, &test_image(), &mut |_| {}, &mut |_, _| {}).unwrap_err();
+        assert!(!err.is::<LostWhileErasing>(), "{err:#}");
     }
 }
