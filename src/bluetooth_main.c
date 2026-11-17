@@ -44,6 +44,8 @@ static bool passkey_asked;
 static bool rssi_read;
 static int8_t rssi;
 static uint32_t rssi_tried_ms;
+static bool reported;
+static uint32_t report_ms;
 
 static void fill_status(struct diag_status *st)
 {
@@ -53,6 +55,9 @@ static void fill_status(struct diag_status *st)
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
 	if (rssi_read) {
 		st->last_rssi = rssi;
+	}
+	if (reported) {
+		st->last_rx_age_ms = k_uptime_get_32() - report_ms;
 	}
 	if (btpolicy_is_ready(&policy)) {
 		strncpy((char *)st->keyboard_name, name, sizeof(st->keyboard_name));
@@ -234,6 +239,9 @@ static void on_report(const struct ble_event *ev)
 	if (!btpolicy_is_ready(&policy)) {
 		return;
 	}
+	core_count(CORE_PACKETS);
+	reported = true;
+	report_ms = k_uptime_get_32();
 	n = hidkeys_translate(&keys, &map, ev->report.id, ev->report.data, ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
 		core_submit(&out[i]);
