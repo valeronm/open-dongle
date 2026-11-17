@@ -96,7 +96,7 @@ static void nothing_is_wanted_while_connecting_or_connected(void)
 	btpolicy_ready(&policy);
 	CHECK(btpolicy_is_ready(&policy));
 	CHECK(!btpolicy_wants(&policy, &second, true, 2, 0));
-	btpolicy_disconnected(&policy, 500);
+	btpolicy_disconnected(&policy, 500, false);
 	CHECK(!btpolicy_is_ready(&policy));
 	CHECK(btpolicy_scanning(&policy));
 	CHECK(btpolicy_wants(&policy, &second, false, 2, 500));
@@ -110,7 +110,7 @@ static void a_failed_stored_keyboard_waits_before_the_next_attempt(void)
 
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &known);
-	btpolicy_disconnected(&policy, 10000);
+	btpolicy_disconnected(&policy, 10000, false);
 	CHECK(!btpolicy_wants(&policy, &known, false, 2, 10000 + BTPOLICY_RETRY_MS - 1));
 	CHECK(!btpolicy_wants(&policy, &other, false, 2, 10000 + BTPOLICY_RETRY_MS - 1));
 	CHECK(btpolicy_wants(&policy, &fresh, true, 2, 10000));
@@ -125,7 +125,55 @@ static void a_connection_that_ended_normally_is_retried_at_once(void)
 	btpolicy_connecting(&policy, &known);
 	btpolicy_connected(&policy);
 	btpolicy_ready(&policy);
-	btpolicy_disconnected(&policy, 10000);
+	btpolicy_disconnected(&policy, 10000, false);
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
+}
+
+static void a_stored_keyboard_that_never_joined_is_retried_at_once(void)
+{
+	struct btpolicy_advert known = stored_advert(1);
+
+	btpolicy_init(&policy);
+	btpolicy_connecting(&policy, &known);
+	btpolicy_connected(&policy);
+	btpolicy_disconnected(&policy, 10000, true);
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
+}
+
+static void a_keyboard_that_keeps_not_joining_waits_after_the_quick_retries(void)
+{
+	struct btpolicy_advert known = stored_advert(1);
+
+	btpolicy_init(&policy);
+	for (int i = 0; i < BTPOLICY_QUICK_RETRIES; i++) {
+		btpolicy_connecting(&policy, &known);
+		btpolicy_disconnected(&policy, 10000, true);
+		CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
+	}
+	btpolicy_connecting(&policy, &known);
+	btpolicy_disconnected(&policy, 10000, true);
+	CHECK(!btpolicy_wants(&policy, &known, false, 1, 10000 + BTPOLICY_RETRY_MS - 1));
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000 + BTPOLICY_RETRY_MS));
+	btpolicy_connecting(&policy, &known);
+	btpolicy_disconnected(&policy, 20000, true);
+	CHECK(btpolicy_wants(&policy, &known, false, 1, 20000));
+}
+
+static void a_keyboard_that_got_ready_has_its_quick_retries_again(void)
+{
+	struct btpolicy_advert known = stored_advert(1);
+
+	btpolicy_init(&policy);
+	for (int i = 0; i < BTPOLICY_QUICK_RETRIES; i++) {
+		btpolicy_connecting(&policy, &known);
+		btpolicy_disconnected(&policy, 10000, true);
+	}
+	btpolicy_connecting(&policy, &known);
+	btpolicy_connected(&policy);
+	btpolicy_ready(&policy);
+	btpolicy_disconnected(&policy, 10000, false);
+	btpolicy_connecting(&policy, &known);
+	btpolicy_disconnected(&policy, 10000, true);
 	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
 }
 
@@ -136,7 +184,7 @@ static void a_failed_new_keyboard_sets_no_wait(void)
 
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &fresh);
-	btpolicy_disconnected(&policy, 10000);
+	btpolicy_disconnected(&policy, 10000, false);
 	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000));
 	CHECK(btpolicy_wants(&policy, &fresh, true, 1, 10000));
 }
@@ -149,7 +197,7 @@ static void a_keyboard_paired_in_this_connection_waits_after_a_failure(void)
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_KEPT);
-	btpolicy_disconnected(&policy, 10000);
+	btpolicy_disconnected(&policy, 10000, false);
 	CHECK(!btpolicy_wants(&policy, &known, false, 1, 10000));
 	CHECK(btpolicy_wants(&policy, &known, false, 1, 10000 + BTPOLICY_RETRY_MS));
 }
@@ -161,7 +209,7 @@ static void the_wait_holds_across_the_clock_wrap(void)
 
 	btpolicy_init(&policy);
 	btpolicy_connecting(&policy, &known);
-	btpolicy_disconnected(&policy, before_wrap);
+	btpolicy_disconnected(&policy, before_wrap, false);
 	CHECK(!btpolicy_wants(&policy, &known, false, 1, before_wrap + 500));
 	CHECK(btpolicy_wants(&policy, &known, false, 1, before_wrap + BTPOLICY_RETRY_MS));
 }
@@ -176,7 +224,7 @@ static void a_refused_keyboard_is_ignored_until_the_window_closes(void)
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_PAIRING_REFUSED);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_REFUSED_BEFORE);
-	btpolicy_disconnected(&policy, 100);
+	btpolicy_disconnected(&policy, 100, false);
 	CHECK(!btpolicy_wants(&policy, &fresh, true, 0, 100));
 	CHECK(btpolicy_wants(&policy, &another, true, 0, 100));
 	btpolicy_window(&policy, true, false);
@@ -194,7 +242,7 @@ static void more_refusals_than_fit_are_still_counted_once_each(void)
 
 		btpolicy_connecting(&policy, &a);
 		CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_PAIRING_REFUSED);
-		btpolicy_disconnected(&policy, 0);
+		btpolicy_disconnected(&policy, 0, false);
 	}
 	CHECK_EQ(policy.refused_count, BTPOLICY_STORED_MAX);
 }
@@ -207,7 +255,7 @@ static void a_pairing_cut_short_by_a_lost_link_is_not_a_refusal(void)
 	btpolicy_window(&policy, true, false);
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_LINK), BTPOLICY_SECURITY_FAILED);
-	btpolicy_disconnected(&policy, 100);
+	btpolicy_disconnected(&policy, 100, false);
 	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 100));
 }
 
@@ -219,7 +267,7 @@ static void a_pairing_without_the_demanded_passkey_is_forgotten(void)
 	btpolicy_window(&policy, true, true);
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_FORGOTTEN);
-	btpolicy_disconnected(&policy, 100);
+	btpolicy_disconnected(&policy, 100, false);
 	CHECK(!btpolicy_wants(&policy, &fresh, true, 0, 100));
 	CHECK(btpolicy_wants(&policy, &fresh, true, 0, 100 + BTPOLICY_RETRY_MS) == false);
 	btpolicy_window(&policy, false, false);
@@ -236,7 +284,7 @@ static void a_pairing_with_the_demanded_passkey_is_kept(void)
 	btpolicy_window(&policy, true, true);
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_paired(&policy, true), BTPOLICY_PAIRING_KEPT);
-	btpolicy_disconnected(&policy, 10000);
+	btpolicy_disconnected(&policy, 10000, false);
 	btpolicy_window(&policy, false, false);
 	CHECK(!btpolicy_wants(&policy, &known, false, 1, 10000));
 }
@@ -250,7 +298,7 @@ static void a_stored_keyboard_without_its_key_lost_its_bond(void)
 	btpolicy_connecting(&policy, &known);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_KEY_MISSING), BTPOLICY_BOND_LOST);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_SECURITY_FAILED);
-	btpolicy_disconnected(&policy, 0);
+	btpolicy_disconnected(&policy, 0, false);
 	btpolicy_connecting(&policy, &fresh);
 	CHECK_EQ(btpolicy_paired(&policy, false), BTPOLICY_PAIRING_KEPT);
 	CHECK_EQ(btpolicy_security_failed(&policy, BTPOLICY_FAILURE_REFUSAL), BTPOLICY_SECURITY_FAILED);
@@ -279,6 +327,9 @@ int main(void)
 	RUN(nothing_is_wanted_while_connecting_or_connected);
 	RUN(a_failed_stored_keyboard_waits_before_the_next_attempt);
 	RUN(a_connection_that_ended_normally_is_retried_at_once);
+	RUN(a_stored_keyboard_that_never_joined_is_retried_at_once);
+	RUN(a_keyboard_that_keeps_not_joining_waits_after_the_quick_retries);
+	RUN(a_keyboard_that_got_ready_has_its_quick_retries_again);
 	RUN(a_failed_new_keyboard_sets_no_wait);
 	RUN(a_keyboard_paired_in_this_connection_waits_after_a_failure);
 	RUN(the_wait_holds_across_the_clock_wrap);

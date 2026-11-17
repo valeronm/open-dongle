@@ -11,6 +11,8 @@
 #define BLE_MAP_MAX 1024
 #define BLE_NAME_MAX 32
 #define BLE_ADDRESS_MAX 30
+#define BLE_REASON_NOT_ESTABLISHED 0x3e
+
 enum ble_event_type {
 	BLE_ADVERT,
 	BLE_CONNECTED,
@@ -37,7 +39,8 @@ struct ble_event {
 		struct btpolicy_advert advert;
 		/* BLE_CONNECTED: the keyboard's address as text. */
 		char address[BLE_ADDRESS_MAX];
-		/* BLE_DISCONNECTED: the stack's reason code. */
+		/* BLE_DISCONNECTED: the stack's reason code, BLE_REASON_NOT_ESTABLISHED when the
+		 * keyboard never joined the connection. */
 		uint8_t reason;
 		/* BLE_FAILED */
 		struct {

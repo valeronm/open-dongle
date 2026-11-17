@@ -214,7 +214,7 @@ static void on_disconnected(uint8_t reason)
 		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_key(), 0, 0);
 		core_release_keys();
 	}
-	btpolicy_disconnected(&policy, k_uptime_get_32());
+	btpolicy_disconnected(&policy, k_uptime_get_32(), reason == BLE_REASON_NOT_ESTABLISHED);
 	hidkeys_reset(&keys);
 }
 

@@ -6,6 +6,7 @@
 
 #define BTPOLICY_STORED_MAX 4
 #define BTPOLICY_RETRY_MS 1000
+#define BTPOLICY_QUICK_RETRIES 3
 /* The address type, then the six address bytes. */
 #define BTPOLICY_ADDR_LEN 7
 
@@ -54,6 +55,7 @@ struct btpolicy {
 	bool window_open;
 	bool passkey_demanded;
 	bool retry_pending;
+	uint8_t quick_retries;
 	uint32_t retry_at_ms;
 	/* Keyboards that refused to pair in the open window. */
 	uint8_t refused[BTPOLICY_STORED_MAX][BTPOLICY_ADDR_LEN];
@@ -76,8 +78,9 @@ enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, bool passkey_used);
 void btpolicy_ready(struct btpolicy *p);
 bool btpolicy_is_ready(const struct btpolicy *p);
 /* A stored keyboard whose connection ended before it was ready is left alone for
- * BTPOLICY_RETRY_MS. */
-void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms);
+ * BTPOLICY_RETRY_MS, except for the first BTPOLICY_QUICK_RETRIES in a row that never joined the
+ * connection. */
+void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms, bool never_joined);
 /* A keyboard that refuses to pair is not wanted again until the window closes. */
 enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum btpolicy_failure why);
 /* Told the pairing window's state every tick; the refusals are forgotten when it closes. */

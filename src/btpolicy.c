@@ -80,9 +80,13 @@ bool btpolicy_is_ready(const struct btpolicy *p)
 	return p->state == BTPOLICY_READY;
 }
 
-void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms)
+void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms, bool never_joined)
 {
-	p->retry_pending = p->state != BTPOLICY_READY && p->peer_stored;
+	bool failed = p->state != BTPOLICY_READY && p->peer_stored;
+	bool quick = failed && never_joined && p->quick_retries < BTPOLICY_QUICK_RETRIES;
+
+	p->quick_retries = quick ? p->quick_retries + 1 : 0;
+	p->retry_pending = failed && !quick;
 	p->retry_at_ms = now_ms + BTPOLICY_RETRY_MS;
 	p->state = BTPOLICY_IDLE;
 }
