@@ -10,6 +10,8 @@
   the one at that place in the list.
 - The history records Bluetooth connects, disconnects with their reason, pairings, refused pairings
   and a keyboard that lost its pairing; event lines name a stored keyboard.
+- In Bluetooth mode the live view's `k` lists the stored keyboards and forgets one, `a` asks
+  whether to pair with a passkey, and the footer leaves out the noise, moves and channel keys.
 - The status and live view show a Bluetooth keyboard's name, signal and last packet.
 - Before the first packet the status shows no signal level instead of 0 dBm.
 - The diagnostic protocol is now 3, so the 0.2.0 tool can only `flash` new firmware.

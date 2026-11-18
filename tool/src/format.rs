@@ -31,6 +31,11 @@ fn keyboard_name(k: &StoredKeyboard) -> &str {
     k.name.as_deref().unwrap_or("unnamed")
 }
 
+/// The keyboard `keyboard_lines` numbers `place`, counting from 1.
+pub fn keyboard_at(list: &[StoredKeyboard], place: usize) -> Option<&StoredKeyboard> {
+    list.get(place.checked_sub(1)?)
+}
+
 /// One numbered line per stored keyboard, in the order `forget` counts them.
 pub fn keyboard_lines(list: &[StoredKeyboard]) -> Vec<String> {
     if list.is_empty() {

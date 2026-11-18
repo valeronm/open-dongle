@@ -176,7 +176,7 @@ pub fn stored_keyboards<T: Transport>(
 /// `place` is the keyboard's number in the list `keyboards` prints, from 1.
 pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Result<()> {
     let list = dev.keyboards()?;
-    let Some(keyboard) = place.checked_sub(1).and_then(|i| list.get(i)) else {
+    let Some(keyboard) = format::keyboard_at(&list, place) else {
         bail!(
             "there is no keyboard {place}; `open-dongle keyboards` lists the {} stored",
             list.len()

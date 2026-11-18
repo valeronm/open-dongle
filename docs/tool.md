@@ -56,9 +56,10 @@ disconnects with their reason, pairings and refused pairings, and a keyboard tha
 which has to be forgotten and paired again.
 
 - `pair` prints the passkey to type on the keyboard; `pair --no-passkey` pairs a keyboard that has
-  no passkey step.
+  no passkey step. In the live view `a` asks which of the two.
 - `keyboards` lists the stored keyboards, the most recently connected first, and `forget <n>`
-  removes the one at that place in the list.
+  removes the one at that place in the list. In the live view `k` shows the list in place of the
+  chart, and a keyboard's number asks to forget it.
 
 Event lines name a stored keyboard and give a forgotten one's address.
 

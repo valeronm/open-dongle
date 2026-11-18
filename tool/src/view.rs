@@ -20,9 +20,9 @@ use ratatui::{
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
-    channel_role, counted_share, describe_event, last_packet, link_health, noise_level,
-    noise_ruler, paired, share, state_name, status_label, switch_question, uptime, usb_state,
-    wall_clock, watch_role, watch_summary,
+    channel_role, counted_share, describe_event, forget_question, keyboard_at, keyboard_lines,
+    last_packet, link_health, noise_level, noise_ruler, paired, share, state_name, status_label,
+    switch_question, uptime, usb_state, wall_clock, watch_role, watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
@@ -412,19 +412,21 @@ fn scrolled_top(
     (end < events.len()).then(|| events[end - 1].0)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Prompt {
     Noise,
     Action(Action),
     Switch(Protocol),
+    Forget(StoredKeyboard),
 }
 
 impl Prompt {
-    fn question(self) -> String {
+    fn question(&self) -> String {
         let question = match self {
             Prompt::Noise => NOISE_QUESTION.to_string(),
-            Prompt::Action(action) => action_question(action).to_string(),
-            Prompt::Switch(to) => switch_question(to),
+            Prompt::Action(action) => action_question(*action).to_string(),
+            Prompt::Switch(to) => switch_question(*to),
+            Prompt::Forget(keyboard) => forget_question(keyboard),
         };
         format!("{question} y/n")
     }
@@ -451,15 +453,42 @@ fn chosen(running: Protocol, key: KeyCode) -> Option<Protocol> {
     other_protocols(running).nth(n.checked_sub(1)?)
 }
 
-#[derive(Clone, Copy)]
-enum Key {
-    Ask(Prompt),
-    Choose,
-    Pair(Protocol),
-    Moves,
+const PASSKEY_QUESTION: &str =
+    "Pair how? 1 with a passkey  2 without a passkey  (any other key cancels)";
+
+fn chosen_no_passkey(key: KeyCode) -> Option<bool> {
+    match key {
+        KeyCode::Char('1') => Some(false),
+        KeyCode::Char('2') => Some(true),
+        _ => None,
+    }
 }
 
-fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 7] {
+#[derive(Clone, Copy)]
+enum Choice {
+    Protocol,
+    Passkey,
+}
+
+impl Choice {
+    fn question(self, running: Protocol) -> String {
+        match self {
+            Choice::Protocol => choice_question(running),
+            Choice::Passkey => PASSKEY_QUESTION.to_string(),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum Key {
+    Ask(Prompt),
+    Choose(Choice),
+    Pair,
+    Moves,
+    Keyboards,
+}
+
+fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
     const NOISE: (char, &str, Key) = ('n', "noise", Key::Ask(Prompt::Noise));
     const MOVES: (char, &str, Key) = ('m', "moves", Key::Moves);
     const REBOOT: (char, &str, Key) = ('r', "reboot", Key::Ask(Prompt::Action(Action::Reboot)));
@@ -469,9 +498,27 @@ fn action_keys(protocol: Protocol) -> [(char, &'static str, Key); 7] {
         Key::Ask(Prompt::Action(Action::Bootloader)),
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
-    let pair = ('a', "pair", Key::Pair(protocol));
-    let switch = ('p', "protocol", Key::Choose);
-    [NOISE, MOVES, pair, switch, REBOOT, BOOTLOADER, CLEAR]
+    const KEYBOARDS: (char, &str, Key) = ('k', "keyboards", Key::Keyboards);
+    let channels = protocol.has_channels();
+    let pair = if protocol == Protocol::Bluetooth {
+        ('a', "pair", Key::Choose(Choice::Passkey))
+    } else {
+        ('a', "pair", Key::Pair)
+    };
+    let switch = ('p', "protocol", Key::Choose(Choice::Protocol));
+    [
+        channels.then_some(NOISE),
+        channels.then_some(MOVES),
+        Some(pair),
+        (protocol == Protocol::Bluetooth).then_some(KEYBOARDS),
+        Some(switch),
+        Some(REBOOT),
+        Some(BOOTLOADER),
+        Some(CLEAR),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
@@ -508,7 +555,7 @@ struct Session<T: Transport> {
     refresh_error: Option<String>,
     pane: Pane,
     prompt: Option<Prompt>,
-    choosing: bool,
+    choosing: Option<Choice>,
     message: String,
 }
 
@@ -517,6 +564,7 @@ enum Pane {
     Noise(Vec<NoiseChannel>),
     /// Reread on every poll.
     Moves(Watch),
+    Keyboards,
 }
 
 #[expect(
@@ -613,7 +661,7 @@ impl<T: Transport> Session<T> {
             refresh_error: None,
             pane: Pane::History,
             prompt: None,
-            choosing: false,
+            choosing: None,
             message: String::new(),
         }
     }
@@ -624,8 +672,15 @@ impl<T: Transport> Session<T> {
 
     fn handle(&mut self, key: KeyCode, drawn: Drawn) -> Option<Outcome> {
         self.message.clear();
-        if std::mem::take(&mut self.choosing) {
-            self.prompt = chosen(self.protocol(), key).map(Prompt::Switch);
+        if let Some(choice) = self.choosing.take() {
+            match choice {
+                Choice::Protocol => self.prompt = chosen(self.protocol(), key).map(Prompt::Switch),
+                Choice::Passkey => {
+                    if let Some(no_passkey) = chosen_no_passkey(key) {
+                        self.pair(no_passkey);
+                    }
+                }
+            }
             return None;
         }
         if let Some(prompt) = self.prompt.take() {
@@ -640,11 +695,19 @@ impl<T: Transport> Session<T> {
             KeyCode::Char('q') => return Some(Outcome::Quit),
             KeyCode::Char('[') => self.step(Step::Down),
             KeyCode::Char(']') => self.step(Step::Up),
+            KeyCode::Char(c)
+                if let Pane::Keyboards = self.pane
+                    && let Some(place) = c.to_digit(10)
+                    && let Some(keyboard) = keyboard_at(&history.keyboards, place as usize) =>
+            {
+                self.prompt = Some(Prompt::Forget(keyboard.clone()));
+            }
             KeyCode::Char(c) => match self.key(c) {
                 Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
-                Some(Key::Choose) => self.choosing = true,
-                Some(Key::Pair(protocol)) => self.pair(protocol),
+                Some(Key::Choose(choice)) => self.choosing = Some(choice),
+                Some(Key::Pair) => self.pair(false),
                 Some(Key::Moves) => self.show_moves(),
+                Some(Key::Keyboards) => self.pane = Pane::Keyboards,
                 None => {}
             },
             KeyCode::Esc => self.pane = Pane::History,
@@ -675,8 +738,9 @@ impl<T: Transport> Session<T> {
         }
     }
 
-    fn pair(&mut self, protocol: Protocol) {
-        self.message = crate::cli::pair(&mut self.device, protocol, false)
+    fn pair(&mut self, no_passkey: bool) {
+        let protocol = self.protocol();
+        self.message = crate::cli::pair(&mut self.device, protocol, no_passkey)
             .unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
     }
 
@@ -733,6 +797,10 @@ impl<T: Transport> Session<T> {
                 "done".to_string()
             }),
             Prompt::Action(c) => self.device.action(c).map(|()| "done".to_string()),
+            Prompt::Forget(keyboard) => self
+                .device
+                .forget(&keyboard)
+                .map(|()| "forgotten".to_string()),
             Prompt::Switch(to) => self.device.protocol(Some(to)).map(|(_, rebooting)| {
                 if rebooting {
                     format!("switching to {}; the dongle reboots", to.name())
@@ -745,29 +813,25 @@ impl<T: Transport> Session<T> {
     }
 
     fn help(&self, width: usize) -> Vec<String> {
-        if self.choosing {
-            return flow(choice_question(self.protocol()).split(' '), " ", width);
+        if let Some(choice) = self.choosing {
+            return flow(choice.question(self.protocol()).split(' '), " ", width);
         }
-        match self.prompt {
+        match &self.prompt {
             Some(p) => flow(p.question().split(' '), " ", width),
             None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
             None => match &self.refresh_error {
                 Some(e) => flow(e.split(' '), " ", width),
                 None => {
-                    let hints: Vec<_> = action_keys(self.protocol())
+                    let mut hints: Vec<_> = action_keys(self.protocol())
                         .into_iter()
                         .map(|(key, label, _)| format!("{key} {label}"))
-                        .chain(
-                            [
-                                "[/] channel",
-                                "←/→ history",
-                                "↑/↓ events",
-                                "esc back",
-                                "q quit",
-                            ]
-                            .map(String::from),
-                        )
                         .collect();
+                    if self.protocol().has_channels() {
+                        hints.push("[/] channel".into());
+                    }
+                    hints.extend(
+                        ["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from),
+                    );
                     flow(hints.iter().map(String::as_str), "  ", width)
                 }
             },
@@ -840,6 +904,10 @@ impl<T: Transport> App<T> {
             }
             Some((Pane::Moves(watch), status)) => {
                 draw_moves(f, middle, watch, status);
+                None
+            }
+            Some((Pane::Keyboards, _)) => {
+                draw_keyboards(f, middle, session.map_or(&[][..], |s| &s.history.keyboards));
                 None
             }
             Some((Pane::History, _)) | None => Some(draw_history(f, middle, session)),
@@ -1121,6 +1189,14 @@ fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn draw_keyboards(f: &mut Frame, area: Rect, stored: &[StoredKeyboard]) {
+    let block = Block::bordered().title("stored keyboards; a keyboard's number forgets it");
+    f.render_widget(
+        Paragraph::new(keyboard_lines(stored).join("\n")).block(block),
+        area,
+    );
 }
 
 fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
@@ -1530,11 +1606,38 @@ mod tests {
     }
 
     #[test]
-    fn the_events_list_names_a_stored_bluetooth_keyboard() {
+    fn the_bluetooth_footer_offers_only_what_the_dongle_answers() {
+        let mut app = app_with(status_of(Protocol::Bluetooth));
+        let hints = [
+            "a pair",
+            "k keyboards",
+            "p protocol",
+            "r reboot",
+            "b bootloader",
+            "c clear",
+            "←/→ history",
+            "↑/↓ events",
+            "esc back",
+            "q quit",
+        ];
+        assert_eq!(app.connection.view(200).1, [hints.join("  ")]);
+        for c in ['n', 'm'] {
+            press(&mut app, c);
+            assert!(session(&mut app).prompt.is_none(), "{c}");
+            assert!(matches!(session(&mut app).pane, Pane::History), "{c}");
+        }
+    }
+
+    fn bluetooth_dongle_forgetting_into(
+        sent: std::rc::Rc<std::cell::Cell<Option<[u8; 7]>>>,
+    ) -> App<Fake> {
         let list = crate::protocol::tests::fixture("keyboards.hex");
         let mut app = app_on(
             Device::new(
                 Fake::new(move |req| {
+                    if req[0] == Command::Forget as u8 {
+                        sent.set(Some(req[6..13].try_into().unwrap()));
+                    }
                     let payload: &[u8] = if req[0] == Command::Keyboards as u8 {
                         &list
                     } else {
@@ -1547,6 +1650,34 @@ mod tests {
             status_of(Protocol::Bluetooth),
         );
         refreshed_with_pairing(&mut app, Protocol::Bluetooth, false);
+        app
+    }
+
+    #[test]
+    fn the_keyboards_pane_forgets_the_keyboard_at_the_pressed_number() {
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let mut app = bluetooth_dongle_forgetting_into(sent.clone());
+        press(&mut app, 'k');
+        let text = screen(&drawn(&mut app)).join("\n");
+        assert!(text.contains("1  MX Keys"), "{text}");
+        assert!(text.contains("2  NuPhy Air75 V2-1"), "{text}");
+        press(&mut app, '2');
+        assert!(
+            footer(&mut app).starts_with("Forget NuPhy Air75 V2-1 (D6:7D:3C:4B:A8:24)?"),
+            "{}",
+            footer(&mut app)
+        );
+        let Some(Outcome::Answer(prompt)) = app.handle(KeyCode::Char('y')) else {
+            panic!("y should answer the forget question");
+        };
+        session(&mut app).answer(prompt);
+        assert_eq!(sent.get(), Some([1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6]));
+        assert_eq!(footer(&mut app), "forgotten");
+    }
+
+    #[test]
+    fn the_events_list_names_a_stored_bluetooth_keyboard() {
+        let mut app = bluetooth_dongle_forgetting_into(Default::default());
         let connected = Event {
             time_ms: 0,
             kind: EventKind::BluetoothConnected,
@@ -1565,7 +1696,7 @@ mod tests {
     fn the_protocol_key_asks_which_of_the_other_two() {
         let mut app = app_with(status_of(Protocol::Unifying));
         let s = session(&mut app);
-        assert!(matches!(s.key('p'), Some(Key::Choose)));
+        assert!(matches!(s.key('p'), Some(Key::Choose(Choice::Protocol))));
         s.handle(KeyCode::Char('p'), Drawn::default());
         assert_eq!(
             s.help(200),
@@ -1589,13 +1720,13 @@ mod tests {
         let s = session(&mut app);
         s.handle(KeyCode::Char('p'), Drawn::default());
         assert!(s.handle(KeyCode::Char('3'), Drawn::default()).is_none());
-        assert!(s.prompt.is_none() && !s.choosing);
+        assert!(s.prompt.is_none() && s.choosing.is_none());
     }
 
     #[test]
     fn every_mode_offers_pairing_and_noise() {
         let mut app = app_with(status_of(Protocol::Unifying));
-        assert!(matches!(session(&mut app).key('a'), Some(Key::Pair(_))));
+        assert!(matches!(session(&mut app).key('a'), Some(Key::Pair)));
         assert!(matches!(
             session(&mut app).key('n'),
             Some(Key::Ask(Prompt::Noise))
@@ -1648,6 +1779,38 @@ mod tests {
             footer(&mut app),
             "pairing is open for 30 s; switch the keyboard off and on, after holding an\nEasy-Switch key until it blinks fast if it has them"
         );
+    }
+
+    #[test]
+    fn the_bluetooth_pair_key_asks_whether_the_keyboard_types_a_passkey() {
+        let sent = std::rc::Rc::new(std::cell::Cell::new(None));
+        let seen = sent.clone();
+        let mut app = app_on(
+            Device::new(
+                Fake::new(move |req| {
+                    seen.set(Some((req[0], req[2])));
+                    parts(req[0], req[1], &[0])
+                }),
+                0,
+            ),
+            status_of(Protocol::Bluetooth),
+        );
+        press(&mut app, 'a');
+        assert_eq!(sent.get(), None);
+        assert_eq!(
+            footer(&mut app),
+            "Pair how? 1 with a passkey  2 without a passkey  (any other key cancels)"
+        );
+        press(&mut app, '2');
+        assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
+        assert_eq!(
+            footer(&mut app),
+            "pairing is open for 30 s; put the keyboard in Bluetooth pairing mode"
+        );
+        press(&mut app, 'a');
+        press(&mut app, 'x');
+        assert!(footer(&mut app).starts_with("a pair"));
+        assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
     }
 
     fn app_moving_from(status: Status) -> (App<Fake>, std::rc::Rc<std::cell::Cell<Option<u32>>>) {
