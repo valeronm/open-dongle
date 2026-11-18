@@ -408,6 +408,7 @@ static void on_advert(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 
 int ble_scan(enum btpolicy_scan mode)
 {
+	bool pairing;
 	int err;
 
 	if (mode == scan_mode) {
@@ -424,11 +425,15 @@ int ble_scan(enum btpolicy_scan mode)
 		return 0;
 	}
 	pending_set = false;
-	err = bt_le_scan_start(BT_LE_SCAN_PARAM(mode == BTPOLICY_SCAN_ACTIVE ? BT_LE_SCAN_TYPE_ACTIVE
-									: BT_LE_SCAN_TYPE_PASSIVE,
-						BT_LE_SCAN_OPT_NONE, BT_GAP_SCAN_FAST_INTERVAL,
-						BT_GAP_SCAN_FAST_WINDOW),
-			       on_advert);
+	pairing = mode == BTPOLICY_SCAN_ACTIVE;
+	/* The fast scan window takes radio time from a connected mouse, about an eighth of its
+	 * reports. */
+	err = bt_le_scan_start(
+		BT_LE_SCAN_PARAM(pairing ? BT_LE_SCAN_TYPE_ACTIVE : BT_LE_SCAN_TYPE_PASSIVE,
+				 BT_LE_SCAN_OPT_NONE,
+				 pairing ? BT_GAP_SCAN_FAST_INTERVAL : BT_GAP_SCAN_SLOW_INTERVAL_1,
+				 pairing ? BT_GAP_SCAN_FAST_WINDOW : BT_GAP_SCAN_SLOW_WINDOW_1),
+		on_advert);
 	if (!err) {
 		scan_mode = mode;
 	}
