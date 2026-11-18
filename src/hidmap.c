@@ -2,6 +2,9 @@
 
 #define STACK_DEPTH 4
 #define REPORT_IDS_MAX 16
+#define USAGES_MAX 8
+#define POINTER_BUTTONS_MAX 16
+#define POINTER_VALUE_BITS_MAX 16
 
 #define TYPE_MAIN 0
 #define TYPE_GLOBAL 1
@@ -29,14 +32,23 @@
 #define COLLECTION_APPLICATION 0x01
 #define FLAG_CONSTANT 0x01
 #define FLAG_VARIABLE 0x02
+#define FLAG_RELATIVE 0x04
 
 #define PAGE_GENERIC_DESKTOP 0x01
 #define PAGE_KEYBOARD 0x07
 #define PAGE_LED 0x08
+#define PAGE_BUTTON 0x09
 #define PAGE_CONSUMER 0x0c
 #define USAGE_KEYBOARD 0x06
 #define USAGE_SYSTEM_CONTROL 0x80
 #define USAGE_CONSUMER_CONTROL 0x01
+#define USAGE_MOUSE 0x02
+
+#define PAGED(page, id) ((uint32_t)(page) << 16 | (id))
+#define USAGE_X PAGED(PAGE_GENERIC_DESKTOP, 0x30)
+#define USAGE_Y PAGED(PAGE_GENERIC_DESKTOP, 0x31)
+#define USAGE_WHEEL PAGED(PAGE_GENERIC_DESKTOP, 0x38)
+#define USAGE_AC_PAN PAGED(PAGE_CONSUMER, 0x238)
 
 struct globals {
 	uint16_t page;
@@ -53,6 +65,9 @@ struct locals {
 	bool has_usage;
 	bool has_min;
 	bool has_max;
+	/* A usage below 0x10000 takes the usage page in force at the main item. */
+	uint32_t usages[USAGES_MAX];
+	uint8_t usage_count;
 };
 
 struct parser {
@@ -63,6 +78,9 @@ struct parser {
 	uint8_t depth;
 	bool in_target;
 	enum hidmap_target target;
+	bool in_mouse;
+	bool pointer_has_id;
+	struct hidmap_pointer pointer;
 	struct {
 		uint8_t id;
 		uint32_t bits;
@@ -107,6 +125,9 @@ static const struct {
 
 static void enter_application(struct parser *p)
 {
+	p->in_mouse = p->g.page == PAGE_GENERIC_DESKTOP && p->l.usage == USAGE_MOUSE;
+	p->pointer = (struct hidmap_pointer){0};
+	p->pointer_has_id = false;
 	for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
 		if (targets[i].page == p->g.page && targets[i].usage == p->l.usage) {
 			p->in_target = true;
@@ -154,6 +175,77 @@ static bool is_field(const struct parser *p, uint32_t flags)
 	return g->size == 8 || g->size == 16;
 }
 
+static uint32_t usage_of(const struct parser *p, uint32_t i)
+{
+	uint32_t usage = p->l.usages[i < p->l.usage_count ? i : p->l.usage_count - 1u];
+
+	return usage > UINT16_MAX ? usage : PAGED(p->g.page, usage);
+}
+
+static struct hidmap_value *pointer_value(struct hidmap_pointer *pointer, uint32_t usage)
+{
+	switch (usage) {
+	case USAGE_X:
+		return &pointer->x;
+	case USAGE_Y:
+		return &pointer->y;
+	case USAGE_WHEEL:
+		return &pointer->wheel;
+	case USAGE_AC_PAN:
+		return &pointer->pan;
+	default:
+		return NULL;
+	}
+}
+
+static bool has_pointer(const struct hidmap_pointer *pointer)
+{
+	return pointer->x.size != 0 && pointer->y.size != 0;
+}
+
+/* Only the report that carries the collection's first pointer input counts. */
+static bool in_pointer_report(struct parser *p)
+{
+	if (!p->pointer_has_id) {
+		p->pointer_has_id = true;
+		p->pointer.report_id = p->g.report_id;
+	}
+	return p->pointer.report_id == p->g.report_id;
+}
+
+static void pointer_input(struct parser *p, uint32_t flags, uint32_t offset)
+{
+	const struct globals *g = &p->g;
+
+	if ((flags & FLAG_CONSTANT) || !(flags & FLAG_VARIABLE) || g->count == 0) {
+		return;
+	}
+	if (g->page == PAGE_BUTTON && p->l.has_min && p->l.usage_min == 1 && g->size == 1) {
+		if (in_pointer_report(p) && p->pointer.buttons.size == 0) {
+			p->pointer.buttons = (struct hidmap_value){
+				.bit_offset = (uint16_t)offset,
+				.size = g->count < POINTER_BUTTONS_MAX ? g->count : POINTER_BUTTONS_MAX,
+			};
+		}
+		return;
+	}
+	if (!(flags & FLAG_RELATIVE) || p->l.usage_count == 0 || g->size == 0 ||
+	    g->size > POINTER_VALUE_BITS_MAX) {
+		return;
+	}
+	for (uint32_t i = 0; i < g->count; i++) {
+		struct hidmap_value *v = pointer_value(&p->pointer, usage_of(p, i));
+
+		if (v && v->size == 0 && in_pointer_report(p)) {
+			*v = (struct hidmap_value){
+				.bit_offset = (uint16_t)(offset + i * g->size),
+				.size = (uint8_t)g->size,
+				.is_signed = g->logical_min < 0,
+			};
+		}
+	}
+}
+
 static enum hidmap_result on_input(struct parser *p, uint32_t flags, struct hidmap *out)
 {
 	uint32_t *bits = input_bits(p);
@@ -164,6 +256,9 @@ static enum hidmap_result on_input(struct parser *p, uint32_t flags, struct hidm
 	}
 	if (*bits + width > UINT16_MAX) {
 		return HIDMAP_MALFORMED;
+	}
+	if (p->in_mouse) {
+		pointer_input(p, flags, *bits);
 	}
 	if (is_field(p, flags)) {
 		struct hidmap_field *f;
@@ -219,6 +314,10 @@ static enum hidmap_result on_main(struct parser *p, uint8_t tag, uint32_t value,
 		}
 		if (--p->depth == 0) {
 			p->in_target = false;
+			if (p->in_mouse && !has_pointer(&out->pointer) && has_pointer(&p->pointer)) {
+				out->pointer = p->pointer;
+			}
+			p->in_mouse = false;
 		}
 		break;
 	default:
@@ -268,12 +367,15 @@ static enum hidmap_result on_global(struct parser *p, uint8_t tag, const uint8_t
 	return HIDMAP_OK;
 }
 
-static void on_local(struct parser *p, uint8_t tag, uint32_t value)
+static void on_local(struct parser *p, uint8_t tag, uint32_t value, uint8_t size)
 {
 	switch (tag) {
 	case LOCAL_USAGE:
 		p->l.usage = value & UINT16_MAX;
 		p->l.has_usage = true;
+		if (p->l.usage_count < USAGES_MAX) {
+			p->l.usages[p->l.usage_count++] = size == 4 ? value : value & UINT16_MAX;
+		}
 		break;
 	case LOCAL_USAGE_MIN:
 		p->l.usage_min = value & UINT16_MAX;
@@ -287,7 +389,8 @@ static void on_local(struct parser *p, uint8_t tag, uint32_t value)
 	}
 }
 
-enum hidmap_result hidmap_parse(const uint8_t *map, size_t len, struct hidmap *out)
+enum hidmap_result hidmap_parse(const uint8_t *map, size_t len, enum device_kind kind,
+				struct hidmap *out)
 {
 	struct parser p = {0};
 	size_t at = 0;
@@ -316,7 +419,7 @@ enum hidmap_result hidmap_parse(const uint8_t *map, size_t len, struct hidmap *o
 		} else if (type == TYPE_GLOBAL) {
 			result = on_global(&p, tag, data, size);
 		} else if (type == TYPE_LOCAL) {
-			on_local(&p, tag, unsigned_value(data, size));
+			on_local(&p, tag, unsigned_value(data, size), size);
 		}
 		if (result != HIDMAP_OK) {
 			return result;
@@ -324,6 +427,9 @@ enum hidmap_result hidmap_parse(const uint8_t *map, size_t len, struct hidmap *o
 	}
 	if (p.depth != 0) {
 		return HIDMAP_MALFORMED;
+	}
+	if (kind == DEVICE_MOUSE) {
+		return has_pointer(&out->pointer) ? HIDMAP_OK : HIDMAP_NO_POINTER;
 	}
 	for (uint8_t i = 0; i < out->count; i++) {
 		if (out->fields[i].target == HIDMAP_KEYBOARD) {

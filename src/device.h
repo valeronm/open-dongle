@@ -9,4 +9,9 @@ enum device_kind {
 	DEVICE_NO_KIND = DEVICE_KINDS,
 };
 
+static inline const char *device_kind_name(enum device_kind kind)
+{
+	return kind == DEVICE_MOUSE ? "mouse" : "keyboard";
+}
+
 #endif

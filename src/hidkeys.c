@@ -170,3 +170,43 @@ size_t hidkeys_translate(struct hidkeys *k, const struct hidmap *m, uint8_t repo
 	}
 	return n;
 }
+
+static bool value_fits(const struct hidmap_value *v, size_t len)
+{
+	return (size_t)v->bit_offset + v->size <= len * 8;
+}
+
+static int32_t value_at(const struct hidmap_value *v, const uint8_t *data)
+{
+	uint32_t raw;
+
+	if (v->size == 0) {
+		return 0;
+	}
+	raw = bits_at(data, v->bit_offset, v->size);
+	if (v->is_signed && (raw & (1u << (v->size - 1)))) {
+		return (int32_t)raw - (int32_t)(1u << v->size);
+	}
+	return (int32_t)raw;
+}
+
+bool hidkeys_pointer(const struct hidmap_pointer *p, uint8_t report_id, const uint8_t *data,
+		     size_t len, struct report *out)
+{
+	if (report_id != p->report_id || !value_fits(&p->buttons, len) || !value_fits(&p->x, len) ||
+	    !value_fits(&p->y, len) || !value_fits(&p->wheel, len) || !value_fits(&p->pan, len)) {
+		return false;
+	}
+	*out = (struct report){
+		.kind = REPORT_MOUSE,
+		.mouse = {
+			.buttons = (uint16_t)value_at(&p->buttons, data),
+			.x = (int16_t)reports_clamp(value_at(&p->x, data), -INT16_MAX, INT16_MAX),
+			.y = (int16_t)reports_clamp(value_at(&p->y, data), -INT16_MAX, INT16_MAX),
+			.wheel = (int8_t)reports_clamp(value_at(&p->wheel, data), -INT8_MAX,
+							 INT8_MAX),
+			.pan = (int8_t)reports_clamp(value_at(&p->pan, data), -INT8_MAX, INT8_MAX),
+		},
+	};
+	return true;
+}

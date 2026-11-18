@@ -59,6 +59,7 @@ struct reports {
 
 void reports_init(struct reports *r);
 enum report_iface reports_iface(enum report_kind kind);
+int reports_clamp(int value, int min, int max);
 
 /* Returns true when next changed its kind's state or carries mouse motion. */
 bool reports_update(struct reports *r, const struct report *next);

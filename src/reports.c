@@ -21,7 +21,7 @@ enum report_iface reports_iface(enum report_kind kind)
 	}
 }
 
-static int clamp(int value, int min, int max)
+int reports_clamp(int value, int min, int max)
 {
 	return value < min ? min : value > max ? max : value;
 }
@@ -46,10 +46,10 @@ static bool merged_into_last(struct report_queue *q, const struct report *next)
 	if (last->buttons != next->mouse.buttons) {
 		return false;
 	}
-	last->x = (int16_t)clamp(last->x + next->mouse.x, INT16_MIN, INT16_MAX);
-	last->y = (int16_t)clamp(last->y + next->mouse.y, INT16_MIN, INT16_MAX);
-	last->wheel = (int8_t)clamp(last->wheel + next->mouse.wheel, INT8_MIN, INT8_MAX);
-	last->pan = (int8_t)clamp(last->pan + next->mouse.pan, INT8_MIN, INT8_MAX);
+	last->x = (int16_t)reports_clamp(last->x + next->mouse.x, INT16_MIN, INT16_MAX);
+	last->y = (int16_t)reports_clamp(last->y + next->mouse.y, INT16_MIN, INT16_MAX);
+	last->wheel = (int8_t)reports_clamp(last->wheel + next->mouse.wheel, INT8_MIN, INT8_MAX);
+	last->pan = (int8_t)reports_clamp(last->pan + next->mouse.pan, INT8_MIN, INT8_MAX);
 	return true;
 }
 
@@ -163,8 +163,8 @@ size_t reports_encode_mouse(const struct report_mouse *m, bool boot,
 {
 	out[0] = (uint8_t)m->buttons;
 	if (boot) {
-		out[1] = (uint8_t)clamp(m->x, -127, 127);
-		out[2] = (uint8_t)clamp(m->y, -127, 127);
+		out[1] = (uint8_t)reports_clamp(m->x, -127, 127);
+		out[2] = (uint8_t)reports_clamp(m->y, -127, 127);
 		return REPORT_MOUSE_BOOT_LEN;
 	}
 	out[1] = (uint8_t)(m->buttons >> 8);

@@ -33,7 +33,7 @@ enum {
 };
 
 static uint8_t map_bytes[BLE_MAP_MAX];
-static struct hidmap map;
+static struct hidmap maps[DEVICE_KINDS];
 static struct hidkeys keys;
 static struct btpolicy policy;
 static struct btlist list;
@@ -99,6 +99,8 @@ static const char *map_fault(enum hidmap_result result)
 		return "too large";
 	case HIDMAP_NO_KEYBOARD:
 		return "without a keyboard";
+	case HIDMAP_NO_POINTER:
+		return "without a pointer";
 	case HIDMAP_OK:
 		break;
 	}
@@ -149,12 +151,13 @@ static void log_keyboard(uint8_t type, const uint8_t *addr, uint8_t c)
 
 static void send_leds(uint8_t leds)
 {
+	const struct hidmap *map = &maps[DEVICE_KEYBOARD];
 	int err;
 
-	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || !map.has_leds) {
+	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || !map->has_leds) {
 		return;
 	}
-	err = ble_set_leds(map.led_report_id, leds);
+	err = ble_set_leds(map->led_report_id, leds);
 	if (err) {
 		printk("bluetooth leds not sent: %d\n", err);
 	}
@@ -218,38 +221,42 @@ static void device_ready(enum device_kind kind)
 
 static void on_map_read(enum device_kind kind)
 {
+	const char *what = device_kind_name(kind);
 	char *name = names[kind];
 	size_t len;
 	enum hidmap_result result;
-	uint8_t leds;
 
 	ble_copy_name(kind, name);
-	if (kind == DEVICE_MOUSE) {
-		printk("bluetooth mouse \"%s\" ready\n", name);
-		device_ready(kind);
-		return;
-	}
 	len = ble_copy_map(kind, map_bytes, sizeof(map_bytes));
-	result = hidmap_parse(map_bytes, len, &map);
+	result = hidmap_parse(map_bytes, len, kind, &maps[kind]);
 	if (result != HIDMAP_OK) {
-		printk("bluetooth keyboard \"%s\" refused: report map %s\n", name,
+		printk("bluetooth %s \"%s\" refused: report map %s\n", what, name,
 		       map_fault(result));
-		if (result == HIDMAP_NO_KEYBOARD) {
+		if (result == HIDMAP_NO_KEYBOARD || result == HIDMAP_NO_POINTER) {
 			forget(btpolicy_peer(&policy, kind));
 		}
 		ble_disconnect(kind);
 		return;
 	}
-	printk("bluetooth keyboard \"%s\" ready\n", name);
+	printk("bluetooth %s \"%s\" ready\n", what, name);
 	device_ready(kind);
-	core_take_leds(&leds);
-	send_leds(leds);
+	if (kind == DEVICE_KEYBOARD) {
+		uint8_t leds;
+
+		core_take_leds(&leds);
+		send_leds(leds);
+	}
 }
 
 static void on_disconnected(enum device_kind kind, uint8_t reason)
 {
 	if (btpolicy_is_ready(&policy, kind)) {
-		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_input(DEVICE_KEYBOARD), 0, 0);
+		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_input(kind), 0, 0);
+		if (kind == DEVICE_MOUSE) {
+			const struct report released = {.kind = REPORT_MOUSE};
+
+			core_submit(DEVICE_MOUSE, &released);
+		}
 	}
 	if (kind == DEVICE_KEYBOARD) {
 		if (btpolicy_is_ready(&policy, kind)) {
@@ -262,18 +269,34 @@ static void on_disconnected(enum device_kind kind, uint8_t reason)
 			      reason == BLE_REASON_NOT_ESTABLISHED);
 }
 
+static void on_mouse_report(const struct ble_event *ev)
+{
+	struct report out;
+
+	core_packet(DEVICE_MOUSE);
+	if (hidkeys_pointer(&maps[DEVICE_MOUSE].pointer, ev->report.id, ev->report.data,
+			    ev->report.len, &out)) {
+		core_submit(DEVICE_MOUSE, &out);
+	}
+}
+
 static void on_report(const struct ble_event *ev)
 {
 	struct report out[REPORT_KINDS];
 	size_t n;
 
-	if (ev->kind != DEVICE_KEYBOARD || !btpolicy_is_ready(&policy, DEVICE_KEYBOARD)) {
+	if (!btpolicy_is_ready(&policy, ev->kind)) {
+		return;
+	}
+	if (ev->kind == DEVICE_MOUSE) {
+		on_mouse_report(ev);
 		return;
 	}
 	core_packet(DEVICE_KEYBOARD);
 	reported = true;
 	report_ms = k_uptime_get_32();
-	n = hidkeys_translate(&keys, &map, ev->report.id, ev->report.data, ev->report.len, out);
+	n = hidkeys_translate(&keys, &maps[DEVICE_KEYBOARD], ev->report.id, ev->report.data,
+			      ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
 		core_submit(DEVICE_KEYBOARD, &out[i]);
 	}
@@ -401,16 +424,21 @@ static void on_request(const struct diag_request *req)
 
 static void read_rssi(uint32_t now)
 {
-	int8_t dbm;
-
-	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
+	if (now - rssi_tried_ms < RSSI_PERIOD_MS) {
 		return;
 	}
 	rssi_tried_ms = now;
-	if (ble_rssi(DEVICE_KEYBOARD, &dbm) == 0) {
-		rssi = dbm;
-		rssi_read = true;
-		core_rssi(DEVICE_KEYBOARD, dbm);
+	for (int k = 0; k < DEVICE_KINDS; k++) {
+		int8_t dbm;
+
+		if (!btpolicy_is_ready(&policy, k) || ble_rssi(k, &dbm) != 0) {
+			continue;
+		}
+		core_rssi(k, dbm);
+		if (k == DEVICE_KEYBOARD) {
+			rssi = dbm;
+			rssi_read = true;
+		}
 	}
 }
 

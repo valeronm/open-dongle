@@ -3,15 +3,15 @@
 #include "hidkeys.h"
 #include "test.h"
 
-static struct hidmap air75, mx;
+static struct hidmap air75, mx, mouse;
 static struct hidkeys keys;
 
-static void load(const char *name, struct hidmap *m)
+static void load(const char *name, enum device_kind kind, struct hidmap *m)
 {
 	uint8_t map[512];
 	size_t len = load_fixture(name, map, sizeof(map));
 
-	CHECK_EQ(hidmap_parse(map, len, m), HIDMAP_OK);
+	CHECK_EQ(hidmap_parse(map, len, kind, m), HIDMAP_OK);
 }
 
 static size_t hex(const char *text, uint8_t *out)
@@ -216,10 +216,65 @@ static void reset_forgets_held_keys(void)
 	check_keyboard(&out[0], 0, "000000000000");
 }
 
+static void check_pointer(const char *text, uint16_t buttons, int16_t x, int16_t y, int8_t wheel,
+			  int8_t pan)
+{
+	uint8_t data[64];
+	size_t len = hex(text, data);
+	struct report out;
+
+	CHECK(hidkeys_pointer(&mouse.pointer, 2, data, len, &out));
+	CHECK_EQ(out.kind, REPORT_MOUSE);
+	CHECK_EQ(out.mouse.buttons, buttons);
+	CHECK_EQ(out.mouse.x, x);
+	CHECK_EQ(out.mouse.y, y);
+	CHECK_EQ(out.mouse.wheel, wheel);
+	CHECK_EQ(out.mouse.pan, pan);
+}
+
+static void mx_master_reports_translate(void)
+{
+	check_pointer("00000200000000", 0, 2, 0, 0, 0);
+	check_pointer("000002e0ff0000", 0, 2, -2, 0, 0);
+	check_pointer("0000ffffff0000", 0, -1, -1, 0, 0);
+	check_pointer("20000000000000", 0x20, 0, 0, 0, 0);
+	check_pointer("00000110000001", 0, 1, 1, 0, 1);
+	check_pointer("000001f0ff00ff", 0, 1, -1, 0, -1);
+	check_pointer("00000118800000", 0, -2047, -2047, 0, 0);
+	check_pointer("0000000000ff00", 0, 0, 0, -1, 0);
+}
+
+static void another_report_or_a_short_one_is_not_a_pointer(void)
+{
+	uint8_t data[64];
+	struct report out;
+
+	CHECK(!hidkeys_pointer(&mouse.pointer, 17, data,
+			       hex("ff040001010100000000000000000000000000", data), &out));
+	CHECK(!hidkeys_pointer(&mouse.pointer, 2, data, hex("000002000000", data), &out));
+}
+
+static void a_wide_wheel_is_clamped(void)
+{
+	const struct hidmap_pointer wide = {
+		.x = {.bit_offset = 0, .size = 8, .is_signed = true},
+		.y = {.bit_offset = 8, .size = 8, .is_signed = true},
+		.wheel = {.bit_offset = 16, .size = 16, .is_signed = true},
+	};
+	uint8_t data[64];
+	struct report out;
+
+	CHECK(hidkeys_pointer(&wide, 0, data, hex("0000d4fe", data), &out));
+	CHECK_EQ(out.mouse.wheel, -127);
+	CHECK(hidkeys_pointer(&wide, 0, data, hex("00002c01", data), &out));
+	CHECK_EQ(out.mouse.wheel, 127);
+}
+
 int main(void)
 {
-	load("air75-v2-report-map.hex", &air75);
-	load("mx-keys-report-map.hex", &mx);
+	load("air75-v2-report-map.hex", DEVICE_KEYBOARD, &air75);
+	load("mx-keys-report-map.hex", DEVICE_KEYBOARD, &mx);
+	load("mx-master-3s-report-map.hex", DEVICE_MOUSE, &mouse);
 	RUN(air75_letter_and_release);
 	RUN(air75_shift_letter);
 	RUN(mx_keys_seven_byte_report);
@@ -234,5 +289,8 @@ int main(void)
 	RUN(a_short_report_is_ignored);
 	RUN(an_unknown_report_id_writes_nothing);
 	RUN(reset_forgets_held_keys);
+	RUN(mx_master_reports_translate);
+	RUN(another_report_or_a_short_one_is_not_a_pointer);
+	RUN(a_wide_wheel_is_clamped);
 	return TEST_EXIT();
 }

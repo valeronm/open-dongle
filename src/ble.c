@@ -255,6 +255,17 @@ static void connection_ended(struct link *l, uint8_t reason)
 	emit(l, (struct ble_event){.type = BLE_DISCONNECTED, .reason = reason});
 }
 
+static void print_params(struct link *l)
+{
+	struct bt_conn_info info;
+
+	if (bt_conn_get_info(l->conn, &info) == 0) {
+		printk("bluetooth %s link: interval %u us, latency %u, timeout %u ms\n",
+		       device_kind_name(kind_of(l)), info.le.interval_us,
+		       info.le.latency, info.le.timeout * 10u);
+	}
+}
+
 static void on_connected(struct bt_conn *conn, uint8_t err)
 {
 	struct link *l = link_of_conn(conn);
@@ -273,6 +284,7 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 	l->name[0] = '\0';
 	bt_addr_le_to_str(bt_conn_get_dst(conn), ev.address, sizeof(ev.address));
 	emit(l, ev);
+	print_params(l);
 	l->passkey_used = false;
 	l->failed = false;
 	ret = bt_conn_set_security(conn, BT_SECURITY_L2);
@@ -306,10 +318,24 @@ static void on_security_changed(struct bt_conn *conn, bt_security_t level,
 	read_name(l);
 }
 
+static void on_params_updated(struct bt_conn *conn, uint16_t interval, uint16_t latency,
+			      uint16_t timeout)
+{
+	struct link *l = link_of_conn(conn);
+
+	ARG_UNUSED(interval);
+	ARG_UNUSED(latency);
+	ARG_UNUSED(timeout);
+	if (l) {
+		print_params(l);
+	}
+}
+
 BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = on_connected,
 	.disconnected = on_disconnected,
 	.security_changed = on_security_changed,
+	.le_param_updated = on_params_updated,
 };
 
 static void on_pairing_complete(struct bt_conn *conn, bool bonded)
