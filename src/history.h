@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "device.h"
 #include "noise.h"
 
 #define HISTORY_MINUTES 1440
@@ -13,7 +14,7 @@
 
 /* Totals must not decrease except across history_clear; minutes store their differences. */
 struct history_totals {
-	uint32_t packets;
+	uint32_t packets[DEVICE_KINDS];
 	uint32_t invalid;
 	uint32_t dropped;
 	uint32_t channel_changes;
@@ -22,12 +23,24 @@ struct history_totals {
 	uint32_t gaps;
 };
 
-/* Counts saturate; the signal fields are 0 for a minute without a history_rssi reading. */
+/* All 0 for a minute without a history_rssi reading from the device. */
+struct history_rssi {
+	int8_t min, avg, max;
+};
+
+/* Counts saturate. */
 struct history_minute {
-	uint16_t packets;
+	uint16_t packets[DEVICE_KINDS];
 	uint8_t invalid, dropped, channel_changes, link_losses, usb_retries, gaps;
-	int8_t rssi_min, rssi_avg, rssi_max;
+	struct history_rssi rssi[DEVICE_KINDS];
 	struct noise_record noise;
+};
+
+struct history_rssi_sum {
+	int32_t sum;
+	uint32_t count;
+	int8_t min;
+	int8_t max;
 };
 
 enum history_event_type {
@@ -76,10 +89,7 @@ struct history {
 	uint32_t minute_next;
 	uint32_t minute_oldest;
 	struct history_totals at_minute_start;
-	int32_t rssi_sum;
-	uint32_t rssi_count;
-	int8_t rssi_min;
-	int8_t rssi_max;
+	struct history_rssi_sum rssi[DEVICE_KINDS];
 	struct history_event events[HISTORY_EVENTS];
 	uint32_t events_total;
 	uint32_t events_oldest;
@@ -96,11 +106,11 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 void history_tick(struct history *h, uint64_t now_ms, const struct history_totals *t);
 
 /* A gap's event is logged before the keyboard packet that ended the gap comes here. */
-void history_rssi(struct history *h, int8_t dbm);
+void history_rssi(struct history *h, enum device_kind device, int8_t dbm);
 
-/* The weakest keyboard packet over the current and the previous minute; false when neither had
+/* The device's weakest reading over the current and the previous minute; false when neither had
  * one. */
-bool history_weakest(const struct history *h, int8_t *out);
+bool history_weakest(const struct history *h, enum device_kind device, int8_t *out);
 
 /* A gap or loss event records the readings since the last history_rssi in place of e's noise. */
 void history_event(struct history *h, const struct history_event *e);

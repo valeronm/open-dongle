@@ -16,7 +16,6 @@
 #include "reports.h"
 
 enum core_counter {
-	CORE_PACKETS,
 	CORE_INVALID,
 	CORE_CHANNEL_CHANGES,
 	CORE_LINK_LOSSES,
@@ -62,7 +61,7 @@ void core_start_radio(const struct radio_config *rc);
 bool core_take_rx(struct rx_item *out, k_timeout_t wait);
 uint32_t core_rx_dropped(void);
 /* Returns true when the report changed what the host sees; a change wakes a suspended host. */
-bool core_submit(const struct report *r);
+bool core_submit(enum device_kind device, const struct report *r);
 void core_release_keys(void);
 uint32_t core_usb_retries(void);
 uint32_t core_merges(void);
@@ -74,13 +73,15 @@ void core_show_state(enum indicator_mode mode);
 /* Starts the history with a boot event; loop must stay valid for the rest of the program. */
 void core_start_history(const struct core_loop *loop);
 void core_count(enum core_counter c);
+void core_packet(enum device_kind device);
 /* Takes the pending noise readings first, which a gap or loss event records. */
 void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
 void core_log_pairing_opened(const struct pairwin *w);
 /* Takes the pending noise readings first. */
-void core_rssi(int8_t dbm);
-/* UINT8_MAX when no report has changed what the host sees since boot, or 255 minutes or more ago. */
-uint8_t core_minutes_since_key(void);
+void core_rssi(enum device_kind device, int8_t dbm);
+/* UINT8_MAX when no report from the device has changed what the host sees since boot, or 255
+ * minutes or more ago. */
+uint8_t core_minutes_since_input(enum device_kind device);
 /* Logs USB suspend changes and closes the minutes that ended. */
 void core_poll(void);
 /* Takes the pending noise readings, which a channel change drops, and counts a change that

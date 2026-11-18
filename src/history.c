@@ -13,10 +13,7 @@ static uint8_t sat8(uint32_t v)
 
 static void reset_minute(struct history *h)
 {
-	h->rssi_sum = 0;
-	h->rssi_count = 0;
-	h->rssi_min = 0;
-	h->rssi_max = 0;
+	memset(h->rssi, 0, sizeof(h->rssi));
 	h->noise = (struct noise_tally){0};
 }
 
@@ -40,7 +37,6 @@ static struct history_minute close_minute(const struct history *h, const struct 
 {
 	const struct history_totals *s = &h->at_minute_start;
 	struct history_minute m = {
-		.packets = sat16(t->packets - s->packets),
 		.invalid = sat8(t->invalid - s->invalid),
 		.dropped = sat8(t->dropped - s->dropped),
 		.channel_changes = sat8(t->channel_changes - s->channel_changes),
@@ -49,10 +45,17 @@ static struct history_minute close_minute(const struct history *h, const struct 
 		.gaps = sat8(t->gaps - s->gaps),
 	};
 
-	if (h->rssi_count > 0) {
-		m.rssi_min = h->rssi_min;
-		m.rssi_max = h->rssi_max;
-		m.rssi_avg = h->rssi_sum / (int32_t)h->rssi_count;
+	for (int d = 0; d < DEVICE_KINDS; d++) {
+		const struct history_rssi_sum *r = &h->rssi[d];
+
+		m.packets[d] = sat16(t->packets[d] - s->packets[d]);
+		if (r->count > 0) {
+			m.rssi[d] = (struct history_rssi){
+				.min = r->min,
+				.avg = r->sum / (int32_t)r->count,
+				.max = r->max,
+			};
+		}
 	}
 	m.noise = noise_record(&h->noise);
 	return m;
@@ -73,17 +76,22 @@ void history_tick(struct history *h, uint64_t now_ms, const struct history_total
 	}
 }
 
-void history_rssi(struct history *h, int8_t dbm)
+void history_rssi(struct history *h, enum device_kind device, int8_t dbm)
 {
-	if (h->rssi_count == 0 || dbm < h->rssi_min) {
-		h->rssi_min = dbm;
+	struct history_rssi_sum *r = &h->rssi[device];
+
+	if (r->count == 0 || dbm < r->min) {
+		r->min = dbm;
 	}
-	if (h->rssi_count == 0 || dbm > h->rssi_max) {
-		h->rssi_max = dbm;
+	if (r->count == 0 || dbm > r->max) {
+		r->max = dbm;
 	}
-	h->rssi_sum += dbm;
-	h->rssi_count++;
-	h->since_packet = (struct noise_tally){0};
+	r->sum += dbm;
+	r->count++;
+	/* Gaps and losses are the keyboard's link. */
+	if (device == DEVICE_KEYBOARD) {
+		h->since_packet = (struct noise_tally){0};
+	}
 }
 
 void history_noise(struct history *h, const struct noise_tally *t, bool home)
@@ -137,19 +145,21 @@ size_t history_events(const struct history *h, uint32_t from, uint32_t *first,
 	return n;
 }
 
-bool history_weakest(const struct history *h, int8_t *out)
+bool history_weakest(const struct history *h, enum device_kind device, int8_t *out)
 {
-	bool found = h->rssi_count > 0;
+	bool found = h->rssi[device].count > 0;
 
 	if (found) {
-		*out = h->rssi_min;
+		*out = h->rssi[device].min;
 	}
 	if (h->minute_next > h->minute_oldest) {
 		const struct history_minute *m =
 			&h->minutes[(h->minute_next - 1) % HISTORY_MINUTES];
 
-		if (m->rssi_min != 0 && (!found || m->rssi_min < *out)) {
-			*out = m->rssi_min;
+		int8_t min = m->rssi[device].min;
+
+		if (min != 0 && (!found || min < *out)) {
+			*out = min;
 			found = true;
 		}
 	}

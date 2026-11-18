@@ -2,15 +2,15 @@
 
 #include "btpolicy.h"
 
-enum btpolicy_kind btpolicy_kind_of(uint16_t appearance)
+enum device_kind btpolicy_kind_of(uint16_t appearance)
 {
 	switch (appearance) {
 	case BTPOLICY_APPEARANCE_KEYBOARD:
-		return BTPOLICY_KEYBOARD;
+		return DEVICE_KEYBOARD;
 	case BTPOLICY_APPEARANCE_MOUSE:
-		return BTPOLICY_MOUSE;
+		return DEVICE_MOUSE;
 	default:
-		return BTPOLICY_NO_KIND;
+		return DEVICE_NO_KIND;
 	}
 }
 
@@ -31,7 +31,7 @@ static bool refused(const struct btpolicy *p, const uint8_t *addr)
 
 static bool setting_up(const struct btpolicy *p)
 {
-	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+	for (int k = 0; k < DEVICE_KINDS; k++) {
 		if (p->slots[k].state == BTPOLICY_CONNECTING ||
 		    p->slots[k].state == BTPOLICY_CONNECTED) {
 			return true;
@@ -42,7 +42,7 @@ static bool setting_up(const struct btpolicy *p)
 
 bool btpolicy_interesting(const struct btpolicy_advert *a)
 {
-	return a->connectable && (a->stored || (a->hid_service && a->kind != BTPOLICY_NO_KIND));
+	return a->connectable && (a->stored || (a->hid_service && a->kind != DEVICE_NO_KIND));
 }
 
 enum btpolicy_want btpolicy_wants(const struct btpolicy *p, const struct btpolicy_advert *a,
@@ -50,7 +50,7 @@ enum btpolicy_want btpolicy_wants(const struct btpolicy *p, const struct btpolic
 {
 	const struct btpolicy_slot *s;
 
-	if (!btpolicy_interesting(a) || a->kind == BTPOLICY_NO_KIND || setting_up(p)) {
+	if (!btpolicy_interesting(a) || a->kind == DEVICE_NO_KIND || setting_up(p)) {
 		return BTPOLICY_IGNORE;
 	}
 	s = &p->slots[a->kind];
@@ -79,17 +79,17 @@ void btpolicy_connecting(struct btpolicy *p, const struct btpolicy_advert *a)
 	s->peer_stored = a->stored;
 }
 
-void btpolicy_dropping(struct btpolicy *p, enum btpolicy_kind kind)
+void btpolicy_dropping(struct btpolicy *p, enum device_kind kind)
 {
 	p->slots[kind].dropping = true;
 }
 
-void btpolicy_connected(struct btpolicy *p, enum btpolicy_kind kind)
+void btpolicy_connected(struct btpolicy *p, enum device_kind kind)
 {
 	p->slots[kind].state = BTPOLICY_CONNECTED;
 }
 
-const uint8_t *btpolicy_peer(const struct btpolicy *p, enum btpolicy_kind kind)
+const uint8_t *btpolicy_peer(const struct btpolicy *p, enum device_kind kind)
 {
 	return p->slots[kind].state == BTPOLICY_IDLE ? NULL : p->slots[kind].peer;
 }
@@ -101,12 +101,12 @@ static void refuse_peer(struct btpolicy *p, const uint8_t *peer)
 	}
 }
 
-enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, enum btpolicy_kind kind,
+enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, enum device_kind kind,
 				      bool passkey_used)
 {
 	struct btpolicy_slot *s = &p->slots[kind];
 
-	if (kind == BTPOLICY_KEYBOARD && p->window_open && p->passkey_demanded && !passkey_used) {
+	if (kind == DEVICE_KEYBOARD && p->window_open && p->passkey_demanded && !passkey_used) {
 		refuse_peer(p, s->peer);
 		return BTPOLICY_PAIRING_FORGOTTEN;
 	}
@@ -114,17 +114,17 @@ enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, enum btpolicy_kind kin
 	return BTPOLICY_PAIRING_KEPT;
 }
 
-void btpolicy_ready(struct btpolicy *p, enum btpolicy_kind kind)
+void btpolicy_ready(struct btpolicy *p, enum device_kind kind)
 {
 	p->slots[kind].state = BTPOLICY_READY;
 }
 
-bool btpolicy_is_ready(const struct btpolicy *p, enum btpolicy_kind kind)
+bool btpolicy_is_ready(const struct btpolicy *p, enum device_kind kind)
 {
 	return p->slots[kind].state == BTPOLICY_READY;
 }
 
-void btpolicy_disconnected(struct btpolicy *p, enum btpolicy_kind kind, uint32_t now_ms,
+void btpolicy_disconnected(struct btpolicy *p, enum device_kind kind, uint32_t now_ms,
 			   bool never_joined)
 {
 	struct btpolicy_slot *s = &p->slots[kind];
@@ -138,7 +138,7 @@ void btpolicy_disconnected(struct btpolicy *p, enum btpolicy_kind kind, uint32_t
 	s->dropping = false;
 }
 
-enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum btpolicy_kind kind,
+enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum device_kind kind,
 						enum btpolicy_failure why)
 {
 	struct btpolicy_slot *s = &p->slots[kind];
@@ -176,7 +176,7 @@ enum btpolicy_scan btpolicy_scan(const struct btpolicy *p)
 	if (p->window_open) {
 		return BTPOLICY_SCAN_ACTIVE;
 	}
-	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+	for (int k = 0; k < DEVICE_KINDS; k++) {
 		slot_free |= p->slots[k].state == BTPOLICY_IDLE;
 	}
 	return slot_free ? BTPOLICY_SCAN_PASSIVE : BTPOLICY_SCAN_OFF;

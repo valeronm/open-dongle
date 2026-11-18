@@ -14,7 +14,7 @@
 
 K_MSGQ_DEFINE(ble_events, sizeof(struct ble_event), 16, 4);
 
-BUILD_ASSERT(CONFIG_BT_MAX_CONN == BTPOLICY_KINDS);
+BUILD_ASSERT(CONFIG_BT_MAX_CONN == DEVICE_KINDS);
 BUILD_ASSERT(CONFIG_BT_MAX_PAIRED == BTPOLICY_STORED_MAX);
 BUILD_ASSERT(BTPOLICY_APPEARANCE_KEYBOARD == BT_APPEARANCE_HID_KEYBOARD);
 BUILD_ASSERT(BTPOLICY_APPEARANCE_MOUSE == BT_APPEARANCE_HID_MOUSE);
@@ -30,7 +30,7 @@ struct link {
 	bool passkey_used;
 };
 
-static struct link links[BTPOLICY_KINDS];
+static struct link links[DEVICE_KINDS];
 /* A new device's advert that lacked the HID service or a kind, kept for its scan response. */
 static struct btpolicy_advert pending;
 static bool pending_set;
@@ -38,14 +38,14 @@ static enum btpolicy_scan scan_mode;
 static uint32_t passkey;
 static bool offering;
 
-static enum btpolicy_kind kind_of(const struct link *l)
+static enum device_kind kind_of(const struct link *l)
 {
-	return (enum btpolicy_kind)(l - links);
+	return (enum device_kind)(l - links);
 }
 
 static struct link *link_of_conn(const struct bt_conn *conn)
 {
-	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+	for (int k = 0; k < DEVICE_KINDS; k++) {
 		if (links[k].conn == conn) {
 			return &links[k];
 		}
@@ -330,7 +330,7 @@ static bool parse_field(struct bt_data *data, void *user_data)
 	struct btpolicy_advert *a = user_data;
 
 	if (data->type == BT_DATA_GAP_APPEARANCE && data->data_len == 2 &&
-	    a->kind == BTPOLICY_NO_KIND) {
+	    a->kind == DEVICE_NO_KIND) {
 		a->kind = btpolicy_kind_of(sys_get_le16(data->data));
 	}
 	if (data->type != BT_DATA_UUID16_SOME && data->type != BT_DATA_UUID16_ALL) {
@@ -362,7 +362,7 @@ static void on_advert(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		a->directed = type == BT_GAP_ADV_TYPE_ADV_DIRECT_IND;
 		a->connectable = a->directed || type == BT_GAP_ADV_TYPE_ADV_IND;
 		a->stored = bt_le_bond_exists(BT_ID_DEFAULT, addr);
-		a->kind = BTPOLICY_NO_KIND;
+		a->kind = DEVICE_NO_KIND;
 		memcpy(a->addr, addr, sizeof(a->addr));
 	}
 	if (!a->directed) {
@@ -414,7 +414,7 @@ int ble_scan(enum btpolicy_scan mode)
 #define SETUP_CONN_PARAM                                                                           \
 	BT_LE_CONN_PARAM(SHORTEST_INTERVAL, SHORTEST_INTERVAL, 0, BT_GAP_MS_TO_CONN_TIMEOUT(4000))
 
-int ble_connect(enum btpolicy_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN])
+int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN])
 {
 	struct link *l = &links[kind];
 	bt_addr_le_t peer;
@@ -513,7 +513,7 @@ int ble_start(void)
 	if (!err) {
 		err = bt_conn_auth_info_cb_register(&pairing_callbacks);
 	}
-	for (int k = 0; !err && k < BTPOLICY_KINDS; k++) {
+	for (int k = 0; !err && k < DEVICE_KINDS; k++) {
 		bt_hogp_init(&links[k].hogp, &hogp_params);
 	}
 	return err;
@@ -524,7 +524,7 @@ bool ble_take_event(struct ble_event *ev)
 	return k_msgq_get(&ble_events, ev, K_NO_WAIT) == 0;
 }
 
-size_t ble_copy_map(enum btpolicy_kind kind, uint8_t *out, size_t cap)
+size_t ble_copy_map(enum device_kind kind, uint8_t *out, size_t cap)
 {
 	size_t len;
 
@@ -535,14 +535,14 @@ size_t ble_copy_map(enum btpolicy_kind kind, uint8_t *out, size_t cap)
 	return len;
 }
 
-void ble_copy_name(enum btpolicy_kind kind, char out[BLE_NAME_MAX + 1])
+void ble_copy_name(enum device_kind kind, char out[BLE_NAME_MAX + 1])
 {
 	k_sched_lock();
 	memcpy(out, links[kind].name, sizeof(links[kind].name));
 	k_sched_unlock();
 }
 
-void ble_disconnect(enum btpolicy_kind kind)
+void ble_disconnect(enum device_kind kind)
 {
 	struct link *l = &links[kind];
 
@@ -561,7 +561,7 @@ static void on_leds_written(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uin
 
 int ble_set_leds(uint8_t report_id, uint8_t leds)
 {
-	struct bt_hogp *hogp = &links[BTPOLICY_KEYBOARD].hogp;
+	struct bt_hogp *hogp = &links[DEVICE_KEYBOARD].hogp;
 	struct bt_hogp_rep_info *rep;
 
 	if (!bt_hogp_ready_check(hogp)) {
@@ -575,7 +575,7 @@ int ble_set_leds(uint8_t report_id, uint8_t leds)
 	return bt_hogp_rep_write_wo_rsp(hogp, rep, &leds, sizeof(leds), on_leds_written);
 }
 
-int ble_rssi(enum btpolicy_kind kind, int8_t *dbm)
+int ble_rssi(enum device_kind kind, int8_t *dbm)
 {
 	struct bt_conn *conn = links[kind].conn;
 	struct bt_hci_cp_read_rssi *cp;

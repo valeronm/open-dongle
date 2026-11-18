@@ -110,9 +110,11 @@ static uint8_t link_up_kind(enum unifying_heard h)
 static void apply_frame(const struct unifying_out *out, const struct rx_item *item)
 {
 	if (item->pipe == UNIFYING_PIPE_DEVICE) {
-		core_count(out->invalid ? CORE_INVALID : CORE_PACKETS);
-		if (!out->invalid) {
-			core_rssi(item->rssi);
+		if (out->invalid) {
+			core_count(CORE_INVALID);
+		} else {
+			core_packet(DEVICE_KEYBOARD);
+			core_rssi(DEVICE_KEYBOARD, item->rssi);
 		}
 	}
 	if (out->heard != UNIFYING_HEARD_NONE) {
@@ -143,7 +145,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 		on_paired();
 	}
 	for (size_t i = 0; i < out->reports; i++) {
-		core_submit(&out->report[i]);
+		core_submit(DEVICE_KEYBOARD, &out->report[i]);
 	}
 	if (out->release_all) {
 		core_release_keys();
@@ -159,7 +161,7 @@ static void apply_tick(const struct unifying_out *out)
 		queue_leds(out->leds);
 	}
 	if (out->went_silent) {
-		core_log(HISTORY_LINK_LOST, (uint8_t)session.rssi, core_minutes_since_key(), 0,
+		core_log(HISTORY_LINK_LOST, (uint8_t)session.rssi, core_minutes_since_input(DEVICE_KEYBOARD), 0,
 			 out->silent_ms);
 	}
 	if (out->attempt_expired) {

@@ -38,7 +38,7 @@ static struct hidkeys keys;
 static struct btpolicy policy;
 static struct btlist list;
 static struct pairwin window;
-static char names[BTPOLICY_KINDS][BLE_NAME_MAX + 1];
+static char names[DEVICE_KINDS][BLE_NAME_MAX + 1];
 static int start_err;
 static bool passkey_asked;
 static bool rssi_read;
@@ -50,7 +50,7 @@ static uint32_t report_ms;
 static void fill_status(struct diag_status *st)
 {
 	st->link_state = start_err			? LINK_START_FAILED
-			 : btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) ? LINK_CONNECTED
+			 : btpolicy_is_ready(&policy, DEVICE_KEYBOARD) ? LINK_CONNECTED
 							: LINK_NO_KEYBOARD;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
 	if (rssi_read) {
@@ -59,8 +59,8 @@ static void fill_status(struct diag_status *st)
 	if (reported) {
 		st->last_rx_age_ms = k_uptime_get_32() - report_ms;
 	}
-	if (btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
-		strncpy((char *)st->keyboard_name, names[BTPOLICY_KEYBOARD],
+	if (btpolicy_is_ready(&policy, DEVICE_KEYBOARD)) {
+		strncpy((char *)st->keyboard_name, names[DEVICE_KEYBOARD],
 			sizeof(st->keyboard_name));
 	}
 }
@@ -151,7 +151,7 @@ static void send_leds(uint8_t leds)
 {
 	int err;
 
-	if (!btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) || !map.has_leds) {
+	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || !map.has_leds) {
 		return;
 	}
 	err = ble_set_leds(map.led_report_id, leds);
@@ -209,14 +209,14 @@ static void on_failed(const struct ble_event *ev)
 	}
 }
 
-static void device_ready(enum btpolicy_kind kind)
+static void device_ready(enum device_kind kind)
 {
 	btpolicy_ready(&policy, kind);
 	log_keyboard(HISTORY_BT_CONNECTED, btpolicy_peer(&policy, kind), 0);
 	save_list(btlist_connected(&list, btpolicy_peer(&policy, kind), names[kind]));
 }
 
-static void on_map_read(enum btpolicy_kind kind)
+static void on_map_read(enum device_kind kind)
 {
 	char *name = names[kind];
 	size_t len;
@@ -224,7 +224,7 @@ static void on_map_read(enum btpolicy_kind kind)
 	uint8_t leds;
 
 	ble_copy_name(kind, name);
-	if (kind == BTPOLICY_MOUSE) {
+	if (kind == DEVICE_MOUSE) {
 		printk("bluetooth mouse \"%s\" ready\n", name);
 		device_ready(kind);
 		return;
@@ -246,12 +246,12 @@ static void on_map_read(enum btpolicy_kind kind)
 	send_leds(leds);
 }
 
-static void on_disconnected(enum btpolicy_kind kind, uint8_t reason)
+static void on_disconnected(enum device_kind kind, uint8_t reason)
 {
 	if (btpolicy_is_ready(&policy, kind)) {
-		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_key(), 0, 0);
+		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_input(DEVICE_KEYBOARD), 0, 0);
 	}
-	if (kind == BTPOLICY_KEYBOARD) {
+	if (kind == DEVICE_KEYBOARD) {
 		if (btpolicy_is_ready(&policy, kind)) {
 			core_release_keys();
 		}
@@ -267,15 +267,15 @@ static void on_report(const struct ble_event *ev)
 	struct report out[REPORT_KINDS];
 	size_t n;
 
-	if (ev->kind != BTPOLICY_KEYBOARD || !btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
+	if (ev->kind != DEVICE_KEYBOARD || !btpolicy_is_ready(&policy, DEVICE_KEYBOARD)) {
 		return;
 	}
-	core_count(CORE_PACKETS);
+	core_packet(DEVICE_KEYBOARD);
 	reported = true;
 	report_ms = k_uptime_get_32();
 	n = hidkeys_translate(&keys, &map, ev->report.id, ev->report.data, ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
-		core_submit(&out[i]);
+		core_submit(DEVICE_KEYBOARD, &out[i]);
 	}
 }
 
@@ -358,9 +358,9 @@ static void open_pairing(const struct diag_request *req)
 static void send_keyboards(const struct diag_request *req)
 {
 	uint8_t payload[DIAG_KEYBOARDS_MAX];
-	const uint8_t *connected[BTPOLICY_KINDS];
+	const uint8_t *connected[DEVICE_KINDS];
 
-	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+	for (int k = 0; k < DEVICE_KINDS; k++) {
 		connected[k] = btpolicy_is_ready(&policy, k) ? btpolicy_peer(&policy, k) : NULL;
 	}
 
@@ -403,14 +403,14 @@ static void read_rssi(uint32_t now)
 {
 	int8_t dbm;
 
-	if (!btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
+	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
 		return;
 	}
 	rssi_tried_ms = now;
-	if (ble_rssi(BTPOLICY_KEYBOARD, &dbm) == 0) {
+	if (ble_rssi(DEVICE_KEYBOARD, &dbm) == 0) {
 		rssi = dbm;
 		rssi_read = true;
-		core_rssi(dbm);
+		core_rssi(DEVICE_KEYBOARD, dbm);
 	}
 }
 
@@ -419,7 +419,7 @@ static enum indicator_mode indicator(uint32_t now)
 	if (start_err) {
 		return IND_ERROR;
 	}
-	if (btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
+	if (btpolicy_is_ready(&policy, DEVICE_KEYBOARD)) {
 		return IND_CONNECTED;
 	}
 	return pairwin_is_open(&window, now) ? IND_PAIRING : IND_IDLE;

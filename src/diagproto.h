@@ -125,7 +125,7 @@ size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_eve
 size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
 /* connected[k] is the ready device of kind k, or NULL. */
 size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
-			     const uint8_t *const connected[BTPOLICY_KINDS]);
+			     const uint8_t *const connected[DEVICE_KINDS]);
 /* No home is sent as 0, no threshold as CHANWATCH_NO_THRESHOLD. */
 size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 			 uint8_t threshold_bucket, bool paused, uint64_t now_ms);

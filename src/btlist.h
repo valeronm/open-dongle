@@ -14,7 +14,7 @@ struct btlist_entry {
 	/* Padded with zeros; not terminated when it fills the field. */
 	char name[BTLIST_NAME_LEN];
 	bool no_passkey;
-	/* An enum btpolicy_kind; zero, a keyboard, for an entry added by btlist_reconcile. */
+	/* An enum device_kind; zero, a keyboard, for an entry added by btlist_reconcile. */
 	uint8_t kind;
 };
 
@@ -30,12 +30,12 @@ struct btlist {
 bool btlist_reconcile(struct btlist *l, const uint8_t addrs[][BTPOLICY_ADDR_LEN], size_t n);
 /* Moves the device to the front and records its name. */
 bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name);
-bool btlist_paired(struct btlist *l, const uint8_t *addr, enum btpolicy_kind kind,
+bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
 		   bool no_passkey);
 bool btlist_remove(struct btlist *l, const uint8_t *addr);
 
 bool btlist_has(const struct btlist *l, const uint8_t *addr);
-/* BTPOLICY_NO_KIND for an address not in the list. */
-enum btpolicy_kind btlist_kind(const struct btlist *l, const uint8_t *addr);
+/* DEVICE_NO_KIND for an address not in the list. */
+enum device_kind btlist_kind(const struct btlist *l, const uint8_t *addr);
 
 #endif

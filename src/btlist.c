@@ -85,7 +85,7 @@ bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name)
 	return changed;
 }
 
-bool btlist_paired(struct btlist *l, const uint8_t *addr, enum btpolicy_kind kind,
+bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
 		   bool no_passkey)
 {
 	bool changed = false;
@@ -118,9 +118,9 @@ bool btlist_has(const struct btlist *l, const uint8_t *addr)
 	return find(l, addr) != NOT_LISTED;
 }
 
-enum btpolicy_kind btlist_kind(const struct btlist *l, const uint8_t *addr)
+enum device_kind btlist_kind(const struct btlist *l, const uint8_t *addr)
 {
 	uint8_t at = find(l, addr);
 
-	return at == NOT_LISTED ? BTPOLICY_NO_KIND : l->entries[at].kind;
+	return at == NOT_LISTED ? DEVICE_NO_KIND : l->entries[at].kind;
 }

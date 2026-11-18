@@ -100,7 +100,7 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	*p++ = (uint8_t)s->last_rssi;
 	p = put_le(p, s->last_rx_age_ms, 4);
 	*p++ = (s->usb_live ? 1 : 0) | (s->usb_suspended ? 2 : 0);
-	p = put_le(p, s->totals.packets, 4);
+	p = put_le(p, s->totals.packets[DEVICE_KEYBOARD], 4);
 	p = put_le(p, s->totals.invalid, 4);
 	p = put_le(p, s->totals.dropped, 4);
 	p = put_le(p, s->totals.channel_changes, 4);
@@ -136,16 +136,18 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 
 	*p++ = n;
 	for (size_t i = 0; i < n; i++) {
-		p = put_le(p, m[i].packets, 2);
+		const struct history_rssi *rssi = &m[i].rssi[DEVICE_KEYBOARD];
+
+		p = put_le(p, m[i].packets[DEVICE_KEYBOARD], 2);
 		*p++ = m[i].invalid;
 		*p++ = m[i].dropped;
 		*p++ = m[i].channel_changes;
 		*p++ = m[i].link_losses;
 		*p++ = m[i].usb_retries;
 		*p++ = m[i].gaps;
-		*p++ = (uint8_t)m[i].rssi_min;
-		*p++ = (uint8_t)m[i].rssi_avg;
-		*p++ = (uint8_t)m[i].rssi_max;
+		*p++ = (uint8_t)rssi->min;
+		*p++ = (uint8_t)rssi->avg;
+		*p++ = (uint8_t)rssi->max;
 		p = put_noise(p, &m[i].noise);
 	}
 	return p - out;
@@ -219,7 +221,7 @@ size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 _Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored keyboard's name is sent whole");
 
 size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
-			     const uint8_t *const connected[BTPOLICY_KINDS])
+			     const uint8_t *const connected[DEVICE_KINDS])
 {
 	uint8_t *p = out;
 
@@ -228,10 +230,10 @@ size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
 		const struct btlist_entry *e = &l->entries[i];
 		uint8_t flags = e->no_passkey ? DIAG_KEYBOARD_NO_PASSKEY : 0;
 
-		if (e->kind == BTPOLICY_MOUSE) {
+		if (e->kind == DEVICE_MOUSE) {
 			flags |= DIAG_KEYBOARD_MOUSE;
 		}
-		for (int k = 0; k < BTPOLICY_KINDS; k++) {
+		for (int k = 0; k < DEVICE_KINDS; k++) {
 			if (connected[k] && memcmp(e->addr, connected[k], sizeof(e->addr)) == 0) {
 				flags |= DIAG_KEYBOARD_CONNECTED;
 			}

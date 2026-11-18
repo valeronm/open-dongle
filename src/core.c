@@ -31,7 +31,9 @@ static atomic_t usb_retries;
 static struct history history;
 static uint32_t counts[CORE_COUNTERS];
 static const struct core_loop *loop;
-static int64_t last_key_ms = -1;
+static uint32_t packets[DEVICE_KINDS];
+/* Below 0 for a device that has sent nothing since boot. */
+static int64_t last_input_ms[DEVICE_KINDS];
 static bool usb_was_suspended;
 static bool usb_seen_live;
 static struct chanwatch watch;
@@ -115,7 +117,7 @@ static void unlock_reports(bool wake_senders)
 	}
 }
 
-bool core_submit(const struct report *r)
+bool core_submit(enum device_kind device, const struct report *r)
 {
 	bool changed;
 
@@ -124,7 +126,7 @@ bool core_submit(const struct report *r)
 	unlock_reports(false);
 	if (changed) {
 		k_sem_give(&reports_ready[reports_iface(r->kind)]);
-		last_key_ms = k_uptime_get();
+		last_input_ms[device] = k_uptime_get();
 	}
 	if (changed && usb_suspended()) {
 		usb_wakeup();
@@ -156,8 +158,7 @@ uint32_t core_merges(void)
 
 static struct history_totals totals(void)
 {
-	return (struct history_totals){
-		.packets = counts[CORE_PACKETS],
+	struct history_totals t = {
 		.invalid = counts[CORE_INVALID],
 		.dropped = core_rx_dropped(),
 		.channel_changes = counts[CORE_CHANNEL_CHANGES],
@@ -165,6 +166,9 @@ static struct history_totals totals(void)
 		.usb_retries = core_usb_retries(),
 		.gaps = counts[CORE_GAPS],
 	};
+
+	memcpy(t.packets, packets, sizeof(t.packets));
+	return t;
 }
 
 static void log_event(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
@@ -193,6 +197,9 @@ static void take_noise(void)
 void core_start_history(const struct core_loop *l)
 {
 	loop = l;
+	for (int d = 0; d < DEVICE_KINDS; d++) {
+		last_input_ms[d] = -1;
+	}
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
 	log_event(HISTORY_BOOT, 0, 0, 0, boot_reset_cause);
 }
@@ -200,6 +207,11 @@ void core_start_history(const struct core_loop *l)
 void core_count(enum core_counter c)
 {
 	counts[c]++;
+}
+
+void core_packet(enum device_kind device)
+{
+	packets[device]++;
 }
 
 void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
@@ -213,20 +225,20 @@ void core_log_pairing_opened(const struct pairwin *w)
 	core_log(HISTORY_PAIRING_OPENED, w->cause, w->until_paired, 0, 0);
 }
 
-void core_rssi(int8_t dbm)
+void core_rssi(enum device_kind device, int8_t dbm)
 {
 	take_noise();
-	history_rssi(&history, dbm);
+	history_rssi(&history, device, dbm);
 }
 
-uint8_t core_minutes_since_key(void)
+uint8_t core_minutes_since_input(enum device_kind device)
 {
 	int64_t minutes;
 
-	if (last_key_ms < 0) {
+	if (last_input_ms[device] < 0) {
 		return UINT8_MAX;
 	}
-	minutes = (k_uptime_get() - last_key_ms) / HISTORY_MINUTE_MS;
+	minutes = (k_uptime_get() - last_input_ms[device]) / HISTORY_MINUTE_MS;
 	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
 }
 
@@ -234,7 +246,7 @@ static uint8_t threshold_bucket(void)
 {
 	int8_t weakest;
 
-	return history_weakest(&history, &weakest) ? chanwatch_threshold_bucket(weakest)
+	return history_weakest(&history, DEVICE_KEYBOARD, &weakest) ? chanwatch_threshold_bucket(weakest)
 						   : CHANWATCH_NO_THRESHOLD;
 }
 

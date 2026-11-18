@@ -49,7 +49,7 @@ static void test_status_matches_fixture(void)
 		.last_rssi = -71,
 		.last_rx_age_ms = 12,
 		.usb_live = true,
-		.totals = {.packets = 1000,
+		.totals = {.packets = {1000},
 			   .invalid = 1,
 			   .dropped = 2,
 			   .channel_changes = 3,
@@ -135,12 +135,10 @@ static void test_a_wrong_protocol_error_carries_the_active_protocol(void)
 static void test_minutes_match_fixture(void)
 {
 	const struct history_minute m[] = {
-		{.packets = 300,
+		{.packets = {300},
 		 .usb_retries = 1,
 		 .gaps = 3,
-		 .rssi_min = -80,
-		 .rssi_avg = -70,
-		 .rssi_max = -60,
+		 .rssi = {{.min = -80, .avg = -70, .max = -60}},
 		 .noise = {.peak = -41, .busy = 102, .strong = 5}},
 		{.channel_changes = 12, .link_losses = 1},
 	};
@@ -379,8 +377,8 @@ static void test_a_listed_mouse_is_flagged_and_both_slots_connect(void)
 	const uint8_t mouse[BTPOLICY_ADDR_LEN] = {1, 2};
 	uint8_t got[DIAG_KEYBOARDS_MAX];
 
-	btlist_paired(&list, keyboard, BTPOLICY_KEYBOARD, false);
-	btlist_paired(&list, mouse, BTPOLICY_MOUSE, true);
+	btlist_paired(&list, keyboard, DEVICE_KEYBOARD, false);
+	btlist_paired(&list, mouse, DEVICE_MOUSE, true);
 	diag_encode_keyboards(got, &list, (const uint8_t *const[]){keyboard, mouse});
 	CHECK_EQ(got[0], 2);
 	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN],

@@ -85,7 +85,7 @@ static void apply(const struct link_out *out)
 
 		core_count(CORE_LINK_LOSSES);
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		core_log(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, core_minutes_since_key(), 0, gap);
+		core_log(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, core_minutes_since_input(DEVICE_KEYBOARD), 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();
@@ -142,7 +142,7 @@ static void handle(const struct rx_item *item)
 		core_count(CORE_INVALID);
 		return;
 	}
-	core_count(CORE_PACKETS);
+	core_packet(DEVICE_KEYBOARD);
 	if (item->pipe == 1) {
 		keyboard_rssi = item->rssi;
 	}
@@ -155,7 +155,7 @@ static void handle(const struct rx_item *item)
 			 (uint8_t)item->rssi, out.gap_ms);
 	}
 	if (item->pipe == 1) {
-		core_rssi(item->rssi);
+		core_rssi(DEVICE_KEYBOARD, item->rssi);
 	}
 	apply(&out);
 	if (out.start_survey) {
@@ -165,7 +165,7 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	if (nuphy_report(&m, &next)) {
-		core_submit(&next);
+		core_submit(DEVICE_KEYBOARD, &next);
 	}
 	if (usb_suspended() && m.kind == NUPHY_HELLO) {
 		usb_wakeup();
@@ -202,7 +202,7 @@ static void print_counters(void)
 	fill_status(&s);
 	printk("counters: packets %u invalid %u dropped %u channels %u losses %u gaps %u "
 	       "usb-retries %u merges %u surveys %u, ch%u state %d\n",
-	       s.totals.packets, s.totals.invalid, s.totals.dropped, s.totals.channel_changes,
+	       s.totals.packets[DEVICE_KEYBOARD], s.totals.invalid, s.totals.dropped, s.totals.channel_changes,
 	       s.totals.link_losses, s.totals.gaps, s.totals.usb_retries, s.merges, s.surveys,
 	       link.channel, link.state);
 }

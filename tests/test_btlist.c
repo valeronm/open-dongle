@@ -52,13 +52,13 @@ static void pairing_records_whether_a_passkey_was_typed(void)
 {
 	struct btlist l = {0};
 
-	CHECK(btlist_paired(&l, air, BTPOLICY_KEYBOARD, true));
-	CHECK(btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
+	CHECK(btlist_paired(&l, air, DEVICE_KEYBOARD, true));
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
 	CHECK_EQ(l.count, 2);
 	CHECK(is(&l.entries[0], mx, ""));
 	CHECK(!l.entries[0].no_passkey);
 	CHECK(l.entries[1].no_passkey);
-	CHECK(!btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
+	CHECK(!btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
 	btlist_connected(&l, air, "NuPhy Air75 V2-1");
 	CHECK(l.entries[0].no_passkey);
 }
@@ -105,7 +105,7 @@ static void a_full_list_takes_no_more_devices(void)
 	}
 	addr[1] = 99;
 	CHECK(!btlist_connected(&l, addr, "k"));
-	CHECK(!btlist_paired(&l, addr, BTPOLICY_KEYBOARD, false));
+	CHECK(!btlist_paired(&l, addr, DEVICE_KEYBOARD, false));
 	CHECK_EQ(l.count, BTPOLICY_STORED_MAX);
 }
 
@@ -128,13 +128,13 @@ static void pairing_records_the_kind(void)
 {
 	struct btlist l = {0};
 
-	CHECK(btlist_paired(&l, mouse, BTPOLICY_MOUSE, true));
-	CHECK(btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
-	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_MOUSE);
-	CHECK_EQ(btlist_kind(&l, mx), BTPOLICY_KEYBOARD);
-	CHECK_EQ(btlist_kind(&l, air), BTPOLICY_NO_KIND);
+	CHECK(btlist_paired(&l, mouse, DEVICE_MOUSE, true));
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
+	CHECK_EQ(btlist_kind(&l, mouse), DEVICE_MOUSE);
+	CHECK_EQ(btlist_kind(&l, mx), DEVICE_KEYBOARD);
+	CHECK_EQ(btlist_kind(&l, air), DEVICE_NO_KIND);
 	CHECK(btlist_connected(&l, mouse, "MX Master 3S"));
-	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_MOUSE);
+	CHECK_EQ(btlist_kind(&l, mouse), DEVICE_MOUSE);
 }
 
 static void a_bond_without_an_entry_is_listed_as_a_keyboard(void)
@@ -143,7 +143,7 @@ static void a_bond_without_an_entry_is_listed_as_a_keyboard(void)
 	struct btlist l = {0};
 
 	CHECK(btlist_reconcile(&l, bonded, 1));
-	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_KEYBOARD);
+	CHECK_EQ(btlist_kind(&l, mouse), DEVICE_KEYBOARD);
 }
 
 static void eight_devices_are_stored(void)
