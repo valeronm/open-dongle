@@ -26,7 +26,7 @@ use crate::format::{
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
-    Protocol, Status, Step, Watch, step_channel,
+    Protocol, Status, Step, StoredKeyboard, Watch, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -304,6 +304,7 @@ pub(crate) struct History {
     pub(crate) events_top: Option<u32>,
     /// The minutes the chart's right edge sits before the newest one.
     pub(crate) minutes_back: usize,
+    pub(crate) keyboards: Vec<StoredKeyboard>,
 }
 
 fn boot_time(s: &Status) -> DateTime<Local> {
@@ -319,6 +320,7 @@ impl History {
             events: Vec::new(),
             events_top: None,
             minutes_back: 0,
+            keyboards: Vec::new(),
         }
     }
 
@@ -364,6 +366,7 @@ impl History {
             .extend(dev.events_between(from, s.events_total)?);
         let excess = self.events.len().saturating_sub(EVENTS_KEPT);
         self.events.drain(..excess);
+        self.keyboards = crate::cli::stored_keyboards(dev, self.status.protocol())?;
         Ok(())
     }
 }
@@ -1146,7 +1149,7 @@ fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
             ListItem::new(format!(
                 "{}  {}",
                 at.format(CLOCK),
-                describe_event(e, &history.status.link)
+                describe_event(e, &history.status.link, &history.keyboards)
             ))
         })
         .collect();
@@ -1524,6 +1527,38 @@ mod tests {
             "q quit",
         ];
         assert_eq!(app.connection.view(130).1, [hints.join("  ")]);
+    }
+
+    #[test]
+    fn the_events_list_names_a_stored_bluetooth_keyboard() {
+        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let mut app = app_on(
+            Device::new(
+                Fake::new(move |req| {
+                    let payload: &[u8] = if req[0] == Command::Keyboards as u8 {
+                        &list
+                    } else {
+                        &[]
+                    };
+                    parts(req[0], req[1], payload)
+                }),
+                0,
+            ),
+            status_of(Protocol::Bluetooth),
+        );
+        refreshed_with_pairing(&mut app, Protocol::Bluetooth, false);
+        let connected = Event {
+            time_ms: 0,
+            kind: EventKind::BluetoothConnected,
+            a: 0xeb,
+            b: 0xbb,
+            c: 0,
+            value: 0x49a6_9ad9,
+            noise: None,
+        };
+        history(&mut app).events = vec![(0, connected)];
+        let text = screen(&drawn(&mut app)).join("\n");
+        assert!(text.contains("keyboard MX Keys connected"), "{text}");
     }
 
     #[test]

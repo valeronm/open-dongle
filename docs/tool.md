@@ -60,6 +60,8 @@ which has to be forgotten and paired again.
 - `keyboards` lists the stored keyboards, the most recently connected first, and `forget <n>`
   removes the one at that place in the list.
 
+Event lines name a stored keyboard and give a forgotten one's address.
+
 ## Firmware and reset
 
 - `flash <file.uf2>` writes firmware to a running dongle, a board in its bootloader, or a new board

@@ -14,7 +14,8 @@ use crate::format::{
     unifying_kind, uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{
-    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol, Status, Watch,
+    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol, Status,
+    StoredKeyboard, Watch,
 };
 use crate::{dfu, format, uf2};
 
@@ -160,6 +161,18 @@ pub fn keyboards<T: Transport>(dev: &mut Device<T>) -> Result<()> {
     Ok(())
 }
 
+/// Empty outside Bluetooth, the only protocol that stores a keyboard list.
+pub fn stored_keyboards<T: Transport>(
+    dev: &mut Device<T>,
+    protocol: Protocol,
+) -> Result<Vec<StoredKeyboard>> {
+    if protocol == Protocol::Bluetooth {
+        dev.keyboards()
+    } else {
+        Ok(Vec::new())
+    }
+}
+
 /// `place` is the keyboard's number in the list `keyboards` prints, from 1.
 pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Result<()> {
     let list = dev.keyboards()?;
@@ -255,12 +268,13 @@ pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> R
 pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Result<()> {
     let now = Local::now();
     let from = s.events_total.saturating_sub(count);
+    let stored = stored_keyboards(dev, s.protocol())?;
     for (_, e) in dev.events_between(from, s.events_total)? {
         let at = wall_clock(now, s.uptime_ms, e.time_ms);
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e, &s.link)
+            describe_event(&e, &s.link, &stored)
         );
     }
     Ok(())
