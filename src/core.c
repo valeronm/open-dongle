@@ -405,6 +405,7 @@ static void clear(const struct diag_request *req)
 	atomic_clear(&rx_dropped);
 	atomic_clear(&usb_retries);
 	memset(counts, 0, sizeof(counts));
+	memset(packets, 0, sizeof(packets));
 	history_clear(&history, k_uptime_get(), &(struct history_totals){0});
 	log_event(HISTORY_CLEAR, 0, 0, 0, 0);
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
