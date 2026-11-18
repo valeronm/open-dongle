@@ -47,6 +47,7 @@ struct core_loop {
 };
 
 struct rx_item {
+	uint32_t received_us;
 	uint8_t len;
 	uint8_t pipe;
 	int8_t rssi;
@@ -63,11 +64,12 @@ void core_on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi
 void core_start_radio(const struct radio_config *rc);
 bool core_take_rx(struct rx_item *out, k_timeout_t wait);
 uint32_t core_rx_dropped(void);
-/* Returns true when the report changed what the host sees; a change wakes a suspended host. */
-bool core_submit(uint8_t slot, const struct report *r);
+/* Returns true when the report changed what the host sees; a change wakes a suspended host.
+ * received_us is when the packet carrying the report arrived, from clock_now_us, and NULL for a
+ * report the dongle makes up. */
+bool core_submit(uint8_t slot, const struct report *r, const uint32_t *received_us);
 void core_release_keys(void);
 uint32_t core_usb_retries(void);
-uint32_t core_merges(void);
 /* Returns true once after each host LED change; *leds always receives the current LEDs. */
 bool core_take_leds(uint8_t *leds);
 void core_watchdog_feed(void);

@@ -56,6 +56,7 @@ struct ble_event {
 		bool passkey_used;
 		/* BLE_REPORT: the bytes exclude the report ID. */
 		struct {
+			uint32_t received_us;
 			uint8_t id;
 			uint8_t len;
 			uint8_t data[BLE_REPORT_MAX];

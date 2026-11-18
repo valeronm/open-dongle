@@ -146,7 +146,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 		on_paired();
 	}
 	for (size_t i = 0; i < out->reports; i++) {
-		core_submit(0, &out->report[i]);
+		core_submit(0, &out->report[i], &item->received_us);
 	}
 	if (out->release_all) {
 		core_release_keys();

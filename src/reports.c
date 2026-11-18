@@ -42,7 +42,7 @@ static bool merged_into_last(struct report_queue *q, const struct report *next)
 	if (next->kind != REPORT_MOUSE || q->count == 0) {
 		return false;
 	}
-	last = &q->items[(q->head + q->count - 1) % REPORTS_QUEUE_LEN].mouse;
+	last = &q->items[(q->head + q->count - 1) % REPORTS_QUEUE_LEN].report.mouse;
 	if (last->buttons != next->mouse.buttons) {
 		return false;
 	}
@@ -53,7 +53,7 @@ static bool merged_into_last(struct report_queue *q, const struct report *next)
 	return true;
 }
 
-static void push(struct reports *r, const struct report *item)
+static void push(struct reports *r, const struct report *item, struct report_stamp stamp)
 {
 	struct report_queue *q = &r->queues[reports_iface(item->kind)];
 
@@ -66,7 +66,8 @@ static void push(struct reports *r, const struct report *item)
 		q->count--;
 		r->merges++;
 	}
-	q->items[(q->head + q->count) % REPORTS_QUEUE_LEN] = *item;
+	q->items[(q->head + q->count) % REPORTS_QUEUE_LEN] =
+		(struct report_entry){.report = *item, .stamp = stamp};
 	q->count++;
 }
 
@@ -81,7 +82,7 @@ static bool same_state(const struct report *a, const struct report *b)
 	return a->usage == b->usage;
 }
 
-bool reports_update(struct reports *r, const struct report *next)
+bool reports_update(struct reports *r, const struct report *next, struct report_stamp stamp)
 {
 	struct report *current = &r->current[next->kind];
 
@@ -94,7 +95,7 @@ bool reports_update(struct reports *r, const struct report *next)
 		current->mouse = (struct report_mouse){.buttons = next->mouse.buttons};
 	}
 	if (r->live) {
-		push(r, next);
+		push(r, next, stamp);
 	}
 	return true;
 }
@@ -104,7 +105,7 @@ void reports_release_all(struct reports *r)
 	for (int kind = 0; kind < REPORT_KINDS; kind++) {
 		struct report released = {.kind = kind};
 
-		reports_update(r, &released);
+		reports_update(r, &released, REPORT_UNSTAMPED);
 	}
 }
 
@@ -132,12 +133,12 @@ void reports_set_live(struct reports *r, bool live)
 	}
 	if (live) {
 		for (int kind = 0; kind < REPORT_KINDS; kind++) {
-			push(r, &r->current[kind]);
+			push(r, &r->current[kind], REPORT_UNSTAMPED);
 		}
 	}
 }
 
-bool reports_peek(const struct reports *r, enum report_iface iface, struct report *out)
+bool reports_peek(const struct reports *r, enum report_iface iface, struct report_entry *out)
 {
 	const struct report_queue *q = &r->queues[iface];
 
@@ -156,6 +157,28 @@ void reports_pop(struct reports *r, enum report_iface iface)
 		q->head = (q->head + 1) % REPORTS_QUEUE_LEN;
 		q->count--;
 	}
+}
+
+void reports_delivered(struct reports *r, const struct report_entry *sent, uint32_t now_us)
+{
+	struct report_latency *l;
+	uint32_t delay_us;
+
+	if (sent->stamp.slot >= DEVICE_SLOTS) {
+		return;
+	}
+	l = &r->latency[sent->stamp.slot];
+	delay_us = now_us - sent->stamp.received_us;
+	l->count++;
+	l->sum_us += delay_us;
+	if (delay_us > l->max_us) {
+		l->max_us = delay_us;
+	}
+}
+
+uint32_t reports_latency_average_us(const struct report_latency *l)
+{
+	return l->count == 0 ? UINT32_MAX : (uint32_t)(l->sum_us / l->count);
 }
 
 size_t reports_encode_mouse(const struct report_mouse *m, bool boot,

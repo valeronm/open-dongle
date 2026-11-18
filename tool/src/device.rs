@@ -514,7 +514,7 @@ pub(crate) mod tests {
                 assert_eq!(req[0], Command::Status as u8);
                 asked.borrow_mut().push(req[6]);
                 let mut reply = fixture("status-slot1.hex");
-                let slot_at = reply.len() - 42;
+                let slot_at = reply.len() - crate::protocol::tests::SLOT_FROM_END;
                 reply[slot_at] = req[6];
                 parts(req[0], req[1], &reply)
             }),

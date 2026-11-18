@@ -93,6 +93,8 @@ static void test_status_matches_fixture(void)
 		.packets = 1000,
 		.gaps = 8,
 		.link_losses = 4,
+		.latency_average_us = 850,
+		.latency_max_us = 4200,
 		.name = "MX Keys",
 	};
 
@@ -122,6 +124,7 @@ static void test_a_mouse_slot_status_matches_fixture(void)
 		.last_rssi = -60,
 		.last_rx_age_ms = 250,
 		.packets = 2000,
+		.latency_average_us = UINT32_MAX,
 		.name = "MX Master 3S",
 	};
 

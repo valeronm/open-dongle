@@ -168,7 +168,7 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	if (nuphy_report(&m, &next)) {
-		core_submit(0, &next);
+		core_submit(0, &next, &item->received_us);
 	}
 	if (usb_suspended() && m.kind == NUPHY_HELLO) {
 		usb_wakeup();

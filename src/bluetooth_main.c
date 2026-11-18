@@ -301,7 +301,7 @@ static void on_disconnected(enum device_kind kind, uint8_t reason)
 		if (kind == DEVICE_MOUSE) {
 			const struct report released = {.kind = REPORT_MOUSE};
 
-			core_submit(slot_of(DEVICE_MOUSE), &released);
+			core_submit(slot_of(DEVICE_MOUSE), &released, NULL);
 		}
 	}
 	if (kind == DEVICE_KEYBOARD) {
@@ -321,7 +321,7 @@ static void on_mouse_report(const struct ble_event *ev)
 
 	if (hidkeys_pointer(&maps[DEVICE_MOUSE].pointer, ev->report.id, ev->report.data,
 			    ev->report.len, &out)) {
-		core_submit(slot_of(DEVICE_MOUSE), &out);
+		core_submit(slot_of(DEVICE_MOUSE), &out, &ev->report.received_us);
 	}
 }
 
@@ -345,7 +345,7 @@ static void on_report(const struct ble_event *ev)
 	n = hidkeys_translate(&keys, &maps[DEVICE_KEYBOARD], ev->report.id, ev->report.data,
 			      ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
-		core_submit(slot, &out[i]);
+		core_submit(slot, &out[i], &ev->report.received_us);
 	}
 }
 

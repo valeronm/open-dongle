@@ -120,6 +120,10 @@ struct diag_status {
 	uint32_t packets;
 	uint32_t gaps;
 	uint32_t link_losses;
+	/* UINT32_MAX before a report from the slot reached the host since the last clear; the
+	 * maximum is 0 then. */
+	uint32_t latency_average_us;
+	uint32_t latency_max_us;
 	/* Padded with zeros. */
 	uint8_t name[DIAG_NAME_MAX];
 };

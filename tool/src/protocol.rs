@@ -424,6 +424,15 @@ pub struct SlotStatus {
     pub packets: u32,
     pub gaps: Option<u32>,
     pub link_losses: Option<u32>,
+    /// `None` before a report from the slot reached the PC since the last clear.
+    pub latency: Option<Latency>,
+}
+
+/// The delay from a report's arrival at the dongle to the PC fetching it over USB.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Latency {
+    pub average_us: u32,
+    pub max_us: u32,
 }
 
 impl SlotStatus {
@@ -675,6 +684,7 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
     let signal = r.i8()?;
     let age = r.u32()?;
     let [packets, gaps, link_losses] = [r.u32()?, r.u32()?, r.u32()?];
+    let [average_us, max_us] = [r.u32()?, r.u32()?];
     let name = read_name(r)?;
     Ok(SlotStatus {
         slot,
@@ -690,6 +700,7 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
         packets,
         gaps: protocol.counted(Counter::Gaps, gaps),
         link_losses: protocol.counted(Counter::LinkLosses, link_losses),
+        latency: (average_us != u32::MAX).then_some(Latency { average_us, max_us }),
     })
 }
 
@@ -1122,7 +1133,11 @@ pub(crate) mod tests {
     const SLOTS_AT: usize = KEYBOARD_AT + 5;
     /// Where status.hex, with its one-slot table, holds the asked slot.
     const SLOT_AT: usize = SLOTS_AT + 3;
-    const NAME_AT: usize = SLOT_AT + 18;
+    /// The asked slot's fields before its name, the slot's number first.
+    const SLOT_FIELDS_LEN: usize = 26;
+    const NAME_AT: usize = SLOT_AT + SLOT_FIELDS_LEN;
+    /// How far before a status reply's end the asked slot's number sits.
+    pub(crate) const SLOT_FROM_END: usize = SLOT_FIELDS_LEN + NAME_MAX;
 
     pub(crate) fn fixture(name: &str) -> Vec<u8> {
         parse_hex(&fixture_text(name))
@@ -1372,6 +1387,10 @@ pub(crate) mod tests {
                     packets: 1000,
                     gaps: Some(8),
                     link_losses: Some(4),
+                    latency: Some(Latency {
+                        average_us: 850,
+                        max_us: 4200,
+                    }),
                 },
             })
         );
@@ -1431,6 +1450,7 @@ pub(crate) mod tests {
                     packets: 2000,
                     gaps: None,
                     link_losses: None,
+                    latency: None,
                 },
             })
         );

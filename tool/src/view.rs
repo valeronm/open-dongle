@@ -21,9 +21,9 @@ use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
     channel_role, counted_share, describe_event, device_at, device_lines, forget_question,
-    last_packet, link_health, noise_level, noise_ruler, paired, share, slot_health, slot_state,
-    state_name, status_label, switch_question, uptime, usb_state, wall_clock, watch_role,
-    watch_summary,
+    last_packet, latency, link_health, noise_level, noise_ruler, paired, share, slot_health,
+    slot_state, state_name, status_label, switch_question, uptime, usb_state, wall_clock,
+    watch_role, watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
@@ -35,7 +35,7 @@ const EVENTS_KEPT: usize = 200;
 const EVENT_ROWS: usize = 8;
 const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
-const STATUS_ROWS: u16 = 3;
+const STATUS_ROWS: u16 = 4;
 /// The narrowest a slot's status box and chart draw uncut.
 const PANEL_MIN_WIDTH: u16 = 59;
 const SEPARATOR: &str = "   ";
@@ -1059,6 +1059,9 @@ fn status_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Lin
         rows.push(status_row("channels", channel_spans(s)));
     }
     rows.push(status_row("dongle", dongle));
+    if let Some(l) = device.and_then(|d| d.latency) {
+        rows.push(status_row("latency", vec![Span::raw(latency(l))]));
+    }
     rows
 }
 
@@ -1815,6 +1818,7 @@ mod tests {
             packets: 10,
             gaps: None,
             link_losses: None,
+            latency: None,
         };
         let mut app = app_with(s);
         history(&mut app).slots.push(SlotHistory {
@@ -1948,7 +1952,7 @@ mod tests {
                 let payload = match req[0] {
                     1 => {
                         let mut p = crate::protocol::tests::fixture("status-slot1.hex");
-                        let slot_at = p.len() - 42;
+                        let slot_at = p.len() - crate::protocol::tests::SLOT_FROM_END;
                         p[slot_at] = req[6];
                         p[slot_at - 3] = u8::from(stored[0]);
                         p[slot_at - 1] = u8::from(stored[1]);
@@ -2752,7 +2756,7 @@ mod tests {
     }
 
     #[test]
-    fn the_status_box_holds_a_row_each_for_link_channels_and_dongle() {
+    fn the_status_box_holds_a_row_each_for_link_channels_dongle_and_latency() {
         let s = status_of(Protocol::Nuphy);
         let terminal = status_box(&s);
         let rows = screen(&terminal);
@@ -2776,7 +2780,8 @@ mod tests {
                 uptime(s.uptime_ms)
             )
         );
-        assert!(rows[4].starts_with('└'), "{}", rows[4]);
+        assert_eq!(inside_box(&rows[4]), "latency   0.9 ms average, 4.2 ms max");
+        assert!(rows[5].starts_with('└'), "{}", rows[5]);
     }
 
     #[test]

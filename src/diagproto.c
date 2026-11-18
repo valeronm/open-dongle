@@ -124,6 +124,8 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->packets, 4);
 	p = put_le(p, s->gaps, 4);
 	p = put_le(p, s->link_losses, 4);
+	p = put_le(p, s->latency_average_us, 4);
+	p = put_le(p, s->latency_max_us, 4);
 	memcpy(p, s->name, sizeof(s->name));
 	p += sizeof(s->name);
 	return p - out;

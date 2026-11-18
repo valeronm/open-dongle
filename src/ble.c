@@ -11,6 +11,7 @@
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/services/hogp.h>
 #include "ble.h"
+#include "clock.h"
 
 K_MSGQ_DEFINE(ble_events, sizeof(struct ble_event), 16, 4);
 
@@ -93,7 +94,10 @@ static void fail(struct link *l, enum ble_stage stage, int error)
 static uint8_t on_report(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err,
 			 const uint8_t *data)
 {
-	struct ble_event ev = {.type = BLE_REPORT, .report = {.id = bt_hogp_rep_id(rep)}};
+	struct ble_event ev = {
+		.type = BLE_REPORT,
+		.report = {.received_us = clock_now_us(), .id = bt_hogp_rep_id(rep)},
+	};
 	size_t len = bt_hogp_rep_size(rep);
 
 	if (err || !data) {

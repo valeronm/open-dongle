@@ -2,6 +2,7 @@
 #include <zephyr/drivers/watchdog.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include "clock.h"
 #include "core.h"
 #include "diag.h"
 #include "indicator.h"
@@ -74,7 +75,7 @@ void core_watchdog_feed(void)
 
 void core_on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi)
 {
-	struct rx_item item = {.len = len, .pipe = pipe, .rssi = rssi};
+	struct rx_item item = {.received_us = clock_now_us(), .len = len, .pipe = pipe, .rssi = rssi};
 
 	memcpy(item.data, data, MIN(len, sizeof(item.data)));
 	if (k_msgq_put(&rx_queue, &item, K_NO_WAIT) != 0) {
@@ -119,12 +120,15 @@ static void unlock_reports(bool wake_senders)
 	}
 }
 
-bool core_submit(uint8_t slot, const struct report *r)
+bool core_submit(uint8_t slot, const struct report *r, const uint32_t *received_us)
 {
+	const struct report_stamp stamp =
+		received_us ? (struct report_stamp){.slot = slot, .received_us = *received_us}
+			    : REPORT_UNSTAMPED;
 	bool changed;
 
 	lock_reports();
-	changed = reports_update(&reports, r);
+	changed = reports_update(&reports, r, stamp);
 	unlock_reports(false);
 	if (changed) {
 		k_sem_give(&reports_ready[reports_iface(r->kind)]);
@@ -146,16 +150,6 @@ void core_release_keys(void)
 uint32_t core_usb_retries(void)
 {
 	return (uint32_t)atomic_get(&usb_retries);
-}
-
-uint32_t core_merges(void)
-{
-	uint32_t merges;
-
-	lock_reports();
-	merges = reports.merges;
-	unlock_reports(false);
-	return merges;
 }
 
 static struct history_totals totals(void)
@@ -417,6 +411,7 @@ static void clear(const struct diag_request *req)
 {
 	lock_reports();
 	reports.merges = 0;
+	memset(reports.latency, 0, sizeof(reports.latency));
 	unlock_reports(false);
 	atomic_clear(&rx_dropped);
 	atomic_clear(&usb_retries);
@@ -509,11 +504,12 @@ static void usb_thread(void *a, void *b, void *c)
 	enum report_iface iface = (enum report_iface)(uintptr_t)a;
 
 	for (;;) {
-		struct report r;
+		struct report_entry e;
 		bool have;
+		int err;
 
 		lock_reports();
-		have = reports_peek(&reports, iface, &r);
+		have = reports_peek(&reports, iface, &e);
 		if (have) {
 			reports_pop(&reports, iface);
 		}
@@ -522,9 +518,14 @@ static void usb_thread(void *a, void *b, void *c)
 			k_sem_take(&reports_ready[iface], K_FOREVER);
 			continue;
 		}
-		while (usb_send(&r) != 0 && usb_live()) {
+		while ((err = usb_send(&e.report)) != 0 && usb_live()) {
 			atomic_inc(&usb_retries);
 			k_msleep(USB_RETRY_MS);
+		}
+		if (err == 0) {
+			lock_reports();
+			reports_delivered(&reports, &e, clock_now_us());
+			unlock_reports(false);
 		}
 	}
 }
@@ -582,7 +583,13 @@ uint32_t core_reset_cause(void)
 void core_fill_status(struct diag_status *st, uint8_t slot)
 {
 	struct history_totals t = totals();
+	struct report_latency l;
+	uint32_t merges;
 
+	lock_reports();
+	merges = reports.merges;
+	l = reports.latency[slot];
+	unlock_reports(false);
 	*st = (struct diag_status){
 		.uptime_ms = (uint64_t)k_uptime_get(),
 		.reset_cause = boot_reset_cause,
@@ -600,10 +607,12 @@ void core_fill_status(struct diag_status *st, uint8_t slot)
 		.packets = t.packets[slot],
 		.gaps = t.gaps[slot],
 		.link_losses = t.link_losses[slot],
+		.latency_average_us = reports_latency_average_us(&l),
+		.latency_max_us = l.max_us,
 	};
 	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
 	loop->slots(st->slots);
-	st->merges = core_merges();
+	st->merges = merges;
 	st->surveys = counts[CORE_SURVEYS];
 	st->minute_next = history.minute_next;
 	st->minute_oldest = history.minute_oldest;

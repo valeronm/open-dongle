@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, BluetoothLink, Event, EventKind, Link, Noise, NuphyState, Protocol,
+    Action, BUSY_DBM, BluetoothLink, Event, EventKind, Latency, Link, Noise, NuphyState, Protocol,
     STRONG_DBM, Slot, Status, StoredDevice, UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
@@ -365,6 +365,15 @@ pub fn last_packet(age_ms: Option<u32>) -> String {
     age_ms.map_or("no packet since boot".into(), |ms| {
         format!("last packet {} ago", duration(ms))
     })
+}
+
+/// In milliseconds to a tenth, rounded half up.
+pub fn latency(l: Latency) -> String {
+    let tenths = |us: u32| {
+        let t = (u64::from(us) + 50) / 100;
+        format!("{}.{} ms", t / 10, t % 10)
+    };
+    format!("{} average, {} max", tenths(l.average_us), tenths(l.max_us))
 }
 
 const RESET_CAUSES: [&str; 17] = [
