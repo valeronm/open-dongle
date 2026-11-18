@@ -135,3 +135,12 @@ The keyboards' radio protocols, beyond what the code shows, are in
 A release is built when a `v<version>` tag is pushed. Set the version in `tool/Cargo.toml`, which
 the firmware reads too, add its section to `CHANGELOG.md`, commit, and push the tag. The release
 fails when the tag, the version and the changelog disagree.
+
+## License and trademarks
+
+SpareDongle is under the [MIT License](LICENSE). The firmware builds on the nRF Connect SDK and
+Zephyr, which carry their own licenses.
+
+SpareDongle is not affiliated with or endorsed by NuPhy, Logitech, Nordic Semiconductor or the
+Bluetooth SIG. Product and company names in this repository are trademarks of their owners, used
+only to say what SpareDongle works with.
