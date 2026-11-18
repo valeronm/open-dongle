@@ -121,8 +121,9 @@ bool core_submit(const struct report *r)
 
 	lock_reports();
 	changed = reports_update(&reports, r);
-	unlock_reports(changed);
+	unlock_reports(false);
 	if (changed) {
+		k_sem_give(&reports_ready[reports_iface(r->kind)]);
 		last_key_ms = k_uptime_get();
 	}
 	if (changed && usb_suspended()) {
@@ -485,6 +486,8 @@ K_THREAD_DEFINE(keyboard_tid, 1024, usb_thread, (void *)REPORT_IFACE_KEYBOARD, N
 		SYS_FOREVER_MS);
 K_THREAD_DEFINE(extra_tid, 1024, usb_thread, (void *)REPORT_IFACE_EXTRA, NULL, NULL, 5, 0,
 		SYS_FOREVER_MS);
+K_THREAD_DEFINE(mouse_tid, 1024, usb_thread, (void *)REPORT_IFACE_MOUSE, NULL, NULL, 5, 0,
+		SYS_FOREVER_MS);
 
 static void on_usb_live(void)
 {
@@ -520,6 +523,7 @@ void core_start(enum protocol protocol, uint32_t reset_cause)
 	}
 	k_thread_start(keyboard_tid);
 	k_thread_start(extra_tid);
+	k_thread_start(mouse_tid);
 	watchdog_start();
 }
 

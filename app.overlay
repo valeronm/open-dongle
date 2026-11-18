@@ -15,6 +15,14 @@
 		in-polling-period-us = <1000>;
 	};
 
+	hid_mouse: hid_mouse {
+		compatible = "zephyr,hid-device";
+		label = "HID mouse";
+		protocol-code = "mouse";
+		in-report-size = <8>;
+		in-polling-period-us = <1000>;
+	};
+
 	hid_diag: hid_diag {
 		compatible = "zephyr,hid-device";
 		label = "HID diag";

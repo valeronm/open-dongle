@@ -95,6 +95,41 @@ static const uint8_t extra_desc[] = {
 	HID_END_COLLECTION,
 };
 
+static const uint8_t mouse_desc[] = {
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_MOUSE),
+	HID_COLLECTION(HID_COLLECTION_APPLICATION),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_POINTER),
+	HID_COLLECTION(HID_COLLECTION_PHYSICAL),
+	HID_USAGE_PAGE(HID_USAGE_GEN_BUTTON),
+	HID_USAGE_MIN8(1),
+	HID_USAGE_MAX8(16),
+	HID_LOGICAL_MIN8(0),
+	HID_LOGICAL_MAX8(1),
+	HID_REPORT_SIZE(1),
+	HID_REPORT_COUNT(16),
+	HID_INPUT(0x02),
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_X),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_Y),
+	HID_LOGICAL_MIN16(0x01, 0x80),
+	HID_LOGICAL_MAX16(0xff, 0x7f),
+	HID_REPORT_SIZE(16),
+	HID_REPORT_COUNT(2),
+	HID_INPUT(0x06),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_WHEEL),
+	HID_LOGICAL_MIN8(-127),
+	HID_LOGICAL_MAX8(127),
+	HID_REPORT_SIZE(8),
+	HID_REPORT_COUNT(1),
+	HID_INPUT(0x06),
+	HID_USAGE_PAGE(0x0c), /* Consumer */
+	HID_USAGE16(0x0238), /* AC Pan */
+	HID_INPUT(0x06),
+	HID_END_COLLECTION,
+	HID_END_COLLECTION,
+};
+
 static const uint8_t diag_desc[] = {
 	HID_USAGE_PAGE16(0xff00),
 	HID_USAGE(0x01),
@@ -113,18 +148,22 @@ static const uint8_t diag_desc[] = {
 
 static const struct device *const keyboard_dev = DEVICE_DT_GET(DT_NODELABEL(hid_keyboard));
 static const struct device *const extra_dev = DEVICE_DT_GET(DT_NODELABEL(hid_extra));
+static const struct device *const mouse_dev = DEVICE_DT_GET(DT_NODELABEL(hid_mouse));
 static const struct device *const diag_dev = DEVICE_DT_GET(DT_NODELABEL(hid_diag));
 UDC_STATIC_BUF_DEFINE(diag_buf, DIAG_REPORT_LEN);
 UDC_STATIC_BUF_DEFINE(keyboard_buf, REPORT_KEYBOARD_LEN);
 UDC_STATIC_BUF_DEFINE(extra_buf, EXTRA_REPORT_LEN);
+UDC_STATIC_BUF_DEFINE(mouse_buf, REPORT_MOUSE_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_keyboard), in_report_size) == REPORT_KEYBOARD_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_extra), in_report_size) == EXTRA_REPORT_LEN);
+BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_mouse), in_report_size) == REPORT_MOUSE_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), in_report_size) == DIAG_REPORT_LEN);
 BUILD_ASSERT(DT_PROP(DT_NODELABEL(hid_diag), out_report_size) == DIAG_REPORT_LEN);
 
 static const struct usb_callbacks *callbacks;
 static atomic_t ready_mask;
 static uint32_t idle_duration;
+static atomic_t mouse_boot;
 
 bool usb_live(void)
 {
@@ -154,6 +193,15 @@ static void keyboard_ready(const struct device *dev, const bool ready)
 static void extra_ready(const struct device *dev, const bool ready)
 {
 	mark_ready(REPORT_IFACE_EXTRA, ready);
+}
+
+static void mouse_ready(const struct device *dev, const bool ready)
+{
+	/* A host starts each configuration in report protocol. */
+	if (!ready) {
+		atomic_set(&mouse_boot, false);
+	}
+	mark_ready(REPORT_IFACE_MOUSE, ready);
 }
 
 static int no_get_report(const struct device *dev, const uint8_t type, const uint8_t id,
@@ -193,6 +241,19 @@ static const struct hid_device_ops keyboard_ops = {
 	.set_idle = set_idle,
 	.get_idle = get_idle,
 	.set_protocol = set_protocol,
+};
+
+static void mouse_set_protocol(const struct device *dev, const uint8_t proto)
+{
+	atomic_set(&mouse_boot, proto == HID_PROTOCOL_BOOT);
+}
+
+static const struct hid_device_ops mouse_ops = {
+	.iface_ready = mouse_ready,
+	.get_report = no_get_report,
+	.set_idle = set_idle,
+	.get_idle = get_idle,
+	.set_protocol = mouse_set_protocol,
 };
 
 static const struct hid_device_ops extra_ops = {
@@ -266,6 +327,10 @@ int usb_start(const struct usb_callbacks *cb)
 	if (err) {
 		return err;
 	}
+	err = hid_device_register(mouse_dev, mouse_desc, sizeof(mouse_desc), &mouse_ops);
+	if (err) {
+		return err;
+	}
 	err = hid_device_register(diag_dev, diag_desc, sizeof(diag_desc), &diag_ops);
 	if (err) {
 		return err;
@@ -304,6 +369,11 @@ int usb_send(const struct report *r)
 	if (r->kind == REPORT_KEYBOARD) {
 		memcpy(keyboard_buf, r->keyboard, REPORT_KEYBOARD_LEN);
 		return hid_device_submit_report(keyboard_dev, REPORT_KEYBOARD_LEN, keyboard_buf);
+	}
+	if (r->kind == REPORT_MOUSE) {
+		size_t len = reports_encode_mouse(&r->mouse, atomic_get(&mouse_boot), mouse_buf);
+
+		return hid_device_submit_report(mouse_dev, len, mouse_buf);
 	}
 	extra_buf[0] = r->kind == REPORT_CONSUMER ? EXTRA_ID_CONSUMER : EXTRA_ID_SYSTEM;
 	extra_buf[1] = r->usage & 0xff;

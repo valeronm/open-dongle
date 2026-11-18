@@ -202,6 +202,137 @@ static void test_a_key_modifier_or_media_usage_counts_as_held(void)
 	CHECK(!reports_any_held(&r));
 }
 
+static bool move(uint16_t buttons, int16_t x, int16_t y)
+{
+	struct report next = {.kind = REPORT_MOUSE, .mouse = {.buttons = buttons, .x = x, .y = y}};
+
+	return reports_update(&r, &next);
+}
+
+static int mouse_queued(void)
+{
+	return r.queues[REPORT_IFACE_MOUSE].count;
+}
+
+static void test_mouse_reports_go_to_their_own_interface(void)
+{
+	struct report out;
+
+	before();
+	CHECK(move(0, 3, -2));
+	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
+	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK(reports_peek(&r, REPORT_IFACE_MOUSE, &out));
+	CHECK_EQ(out.kind, REPORT_MOUSE);
+	CHECK_EQ(out.mouse.x, 3);
+	CHECK_EQ(out.mouse.y, -2);
+}
+
+static void test_a_mouse_report_without_motion_or_button_change_is_dropped(void)
+{
+	before();
+	CHECK(!move(0, 0, 0));
+	CHECK_EQ(mouse_queued(), 0);
+	CHECK(move(1, 0, 0));
+	CHECK(!move(1, 0, 0));
+	CHECK_EQ(mouse_queued(), 1);
+}
+
+static void test_queued_motion_with_the_same_buttons_adds_up(void)
+{
+	struct report out;
+
+	before();
+	move(0, 3, 1);
+	move(0, 4, -5);
+	CHECK_EQ(mouse_queued(), 1);
+	CHECK(reports_peek(&r, REPORT_IFACE_MOUSE, &out));
+	CHECK_EQ(out.mouse.x, 7);
+	CHECK_EQ(out.mouse.y, -4);
+}
+
+static void test_a_click_is_never_merged_away(void)
+{
+	struct report out;
+
+	before();
+	move(0, 1, 0);
+	move(1, 0, 0);
+	move(0, 0, 0);
+	move(0, 2, 0);
+	CHECK_EQ(mouse_queued(), 3);
+	reports_peek(&r, REPORT_IFACE_MOUSE, &out);
+	CHECK_EQ(out.mouse.buttons, 0);
+	reports_pop(&r, REPORT_IFACE_MOUSE);
+	reports_peek(&r, REPORT_IFACE_MOUSE, &out);
+	CHECK_EQ(out.mouse.buttons, 1);
+	reports_pop(&r, REPORT_IFACE_MOUSE);
+	reports_peek(&r, REPORT_IFACE_MOUSE, &out);
+	CHECK_EQ(out.mouse.buttons, 0);
+	CHECK_EQ(out.mouse.x, 2);
+}
+
+static void test_merged_motion_saturates(void)
+{
+	struct report next = {.kind = REPORT_MOUSE, .mouse = {.x = 30000, .wheel = 100}};
+	struct report out;
+
+	before();
+	reports_update(&r, &next);
+	reports_update(&r, &next);
+	reports_peek(&r, REPORT_IFACE_MOUSE, &out);
+	CHECK_EQ(out.mouse.x, 32767);
+	CHECK_EQ(out.mouse.wheel, 127);
+}
+
+static void test_going_live_sends_the_buttons_without_motion(void)
+{
+	struct report out;
+
+	before();
+	reports_set_live(&r, false);
+	move(2, 50, 50);
+	reports_set_live(&r, true);
+	CHECK(reports_peek(&r, REPORT_IFACE_MOUSE, &out));
+	CHECK_EQ(out.mouse.buttons, 2);
+	CHECK_EQ(out.mouse.x, 0);
+	CHECK_EQ(out.mouse.y, 0);
+}
+
+static void test_release_all_lets_go_of_a_held_mouse_button(void)
+{
+	struct report out;
+
+	before();
+	move(1, 0, 0);
+	CHECK(reports_any_held(&r));
+	drain();
+	reports_release_all(&r);
+	CHECK(!reports_any_held(&r));
+	CHECK(reports_peek(&r, REPORT_IFACE_MOUSE, &out));
+	CHECK_EQ(out.mouse.buttons, 0);
+}
+
+static void test_a_mouse_report_encodes_in_report_protocol(void)
+{
+	struct report_mouse m = {.buttons = 0x0102, .x = -300, .y = 2, .wheel = -1, .pan = 1};
+	uint8_t out[REPORT_MOUSE_LEN];
+	const uint8_t want[REPORT_MOUSE_LEN] = {0x02, 0x01, 0xd4, 0xfe, 0x02, 0x00, 0xff, 0x01};
+
+	CHECK_EQ(reports_encode_mouse(&m, false, out), REPORT_MOUSE_LEN);
+	CHECK_MEM(out, want, REPORT_MOUSE_LEN);
+}
+
+static void test_a_mouse_report_encodes_in_boot_protocol(void)
+{
+	struct report_mouse m = {.buttons = 0x0102, .x = -300, .y = 200, .wheel = -1};
+	uint8_t out[REPORT_MOUSE_LEN];
+	const uint8_t want[REPORT_MOUSE_BOOT_LEN] = {0x02, 0x81, 0x7f};
+
+	CHECK_EQ(reports_encode_mouse(&m, true, out), REPORT_MOUSE_BOOT_LEN);
+	CHECK_MEM(out, want, REPORT_MOUSE_BOOT_LEN);
+}
+
 int main(void)
 {
 	RUN(test_a_key_modifier_or_media_usage_counts_as_held);
@@ -214,5 +345,14 @@ int main(void)
 	RUN(test_overflow_merges_the_oldest_change);
 	RUN(test_consumer_report_does_not_hold_up_the_keyboard);
 	RUN(test_going_live_queues_each_kind_on_its_interface);
+	RUN(test_mouse_reports_go_to_their_own_interface);
+	RUN(test_a_mouse_report_without_motion_or_button_change_is_dropped);
+	RUN(test_queued_motion_with_the_same_buttons_adds_up);
+	RUN(test_a_click_is_never_merged_away);
+	RUN(test_merged_motion_saturates);
+	RUN(test_going_live_sends_the_buttons_without_motion);
+	RUN(test_release_all_lets_go_of_a_held_mouse_button);
+	RUN(test_a_mouse_report_encodes_in_report_protocol);
+	RUN(test_a_mouse_report_encodes_in_boot_protocol);
 	return TEST_EXIT();
 }
