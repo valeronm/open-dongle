@@ -5,6 +5,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include <zephyr/kernel.h>
+
 #include "btpolicy.h"
 
 #define BLE_REPORT_MAX 64
@@ -76,7 +78,7 @@ uint8_t ble_stored_count(void);
 uint8_t ble_stored(uint8_t addrs[][BTPOLICY_ADDR_LEN], uint8_t cap);
 /* Deletes the device's bond, disconnecting it first if it is connected. */
 int ble_forget(const uint8_t addr[BTPOLICY_ADDR_LEN]);
-bool ble_take_event(struct ble_event *ev);
+bool ble_take_event(struct ble_event *ev, k_timeout_t wait);
 /* Copies the report map read at the slot's connection and returns its length, 0 before its
  * BLE_MAP_READ. */
 size_t ble_copy_map(enum device_kind kind, uint8_t *out, size_t cap);

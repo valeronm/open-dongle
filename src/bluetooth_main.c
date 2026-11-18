@@ -525,13 +525,13 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 		uint32_t now;
 		uint8_t leds;
 
-		k_msleep(TICK_MS);
+		/* A report must not wait out the tick. */
+		for (k_timeout_t wait = K_MSEC(TICK_MS); ble_take_event(&ev, wait); wait = K_NO_WAIT) {
+			on_event(&ev);
+		}
 		core_poll();
 		while (core_take_request(&req)) {
 			on_request(&req);
-		}
-		while (ble_take_event(&ev)) {
-			on_event(&ev);
 		}
 		now = k_uptime_get_32();
 		if (pairwin_ran_out(&window, now)) {

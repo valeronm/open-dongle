@@ -550,9 +550,9 @@ int ble_start(void)
 	return err;
 }
 
-bool ble_take_event(struct ble_event *ev)
+bool ble_take_event(struct ble_event *ev, k_timeout_t wait)
 {
-	return k_msgq_get(&ble_events, ev, K_NO_WAIT) == 0;
+	return k_msgq_get(&ble_events, ev, wait) == 0;
 }
 
 size_t ble_copy_map(enum device_kind kind, uint8_t *out, size_t cap)

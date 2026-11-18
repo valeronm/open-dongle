@@ -15,6 +15,8 @@
 - While a Bluetooth slot is free the dongle scans slowly, so the connected device keeps its full
   report rate; a keyboard may need a key press to reconnect after the dongle restarts.
 - The LED shows connected while a keyboard or a mouse is connected.
+- Bluetooth reports go to the PC as they arrive instead of on a 10 ms beat, which made a mouse's
+  motion stutter.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
 
 ## [0.3.0] - 2026-11-18
