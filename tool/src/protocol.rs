@@ -922,6 +922,7 @@ pub enum EventKind {
     BluetoothPaired,
     BluetoothRefused,
     BluetoothBondLost,
+    BluetoothForgotten,
     Unknown(u8),
 }
 
@@ -950,6 +951,7 @@ impl From<u8> for EventKind {
             20 => Self::BluetoothPaired,
             21 => Self::BluetoothRefused,
             22 => Self::BluetoothBondLost,
+            23 => Self::BluetoothForgotten,
             other => Self::Unknown(other),
         }
     }
@@ -1903,6 +1905,7 @@ pub(crate) mod tests {
                 EventKind::BluetoothPaired,
                 EventKind::BluetoothRefused,
                 EventKind::BluetoothBondLost,
+                EventKind::BluetoothForgotten,
             ]
         );
     }

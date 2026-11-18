@@ -10,6 +10,8 @@
 - `spare-dongle status`, `history` and the live view report each device separately; the live view
   shows them side by side when the terminal is wide enough, and otherwise `o` steps through them.
 - Events name the device they are about.
+- The events record each Bluetooth device the dongle forgets, on request or for a report map it
+  cannot use.
 - `spare-dongle keyboards` is now `spare-dongle devices` and lists each device's kind, and the live
   view's `k` is now `d`.
 - While a Bluetooth slot is free the dongle scans slowly, so the connected device keeps its full

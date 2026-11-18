@@ -185,12 +185,16 @@ static int forget(const uint8_t *addr)
 BUILD_ASSERT(HISTORY_ADDR_LEN == BTPOLICY_ADDR_LEN);
 BUILD_ASSERT(DIAG_REQUEST_DATA_LEN == BTPOLICY_ADDR_LEN);
 
-static void log_device(uint8_t type, enum device_kind kind, uint8_t c)
+static void log_address(uint8_t type, enum device_kind kind, const uint8_t *addr, uint8_t c)
 {
-	struct history_event e =
-		history_keyboard_event(type, slot_of(kind), btpolicy_peer(&policy, kind), c);
+	struct history_event e = history_keyboard_event(type, slot_of(kind), addr, c);
 
 	core_log(e.type, e.slot, e.a, e.b, e.c, e.value);
+}
+
+static void log_device(uint8_t type, enum device_kind kind, uint8_t c)
+{
+	log_address(type, kind, btpolicy_peer(&policy, kind), c);
 }
 
 static void send_leds(uint8_t leds)
@@ -277,8 +281,9 @@ static void on_map_read(enum device_kind kind)
 	if (result != HIDMAP_OK) {
 		printk("bluetooth %s \"%s\" refused: report map %s\n", what, name,
 		       map_fault(result));
-		if (result == HIDMAP_NO_KEYBOARD || result == HIDMAP_NO_POINTER) {
-			forget(btpolicy_peer(&policy, kind));
+		if ((result == HIDMAP_NO_KEYBOARD || result == HIDMAP_NO_POINTER) &&
+		    forget(btpolicy_peer(&policy, kind)) == 0) {
+			log_device(HISTORY_BT_FORGOTTEN, kind, HISTORY_FORGOTTEN_UNUSABLE_MAP);
 		}
 		ble_disconnect(kind);
 		return;
@@ -442,14 +447,18 @@ static void send_devices(const struct diag_request *req)
 
 static void forget_listed(const struct diag_request *req)
 {
+	enum device_kind kind;
+
 	if (!btlist_has(&list, req->data)) {
 		diag_reply_error(req, DIAG_ERR_NO_SUCH_DEVICE, 0);
 		return;
 	}
+	kind = btlist_kind(&list, req->data);
 	if (forget(req->data) != 0) {
 		diag_reply_error(req, DIAG_ERR_STORE, 0);
 		return;
 	}
+	log_address(HISTORY_BT_FORGOTTEN, kind, req->data, HISTORY_FORGOTTEN_ON_REQUEST);
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 

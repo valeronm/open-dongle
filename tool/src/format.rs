@@ -3,8 +3,9 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, BluetoothLink, Event, EventKind, Latency, Link, Noise, NuphyState, Protocol,
-    STRONG_DBM, Slot, Status, StoredDevice, UnifyingState, VersionMismatch, Watch, bucket_floor,
+    Action, BUSY_DBM, BluetoothLink, DeviceKind, Event, EventKind, Latency, Link, Noise,
+    NuphyState, Protocol, STRONG_DBM, Slot, Status, StoredDevice, UnifyingState, VersionMismatch,
+    Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -662,6 +663,21 @@ pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String 
             event_kind(e, s),
             event_device(e, stored)
         ),
+        EventKind::BluetoothForgotten => {
+            let slot_kind = e.slot.and_then(|slot| s.slot(slot)).map(|slot| slot.kind);
+            let why = match (e.c, slot_kind) {
+                (0, _) => String::new(),
+                (1, Some(DeviceKind::Mouse)) => ": its report map has no pointer".into(),
+                (1, Some(DeviceKind::Keyboard)) => ": its report map has no keys".into(),
+                (1, None) => ": its report map is unusable".into(),
+                (cause, _) => format!(", cause {cause}"),
+            };
+            format!(
+                "forgot {} {}{why}",
+                event_kind(e, s),
+                event_device(e, stored)
+            )
+        }
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -752,6 +768,18 @@ mod tests {
         assert_eq!(
             describe_event(&at(EventKind::BluetoothBondLost, 0), &bt, &[]),
             "keyboard EB:BB:49:A6:9A:D9 lost its pairing; forget it and pair again"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothForgotten, 0), &bt, &[]),
+            "forgot keyboard EB:BB:49:A6:9A:D9"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothForgotten, 1), &bt, &[]),
+            "forgot keyboard EB:BB:49:A6:9A:D9: its report map has no keys"
+        );
+        assert_eq!(
+            describe_event(&at(EventKind::BluetoothForgotten, 7), &bt, &[]),
+            "forgot keyboard EB:BB:49:A6:9A:D9, cause 7"
         );
     }
 
@@ -1010,6 +1038,10 @@ mod tests {
         assert_eq!(
             d(mouse(EventKind::BluetoothBondLost, 0xc8, 0)),
             "mouse MX Master 3S lost its pairing; forget it and pair again"
+        );
+        assert_eq!(
+            d(mouse(EventKind::BluetoothForgotten, 0xc8, 1)),
+            "forgot mouse MX Master 3S: its report map has no pointer"
         );
         let gone = Event {
             slot: Some(1),
