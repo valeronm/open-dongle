@@ -1,13 +1,13 @@
-# The open-dongle tool
+# The spare-dongle tool
 
-`open-dongle` reads and controls a running dongle over its vendor HID interface while the keyboard
-types, and flashes its firmware. `open-dongle --help` lists the commands and each one's options;
+`spare-dongle` reads and controls a running dongle over its vendor HID interface while the keyboard
+types, and flashes its firmware. `spare-dongle --help` lists the commands and each one's options;
 `--serial` picks a board when more than one is plugged in. `noise`, `reboot`, `bootloader`, `flash`,
 `clear` and `forget` ask first, and `--yes` skips the question.
 
 ## Live view
 
-`open-dongle` with no arguments shows the link state, signal and counter totals, a chart of the
+`spare-dongle` with no arguments shows the link state, signal and counter totals, a chart of the
 per-minute history and the latest events, refreshed as they change. Its footer lists the keys: the
 arrow keys scroll the chart and the events, `n` takes a noise map and `m` shows the noise that
 decides the next channel move, each in place of the chart until `esc`. The view can also open

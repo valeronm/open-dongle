@@ -117,9 +117,9 @@ pub fn move_refused(s: &Status) -> String {
 
 pub fn flash_question(state: State, serial: &str, file: &str) -> String {
     let state = match state {
-        State::Dongle => "running OpenDongle",
-        State::Bootloader => "in its bootloader",
-        State::Factory => "running its factory program",
+        State::Dongle => format!("running {}", crate::PRODUCT),
+        State::Bootloader => "in its bootloader".into(),
+        State::Factory => "running its factory program".into(),
     };
     format!("Flash {file} onto board {serial}, {state}?")
 }
@@ -391,7 +391,8 @@ pub fn wall_clock(now: DateTime<Local>, uptime_now_ms: u64, at_ms: u64) -> DateT
 pub fn flashed(status: Result<Status, VersionMismatch>) -> String {
     match status {
         Ok(s) => format!(
-            "flashed; OpenDongle {} running, up {}",
+            "flashed; {} {} running, up {}",
+            crate::PRODUCT,
             version(s.firmware_version),
             uptime(s.uptime_ms)
         ),
@@ -630,7 +631,7 @@ mod tests {
     #[test]
     fn a_flash_ends_on_the_running_version() {
         let line = flashed(read_status(&fixture("status.hex")).unwrap());
-        assert!(line.starts_with("flashed; OpenDongle 1.2.3 running, up "));
+        assert!(line.starts_with("flashed; SpareDongle 1.2.3 running, up "));
     }
 
     #[test]
@@ -638,7 +639,7 @@ mod tests {
         assert_eq!(
             flashed(read_status(&status_in_protocol(4)).unwrap()),
             "flashed; the dongle speaks diagnostic protocol 4, this tool 3; install the \
-             open-dongle tool from the firmware's release"
+             spare-dongle tool from the firmware's release"
         );
     }
 

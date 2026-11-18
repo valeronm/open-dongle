@@ -1,10 +1,10 @@
 [package]
-name = "open-dongle"
+name = "spare-dongle"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
-description = "Flash and inspect the OpenDongle firmware"
-repository = "https://github.com/valeronm/open-dongle"
+description = "Flash and inspect the SpareDongle firmware"
+repository = "https://github.com/valeronm/spare-dongle"
 
 [dependencies]
 anyhow = "1"

@@ -104,9 +104,10 @@ pub fn pick(found: Vec<Found>, serial: Option<&str>) -> Result<Board> {
         .collect();
     match found.len() {
         0 => bail!(
-            "no board found: plug in an OpenDongle, a board in its bootloader, or a new board \
+            "no board found: plug in a {}, a board in its bootloader, or a new board \
              running its factory program; any other board enters its bootloader when RST is \
-             shorted to GND twice quickly"
+             shorted to GND twice quickly",
+            crate::PRODUCT
         ),
         1 => {
             let Found { serial, kind } = found.remove(0);
@@ -221,9 +222,10 @@ pub fn open_port(path: &str, baud: u32) -> Result<Box<dyn serialport::SerialPort
             {
                 if Instant::now() > deadline {
                     bail!(
-                        "no access to {path}: install ~/.local/share/open-dongle/70-open-dongle.rules \
+                        "no access to {path}: install ~/.local/share/{tool}/70-{tool}.rules \
                          into /etc/udev/rules.d, or run \
-                         sudo setfacl -m u:$USER:rw {path}"
+                         sudo setfacl -m u:$USER:rw {path}",
+                        tool = crate::TOOL
                     );
                 }
                 std::thread::sleep(ACCESS_RETRY);

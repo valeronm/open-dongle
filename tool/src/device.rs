@@ -288,7 +288,7 @@ pub fn open_unchecked(serial: Option<&str>) -> Result<Device<HidTransport>> {
         .filter(|d| serial.is_none_or(|s| d.serial_number() == Some(s)))
         .collect();
     let info = match found.as_slice() {
-        [] => bail!("no OpenDongle with a diagnostic interface found"),
+        [] => bail!("no {} with a diagnostic interface found", crate::PRODUCT),
         [one] => *one,
         many => {
             let serials: Vec<_> = many.iter().filter_map(|d| d.serial_number()).collect();

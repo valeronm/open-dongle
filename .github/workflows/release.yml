@@ -63,21 +63,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          path: open-dongle
+          path: spare-dongle
       - run: west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS" ncs
       - run: cd ncs && west update --narrow -o=--depth=1
-      - run: open-dongle/tools/build-firmware.sh ncs build
-      - run: cp build/zephyr/zephyr.uf2 "open-dongle-$VERSION-${BOARD%%/*}.uf2"
+      - run: spare-dongle/tools/build-firmware.sh ncs build
+      - run: cp build/zephyr/zephyr.uf2 "spare-dongle-$VERSION-${BOARD%%/*}.uf2"
       - uses: actions/upload-artifact@v7
         with:
           name: firmware
-          path: open-dongle-*.uf2
+          path: spare-dongle-*.uf2
 
   tool-linux:
     needs: check
     runs-on: ubuntu-latest
     env:
-      DIR: open-dongle-${{ needs.check.outputs.version }}-x86_64-linux
+      DIR: spare-dongle-${{ needs.check.outputs.version }}-x86_64-linux
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
@@ -85,30 +85,30 @@ jobs:
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path tool/Cargo.toml
       - run: |
           mkdir "$DIR"
-          cp tool/target/x86_64-unknown-linux-musl/release/open-dongle LICENSE tools/udev/70-open-dongle.rules "$DIR"/
+          cp tool/target/x86_64-unknown-linux-musl/release/spare-dongle LICENSE tools/udev/70-spare-dongle.rules "$DIR"/
           tar czf "$DIR.tar.gz" "$DIR"
       - uses: actions/upload-artifact@v7
         with:
           name: tool-linux
-          path: open-dongle-*.tar.gz
+          path: spare-dongle-*.tar.gz
 
   tool-macos:
     needs: check
     runs-on: macos-latest
     env:
-      DIR: open-dongle-${{ needs.check.outputs.version }}-aarch64-macos
+      DIR: spare-dongle-${{ needs.check.outputs.version }}-aarch64-macos
     steps:
       - uses: actions/checkout@v7
       - uses: jdx/mise-action@v5
       - run: cargo build --release --locked --manifest-path tool/Cargo.toml
       - run: |
           mkdir "$DIR"
-          cp tool/target/release/open-dongle LICENSE "$DIR"/
+          cp tool/target/release/spare-dongle LICENSE "$DIR"/
           tar czf "$DIR.tar.gz" "$DIR"
       - uses: actions/upload-artifact@v7
         with:
           name: tool-macos
-          path: open-dongle-*.tar.gz
+          path: spare-dongle-*.tar.gz
 
   publish:
     needs: [ci, check, firmware, tool-linux, tool-macos]

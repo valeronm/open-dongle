@@ -298,7 +298,7 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	/* The keyboard addresses pipe 1 with the dongle ID it was given at pairing. */
 	memcpy(rc.base1, id, sizeof(rc.base1));
 	core_start_radio(&rc);
-	printk("open-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
+	printk("spare-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
 	       id[2], id[3], paired ? "paired" : "never paired", store_err, core_reset_cause());
 
 	for (;;) {

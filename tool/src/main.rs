@@ -12,8 +12,11 @@ use clap::{Parser, Subcommand};
 
 use protocol::{Action, Protocol};
 
+pub const TOOL: &str = env!("CARGO_BIN_NAME");
+pub const PRODUCT: &str = "SpareDongle";
+
 #[derive(Parser)]
-#[command(version, about = "Flash and inspect the OpenDongle firmware")]
+#[command(version, about)]
 struct Args {
     /// Serial number of the board, when more than one is plugged in
     #[arg(long, global = true)]

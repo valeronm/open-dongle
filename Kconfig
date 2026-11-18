@@ -1,4 +1,4 @@
-mainmenu "open-dongle"
+mainmenu "spare-dongle"
 
 config COUNTERS
 	bool "Print link and USB counters on the console every 10 s"

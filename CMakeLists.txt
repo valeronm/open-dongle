@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20.0)
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(open_dongle)
+project(spare_dongle)
 
 set(manifest ${CMAKE_CURRENT_SOURCE_DIR}/tool/Cargo.toml)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${manifest})

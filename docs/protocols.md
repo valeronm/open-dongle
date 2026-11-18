@@ -1,12 +1,12 @@
 # Supported protocols and how they compare
 
-OpenDongle speaks three keyboard radio protocols, one at a time: NuPhy's 2.4G link, tested with
+SpareDongle speaks three keyboard radio protocols, one at a time: NuPhy's 2.4G link, tested with
 the Air75 V2; Logitech Unifying, tested with an original MX Keys; and Bluetooth LE, tested with
 both. This page compares NuPhy and Unifying with each keyboard's own receiver and Bluetooth with
-the PC's own Bluetooth, then lists what OpenDongle adds. How the 2.4G links work on air is in
+the PC's own Bluetooth, then lists what SpareDongle adds. How the 2.4G links work on air is in
 [nuphy-v2-2.4ghz.md](nuphy-v2-2.4ghz.md) and [unifying.md](unifying.md).
 
-In the tables, 🟢 marks a row where OpenDongle does better, ⚪ one where both do the same, and 🔴
+In the tables, 🟢 marks a row where SpareDongle does better, ⚪ one where both do the same, and 🔴
 one where the official receiver does better.
 
 ## NuPhy 2.4G
@@ -14,7 +14,7 @@ one where the official receiver does better.
 The comparison is with NuPhy's nRF52 dongle as decompiled from NuPhy's update image; NuPhy publishes
 no documentation of it.
 
-| | NuPhy dongle | OpenDongle |  |
+| | NuPhy dongle | SpareDongle |  |
 |---|---|---|---|
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
@@ -26,22 +26,22 @@ no documentation of it.
 | Pairing window | 30 s after plugging in | 30 s after plugging in or on request | 🟢 |
 | Keyboard name | used as the dongle's USB name | shown by the tool | ⚪ |
 
-Both close the window once the paired keyboard connects. With no keyboard paired, OpenDongle keeps
+Both close the window once the paired keyboard connects. With no keyboard paired, SpareDongle keeps
 it open until one pairs.
 
 ### Reliability
 
-| | NuPhy dongle | OpenDongle |  |
+| | NuPhy dongle | SpareDongle |  |
 |---|---|---|---|
 | Valid reports dropped | some | none | 🟢 |
 | Channel choice | one noise sample per channel, at every power-up | a 1.5 s noise survey, at pairing | 🟢 |
 | Channel after pairing | hops whenever the keyboard goes quiet | moves only to a quieter channel | 🟢 |
 
 The official dongle drops every packet but the last when several arrive at once, a keyboard report
-while USB is busy, and every report for about 2 s after the PC resumes. OpenDongle reads every
+while USB is busy, and every report for about 2 s after the PC resumes. SpareDongle reads every
 packet and queues reports while USB is busy.
 
-OpenDongle picks the three channels with the fewest Wi-Fi bursts, away from the BLE advertising
+SpareDongle picks the three channels with the fewest Wi-Fi bursts, away from the BLE advertising
 channels. The official dongle picks new ones at every power-up while the keyboard keeps its own, so
 the link runs on the seven fixed channels built into the keyboard.
 
@@ -51,7 +51,7 @@ details.
 
 ### Security
 
-| | NuPhy dongle | OpenDongle |  |
+| | NuPhy dongle | SpareDongle |  |
 |---|---|---|---|
 | Keystroke encryption | none | none | ⚪ |
 | Who can type | anyone sending to the dongle's address | the same | ⚪ |
@@ -71,7 +71,7 @@ The comparison is with a Logitech Unifying receiver, from Logitech's public spec
 receiver release notes and the Unifying security research. HID++ is Logitech's protocol for
 configuring the receiver and its devices.
 
-| | Unifying receiver | OpenDongle |  |
+| | Unifying receiver | SpareDongle |  |
 |---|---|---|---|
 | Paired devices | up to six[^unifying] | one keyboard | 🔴 |
 | Mice and other devices | yes[^unifying] | no | 🔴 |
@@ -84,24 +84,25 @@ configuring the receiver and its devices.
 | Keyboard name, serial and type | through HID++ | shown by the tool | ⚪ |
 | Pairing | on request from Logitech's software | after plugging in or on request | 🟢 |
 
-Pairing a new keyboard replaces the one OpenDongle had. Both pair a keyboard that is switched off
-and on while pairing is open.[^solaar-pair][^mx-pairing] OpenDongle does not implement HID++, so
+Pairing a new keyboard replaces the one SpareDongle had. Both pair a keyboard that is switched off
+and on while pairing is open.[^solaar-pair][^mx-pairing] SpareDongle does not implement HID++, so
 Logitech's software cannot see it.
 
-OpenDongle refuses a keystroke that fails decryption or carries a counter used since the keyboard
+SpareDongle refuses a keystroke that fails decryption or carries a counter used since the keyboard
 last connected. Before the keyboard's counter is known, and for 5 s after a failed decryption, it
 types a key press only once the next frame confirms it.
 
-No public source describes a message telling a keyboard the PC suspended, and OpenDongle sends none.
+No public source describes a message telling a keyboard the PC suspended, and SpareDongle sends
+none.
 
 ### Reliability
 
-| | Unifying receiver | OpenDongle |  |
+| | Unifying receiver | SpareDongle |  |
 |---|---|---|---|
 | Channel after pairing | moves after a missed keep-alive[^newlin] | moves only to a quieter channel | 🟢 |
 
-No public source reports how often a Unifying receiver drops reports. OpenDongle lost none of 49,832
-packets from an MX Keys at close range.
+No public source reports how often a Unifying receiver drops reports. SpareDongle lost none of
+49,832 packets from an MX Keys at close range.
 
 ### Security
 
@@ -111,11 +112,11 @@ RQR24 on the C-U0008.[^bastille-11] Logitech's release notes list some fixes for
 A keyboard picks a new counter at every boot, so a receiver cannot require counters to keep rising
 ([After pairing](unifying.md#after-pairing)). The Unifying receiver remembers its last 23 counters,
 so 23 replayed frames let older ones through again, and frames recorded while known keys were typed
-let an attacker type any key.[^mengs-2] OpenDongle resets the counter on the keyboard's connect
+let an attacker type any key.[^mengs-2] SpareDongle resets the counter on the keyboard's connect
 frame, which a single forged frame can fake. Anyone who records the unencrypted pairing can derive
 the link key, then read and type keystrokes.[^mengs-1]
 
-| | Unifying receiver | OpenDongle |  |
+| | Unifying receiver | SpareDongle |  |
 |---|---|---|---|
 | Unencrypted keystrokes (MouseJack) | refused[^mousejack-fix] | refused | ⚪ |
 | Unencrypted media keys | accepted[^newlin] | accepted, any usage[^media] | ⚪ |
@@ -131,7 +132,7 @@ the link key, then read and type keystrokes.[^mengs-1]
 The dongle is a HID over GATT host: it reads the keyboard's report map at every connection and
 translates its keyboard, media and system reports into the dongle's own USB reports.
 
-| | PC's Bluetooth | OpenDongle |  |
+| | PC's Bluetooth | SpareDongle |  |
 |---|---|---|---|
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
@@ -160,14 +161,14 @@ passkey.[^crackle] The passkey makes the dongle pair the keyboard it was typed o
 keyboard in pairing mode nearby can pair while the window is open. After pairing the link is
 encrypted, and only a stored keyboard connects.
 
-## Added by OpenDongle
+## Added by SpareDongle
 
 - **Noise-aware channel moves**, in NuPhy and Unifying mode. The dongle keeps measuring the noise
   on the keyboard's channels between packets and moves to a clearly quieter one. Only noise strong
   enough to matter at the keyboard's signal counts, so a keyboard close to the dongle rarely causes
   a move.
 - **One firmware for every protocol**, [switched by the tool](../README.md#keyboard-protocols).
-- **Diagnostics** through the [open-dongle tool](tool.md).
+- **Diagnostics** through the [spare-dongle tool](tool.md).
 - **An [LED](../README.md#led) that shows the link state.**
 - **Open firmware**, [flashed by the tool](../README.md#flashing-the-firmware).
 
@@ -195,7 +196,8 @@ Unifying link key.
     "If the device is already turned on, turn it off and on again."
 [^mx-pairing]: [Pairing](unifying.md#pairing): an MX Keys paired with a genuine receiver only when
     switched off and on.
-[^no-frame]: [After pairing](unifying.md#after-pairing): F1 sent no frame of any type to OpenDongle.
+[^no-frame]: [After pairing](unifying.md#after-pairing): F1 sent no frame of any type to
+    SpareDongle.
 [^media]: [After pairing](unifying.md#after-pairing), seen on air from an MX Keys.
 [^led]: [After pairing](unifying.md#after-pairing), seen on air with an MX Keys.
 [^bastille-11]: Bastille, [advisory 11](https://github.com/BastilleResearch/mousejack/blob/master/doc/advisories/bastille-11.logitech.public.txt): the C-U0007 on

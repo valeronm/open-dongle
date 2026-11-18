@@ -17,9 +17,17 @@ pub struct VersionMismatch {
 impl std::fmt::Display for VersionMismatch {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let fix = if self.dongle < VERSION {
-            "flash the firmware from this tool's release with `open-dongle flash`"
+            concat!(
+                "flash the firmware from this tool's release with `",
+                env!("CARGO_BIN_NAME"),
+                " flash`"
+            )
         } else {
-            "install the open-dongle tool from the firmware's release"
+            concat!(
+                "install the ",
+                env!("CARGO_BIN_NAME"),
+                " tool from the firmware's release"
+            )
         };
         write!(
             f,
@@ -94,7 +102,13 @@ impl ErrorCode {
                 "a key stayed down for a second, and a move then would lose its release: release every key and move again"
             }
             Self::ListFull => {
-                "the dongle already stores as many keyboards as it can hold: see them with `open-dongle keyboards` and remove one with `open-dongle forget`"
+                concat!(
+                    "the dongle already stores as many keyboards as it can hold: see them with `",
+                    env!("CARGO_BIN_NAME"),
+                    " keyboards` and remove one with `",
+                    env!("CARGO_BIN_NAME"),
+                    " forget`"
+                )
             }
             Self::NoSuchKeyboard => "the dongle stores no keyboard at that place in its list",
         }
@@ -1417,7 +1431,7 @@ pub(crate) mod tests {
         assert_eq!(
             refusal(1),
             "the dongle speaks diagnostic protocol 1, this tool 3; flash the firmware from this \
-             tool's release with `open-dongle flash`"
+             tool's release with `spare-dongle flash`"
         );
     }
 
@@ -1425,7 +1439,7 @@ pub(crate) mod tests {
     fn a_newer_dongle_is_told_to_take_its_releases_tool() {
         assert_eq!(
             refusal(4),
-            "the dongle speaks diagnostic protocol 4, this tool 3; install the open-dongle tool \
+            "the dongle speaks diagnostic protocol 4, this tool 3; install the spare-dongle tool \
              from the firmware's release"
         );
     }

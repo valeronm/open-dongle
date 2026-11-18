@@ -676,19 +676,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
-name = "open-dongle"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "hidapi",
- "libc",
- "ratatui",
- "serialport",
-]
-
-[[package]]
 name = "palette"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,6 +991,19 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "spare-dongle"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "hidapi",
+ "libc",
+ "ratatui",
+ "serialport",
+]
 
 [[package]]
 name = "static_assertions"

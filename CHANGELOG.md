@@ -2,12 +2,14 @@
 
 ## [Unreleased]
 
+- The project is renamed SpareDongle: the tool is `spare-dongle`, the release files and udev rule
+  carry that name, and the dongle names itself SpareDongle over USB and Bluetooth.
 - A third protocol, Bluetooth LE: the dongle stores up to four Bluetooth keyboards, connects one at
   a time and presents it over USB like the other two.
-- In Bluetooth mode `open-dongle pair` prints a passkey to type on the keyboard, and
+- In Bluetooth mode `spare-dongle pair` prints a passkey to type on the keyboard, and
   `--no-passkey` pairs a keyboard without a passkey step, such as the Air75 V2.
-- `open-dongle keyboards` lists the stored Bluetooth keyboards and `open-dongle forget <n>` removes
-  the one at that place in the list.
+- `spare-dongle keyboards` lists the stored Bluetooth keyboards and `spare-dongle forget <n>`
+  removes the one at that place in the list.
 - The history records Bluetooth connects, disconnects with their reason, pairings, refused pairings
   and a keyboard that lost its pairing; event lines name a stored keyboard.
 - In Bluetooth mode the live view's `k` lists the stored keyboards and forgets one, `a` asks

@@ -878,14 +878,11 @@ impl<T: Transport> App<T> {
     fn draw(&mut self, f: &mut Frame) {
         let (session, help) = self.connection.view(f.area().width as usize);
         let status = session.map(|s| &s.history.status);
-        let title = match status {
-            Some(s) => ["OpenDongle", s.protocol().name()]
-                .into_iter()
-                .chain(s.link.keyboard_name())
-                .collect::<Vec<_>>()
-                .join(" · "),
-            None => "OpenDongle".into(),
-        };
+        let title = std::iter::once(crate::PRODUCT)
+            .chain(status.map(|s| s.protocol().name()))
+            .chain(status.and_then(|s| s.link.keyboard_name()))
+            .collect::<Vec<_>>()
+            .join(" · ");
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(STATUS_ROWS + 2),
             Constraint::Min(history_min_rows(status.map(Status::protocol))),
@@ -1525,7 +1522,7 @@ mod tests {
             "[/] channel  ←/→ history  ↑/↓ events  esc back  q quit"
         );
         let text = rows.join("\n");
-        for part in ["OpenDongle", "signal dBm", "events"] {
+        for part in ["SpareDongle", "signal dBm", "events"] {
             assert!(text.contains(part), "{part} missing from {text}");
         }
     }
@@ -2440,7 +2437,7 @@ mod tests {
         let terminal = status_box(&s);
         let rows = screen(&terminal);
         assert!(
-            rows[0].starts_with("┌OpenDongle · NuPhy · MX Keys"),
+            rows[0].starts_with("┌SpareDongle · NuPhy · MX Keys"),
             "{}",
             rows[0]
         );
@@ -2504,7 +2501,7 @@ mod tests {
         let terminal = status_box(&status_of(Protocol::Unifying));
         let rows = screen(&terminal);
         assert!(
-            rows[0].starts_with("┌OpenDongle · Unifying · MX Keys"),
+            rows[0].starts_with("┌SpareDongle · Unifying · MX Keys"),
             "{}",
             rows[0]
         );
@@ -2519,7 +2516,7 @@ mod tests {
         let mut unnamed = status_of(Protocol::Nuphy);
         nuphy(&mut unnamed).keyboard_name = None;
         let rows = screen(&status_box(&unnamed));
-        assert!(rows[0].starts_with("┌OpenDongle · NuPhy─"), "{}", rows[0]);
+        assert!(rows[0].starts_with("┌SpareDongle · NuPhy─"), "{}", rows[0]);
     }
 
     #[test]

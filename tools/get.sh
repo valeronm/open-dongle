@@ -3,7 +3,8 @@
 # The tool is unsigned, and curl, unlike a browser, sets no quarantine flag for macOS to refuse.
 set -eu
 
-repo="valeronm/open-dongle"
+name="spare-dongle"
+repo="valeronm/$name"
 prefix="${PREFIX:-$HOME/.local/bin}"
 
 command -v curl >/dev/null 2>&1 || { echo "get.sh: curl is required" >&2; exit 1; }
@@ -38,7 +39,7 @@ case "$tag" in
 esac
 version="${tag#v}"
 base="https://github.com/$repo/releases/download/$tag"
-dir="open-dongle-$version-$platform"
+dir="$name-$version-$platform"
 archive="$dir.tar.gz"
 
 tmp=$(mktemp -d)
@@ -57,16 +58,16 @@ fi
 tar xzf "$tmp/$archive" -C "$tmp"
 
 mkdir -p "$prefix"
-install -m 0755 "$tmp/$dir/open-dongle" "$prefix/open-dongle"
-echo "open-dongle $version installed to $prefix/open-dongle"
+install -m 0755 "$tmp/$dir/$name" "$prefix/$name"
+echo "$name $version installed to $prefix/$name"
 
-rules="70-open-dongle.rules"
+rules="70-$name.rules"
 if [ -f "$tmp/$dir/$rules" ]; then
-  share="$HOME/.local/share/open-dongle"
+  share="$HOME/.local/share/$name"
   mkdir -p "$share"
   install -m 0644 "$tmp/$dir/$rules" "$share/$rules"
   if ! cmp -s "$share/$rules" "/etc/udev/rules.d/$rules"; then
-    echo "To let open-dongle reach the board without root, install its udev rule and replug the board:"
+    echo "To let $name reach the board without root, install its udev rule and replug the board:"
     printf '  sudo cp "%s" /etc/udev/rules.d/\n' "$share/$rules"
     echo "  sudo udevadm control --reload"
   fi

@@ -122,8 +122,9 @@ pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
     match s.protocol() {
         Protocol::Nuphy => Ok(()),
         other => bail!(
-            "only NuPhy mode has {what}; the dongle runs {} (open-dongle protocol nuphy switches it)",
-            other.name()
+            "only NuPhy mode has {what}; the dongle runs {} ({} protocol nuphy switches it)",
+            other.name(),
+            crate::TOOL
         ),
     }
 }
@@ -178,7 +179,8 @@ pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Res
     let list = dev.keyboards()?;
     let Some(keyboard) = format::keyboard_at(&list, place) else {
         bail!(
-            "there is no keyboard {place}; `open-dongle keyboards` lists the {} stored",
+            "there is no keyboard {place}; `{} keyboards` lists the {} stored",
+            crate::TOOL,
             list.len()
         );
     };
@@ -844,7 +846,7 @@ mod tests {
     #[test]
     fn a_bad_file_stops_before_any_board_is_looked_for() {
         let path =
-            std::env::temp_dir().join(format!("open-dongle-not-uf2-{}.bin", std::process::id()));
+            std::env::temp_dir().join(format!("spare-dongle-not-uf2-{}.bin", std::process::id()));
         std::fs::write(&path, [0u8; 100]).unwrap();
         let err = flash(&path, Some("no-such-board"), true).unwrap_err();
         std::fs::remove_file(&path).unwrap();
@@ -859,7 +861,7 @@ mod tests {
             .to_string();
         assert_eq!(
             err,
-            "only NuPhy mode has forced channels; the dongle runs Unifying (open-dongle protocol nuphy switches it)"
+            "only NuPhy mode has forced channels; the dongle runs Unifying (spare-dongle protocol nuphy switches it)"
         );
     }
 
