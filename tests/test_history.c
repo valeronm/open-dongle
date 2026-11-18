@@ -13,25 +13,25 @@ static void test_a_closed_minute_holds_its_counter_changes_and_signal(void)
 	uint32_t first;
 
 	history_init(&h, 0, &t);
-	t.packets[DEVICE_KEYBOARD] = 400;
+	t.packets[0] = 400;
 	t.invalid = 3;
-	t.link_losses = 1;
-	t.gaps = 2;
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
-	history_rssi(&h, DEVICE_KEYBOARD, -80);
-	history_rssi(&h, DEVICE_KEYBOARD, -71);
+	t.link_losses[0] = 1;
+	t.gaps[0] = 2;
+	history_rssi(&h, 0, -60);
+	history_rssi(&h, 0, -80);
+	history_rssi(&h, 0, -71);
 	history_tick(&h, MINUTE - 1, &t);
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 0);
 	history_tick(&h, MINUTE, &t);
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 1);
 	CHECK_EQ(first, 0);
-	CHECK_EQ(m.packets[DEVICE_KEYBOARD], 300);
+	CHECK_EQ(m.packets[0], 300);
 	CHECK_EQ(m.invalid, 2);
-	CHECK_EQ(m.link_losses, 1);
-	CHECK_EQ(m.gaps, 2);
-	CHECK_EQ(m.rssi[DEVICE_KEYBOARD].min, -80);
-	CHECK_EQ(m.rssi[DEVICE_KEYBOARD].max, -60);
-	CHECK_EQ(m.rssi[DEVICE_KEYBOARD].avg, -70);
+	CHECK_EQ(m.link_losses[0], 1);
+	CHECK_EQ(m.gaps[0], 2);
+	CHECK_EQ(m.rssi[0].min, -80);
+	CHECK_EQ(m.rssi[0].max, -60);
+	CHECK_EQ(m.rssi[0].avg, -70);
 }
 
 static void test_a_minute_without_packets_has_zero_signal(void)
@@ -41,13 +41,13 @@ static void test_a_minute_without_packets_has_zero_signal(void)
 	uint32_t first;
 
 	history_init(&h, 0, &t);
-	history_rssi(&h, DEVICE_KEYBOARD, -50);
+	history_rssi(&h, 0, -50);
 	history_tick(&h, 2 * MINUTE, &t);
 	CHECK_EQ(history_minutes(&h, 0, &first, m, 2), 2);
-	CHECK_EQ(m[0].rssi[DEVICE_KEYBOARD].min, -50);
-	CHECK_EQ(m[1].rssi[DEVICE_KEYBOARD].min, 0);
-	CHECK_EQ(m[1].rssi[DEVICE_KEYBOARD].avg, 0);
-	CHECK_EQ(m[1].rssi[DEVICE_KEYBOARD].max, 0);
+	CHECK_EQ(m[0].rssi[0].min, -50);
+	CHECK_EQ(m[1].rssi[0].min, 0);
+	CHECK_EQ(m[1].rssi[0].avg, 0);
+	CHECK_EQ(m[1].rssi[0].max, 0);
 }
 
 static void test_a_closed_minute_holds_its_noise(void)
@@ -77,11 +77,11 @@ static void test_counts_saturate(void)
 	uint32_t first;
 
 	history_init(&h, 0, &t);
-	t.packets[DEVICE_KEYBOARD] = 70000;
+	t.packets[0] = 70000;
 	t.dropped = 300;
 	history_tick(&h, MINUTE, &t);
 	history_minutes(&h, 0, &first, &m, 1);
-	CHECK_EQ(m.packets[DEVICE_KEYBOARD], 65535);
+	CHECK_EQ(m.packets[0], 65535);
 	CHECK_EQ(m.dropped, 255);
 }
 
@@ -93,7 +93,7 @@ static void test_the_ring_keeps_the_newest_day(void)
 
 	history_init(&h, 0, &t);
 	for (uint32_t i = 1; i <= 1500; i++) {
-		t.packets[DEVICE_KEYBOARD] = i;
+		t.packets[0] = i;
 		history_tick(&h, (uint64_t)i * MINUTE, &t);
 	}
 	CHECK_EQ(h.minute_next, 1500);
@@ -139,7 +139,7 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 
 	history_init(&h, 0, &t);
 	history_event(&h, &(struct history_event){.type = HISTORY_BOOT});
-	t.packets[DEVICE_KEYBOARD] = 80;
+	t.packets[0] = 80;
 	history_tick(&h, 3 * MINUTE, &t);
 	history_noise(&h, &(struct noise_tally){.readings = 1, .busy = 1, .strong = 1, .peak = -40},
 		      true);
@@ -148,11 +148,11 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 0);
 	CHECK_EQ(history_events(&h, 0, &first, &e, 1), 0);
 	CHECK_EQ(h.events_total, 1);
-	t.packets[DEVICE_KEYBOARD] = 7;
+	t.packets[0] = 7;
 	history_tick(&h, 4 * MINUTE, &t);
 	CHECK_EQ(history_minutes(&h, 0, &first, &m, 1), 1);
 	CHECK_EQ(first, 3);
-	CHECK_EQ(m.packets[DEVICE_KEYBOARD], 7);
+	CHECK_EQ(m.packets[0], 7);
 	CHECK_EQ(m.noise.peak, 0);
 	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
 	CHECK_EQ(history_events(&h, 0, &first, &e, 1), 1);
@@ -186,7 +186,7 @@ static void test_readings_off_the_home_channel_reach_a_gap_but_not_the_minute(vo
 	CHECK_EQ(m.noise.peak, 0);
 }
 
-static void test_a_gap_records_the_readings_since_the_last_keyboard_packet(void)
+static void test_a_gap_records_the_readings_since_its_slots_last_packet(void)
 {
 	struct history_totals t = {0};
 	struct noise_tally before = {0};
@@ -195,7 +195,7 @@ static void test_a_gap_records_the_readings_since_the_last_keyboard_packet(void)
 	history_init(&h, 0, &t);
 	noise_add(&before, -30);
 	history_noise(&h, &before, true);
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
+	history_rssi(&h, 0, -60);
 	noise_add(&after, -96);
 	noise_add(&after, -80);
 	history_noise(&h, &after, true);
@@ -203,7 +203,7 @@ static void test_a_gap_records_the_readings_since_the_last_keyboard_packet(void)
 	CHECK_EQ(last_event().noise.peak, -80);
 	CHECK_EQ(last_event().noise.busy, 5000);
 	CHECK_EQ(last_event().noise.strong, 0);
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
+	history_rssi(&h, 0, -60);
 	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, 0);
 }
@@ -244,7 +244,7 @@ static void test_weakest_is_absent_without_packets(void)
 	int8_t weakest;
 
 	history_init(&h, 0, &t);
-	CHECK(!history_weakest(&h, DEVICE_KEYBOARD, &weakest));
+	CHECK(!history_weakest(&h, 0, &weakest));
 }
 
 static void test_weakest_spans_the_current_and_the_previous_minute(void)
@@ -253,17 +253,17 @@ static void test_weakest_spans_the_current_and_the_previous_minute(void)
 	int8_t weakest = 0;
 
 	history_init(&h, 0, &t);
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
-	history_rssi(&h, DEVICE_KEYBOARD, -80);
+	history_rssi(&h, 0, -60);
+	history_rssi(&h, 0, -80);
 	history_tick(&h, MINUTE, &t);
-	history_rssi(&h, DEVICE_KEYBOARD, -70);
-	CHECK(history_weakest(&h, DEVICE_KEYBOARD, &weakest));
+	history_rssi(&h, 0, -70);
+	CHECK(history_weakest(&h, 0, &weakest));
 	CHECK_EQ(weakest, -80);
 	history_tick(&h, 2 * MINUTE, &t);
-	CHECK(history_weakest(&h, DEVICE_KEYBOARD, &weakest));
+	CHECK(history_weakest(&h, 0, &weakest));
 	CHECK_EQ(weakest, -70);
 	history_tick(&h, 3 * MINUTE, &t);
-	CHECK(!history_weakest(&h, DEVICE_KEYBOARD, &weakest));
+	CHECK(!history_weakest(&h, 0, &weakest));
 }
 
 static void test_a_keyboard_event_packs_the_address_as_the_fixture_has_it(void)
@@ -271,10 +271,11 @@ static void test_a_keyboard_event_packs_the_address_as_the_fixture_has_it(void)
 	uint8_t f[HISTORY_ADDR_LEN + 6 + 1];
 	size_t n = load_fixture("event-address.hex", f, sizeof(f));
 	const uint8_t *packed = &f[HISTORY_ADDR_LEN];
-	struct history_event e = history_keyboard_event(HISTORY_BT_PAIRED, f, 1);
+	struct history_event e = history_keyboard_event(HISTORY_BT_PAIRED, 1, f, 1);
 
 	CHECK_EQ(n, sizeof(f) - 1);
 	CHECK_EQ(e.type, HISTORY_BT_PAIRED);
+	CHECK_EQ(e.slot, 1);
 	CHECK_EQ(e.a, packed[0]);
 	CHECK_EQ(e.b, packed[1]);
 	CHECK_EQ(e.c, 1);
@@ -282,30 +283,66 @@ static void test_a_keyboard_event_packs_the_address_as_the_fixture_has_it(void)
 				  (uint32_t)packed[4] << 16 | (uint32_t)packed[5] << 24);
 }
 
-static void test_a_mouse_has_its_own_packets_and_signal(void)
+static void test_each_slot_has_its_own_packets_and_signal(void)
 {
 	struct history_totals t = {.packets = {100, 10}};
 	struct history_minute m;
 	uint32_t first;
 
 	history_init(&h, 0, &t);
-	t.packets[DEVICE_KEYBOARD] = 400;
-	t.packets[DEVICE_MOUSE] = 60;
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
-	history_rssi(&h, DEVICE_MOUSE, -40);
-	history_rssi(&h, DEVICE_MOUSE, -50);
+	t.packets[0] = 400;
+	t.packets[1] = 60;
+	history_rssi(&h, 0, -60);
+	history_rssi(&h, 1, -40);
+	history_rssi(&h, 1, -50);
 	history_tick(&h, MINUTE, &t);
 	history_minutes(&h, 0, &first, &m, 1);
-	CHECK_EQ(m.packets[DEVICE_KEYBOARD], 300);
-	CHECK_EQ(m.packets[DEVICE_MOUSE], 50);
-	CHECK_EQ(m.rssi[DEVICE_KEYBOARD].min, -60);
-	CHECK_EQ(m.rssi[DEVICE_KEYBOARD].max, -60);
-	CHECK_EQ(m.rssi[DEVICE_MOUSE].min, -50);
-	CHECK_EQ(m.rssi[DEVICE_MOUSE].avg, -45);
-	CHECK_EQ(m.rssi[DEVICE_MOUSE].max, -40);
+	CHECK_EQ(m.packets[0], 300);
+	CHECK_EQ(m.packets[1], 50);
+	CHECK_EQ(m.rssi[0].min, -60);
+	CHECK_EQ(m.rssi[0].max, -60);
+	CHECK_EQ(m.rssi[1].min, -50);
+	CHECK_EQ(m.rssi[1].avg, -45);
+	CHECK_EQ(m.rssi[1].max, -40);
 }
 
-static void test_a_mouse_reading_leaves_the_noise_since_the_last_keyboard_packet(void)
+static void test_a_reading_in_one_slot_leaves_the_other_slots_readings(void)
+{
+	struct history_totals t = {0};
+	struct noise_tally loud = {0};
+	struct noise_tally quiet = {0};
+
+	history_init(&h, 0, &t);
+	noise_add(&loud, -70);
+	history_noise(&h, &loud, true);
+	history_rssi(&h, 1, -50);
+	noise_add(&quiet, -80);
+	history_noise(&h, &quiet, true);
+	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP, .slot = 1});
+	CHECK_EQ(last_event().noise.peak, -80);
+	history_event(&h, &(struct history_event){.type = HISTORY_LINK_LOST, .slot = 0});
+	CHECK_EQ(last_event().noise.peak, -70);
+}
+
+static void test_each_slot_has_its_own_gaps_and_losses(void)
+{
+	struct history_totals t = {.gaps = {1, 4}};
+	struct history_minute m;
+	uint32_t first;
+
+	history_init(&h, 0, &t);
+	t.gaps[0] = 3;
+	t.gaps[1] = 9;
+	t.link_losses[1] = 2;
+	history_tick(&h, MINUTE, &t);
+	history_minutes(&h, 0, &first, &m, 1);
+	CHECK_EQ(m.gaps[0], 2);
+	CHECK_EQ(m.gaps[1], 5);
+	CHECK_EQ(m.link_losses[0], 0);
+	CHECK_EQ(m.link_losses[1], 2);
+}
+
+static void test_an_event_about_no_slot_leaves_the_readings(void)
 {
 	struct history_totals t = {0};
 	struct noise_tally n = {0};
@@ -313,23 +350,24 @@ static void test_a_mouse_reading_leaves_the_noise_since_the_last_keyboard_packet
 	history_init(&h, 0, &t);
 	noise_add(&n, -70);
 	history_noise(&h, &n, true);
-	history_rssi(&h, DEVICE_MOUSE, -50);
+	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP,
+						  .slot = DEVICE_NO_SLOT});
 	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, -70);
 }
 
-static void test_weakest_is_per_device(void)
+static void test_weakest_is_per_slot(void)
 {
 	struct history_totals t = {0};
 	int8_t weakest = 0;
 
 	history_init(&h, 0, &t);
-	history_rssi(&h, DEVICE_MOUSE, -90);
-	CHECK(!history_weakest(&h, DEVICE_KEYBOARD, &weakest));
-	history_rssi(&h, DEVICE_KEYBOARD, -60);
-	CHECK(history_weakest(&h, DEVICE_KEYBOARD, &weakest));
+	history_rssi(&h, 1, -90);
+	CHECK(!history_weakest(&h, 0, &weakest));
+	history_rssi(&h, 0, -60);
+	CHECK(history_weakest(&h, 0, &weakest));
 	CHECK_EQ(weakest, -60);
-	CHECK(history_weakest(&h, DEVICE_MOUSE, &weakest));
+	CHECK(history_weakest(&h, 1, &weakest));
 	CHECK_EQ(weakest, -90);
 }
 
@@ -346,12 +384,14 @@ int main(void)
 	RUN(test_events_keep_the_newest_512_in_order);
 	RUN(test_clear_drops_what_is_held_and_keeps_counting);
 	RUN(test_readings_off_the_home_channel_reach_a_gap_but_not_the_minute);
-	RUN(test_a_gap_records_the_readings_since_the_last_keyboard_packet);
+	RUN(test_a_gap_records_the_readings_since_its_slots_last_packet);
 	RUN(test_a_loss_records_the_readings_and_starts_over);
 	RUN(test_other_events_leave_the_readings_for_the_next_gap);
 	RUN(test_a_keyboard_event_packs_the_address_as_the_fixture_has_it);
-	RUN(test_a_mouse_has_its_own_packets_and_signal);
-	RUN(test_a_mouse_reading_leaves_the_noise_since_the_last_keyboard_packet);
-	RUN(test_weakest_is_per_device);
+	RUN(test_each_slot_has_its_own_packets_and_signal);
+	RUN(test_a_reading_in_one_slot_leaves_the_other_slots_readings);
+	RUN(test_each_slot_has_its_own_gaps_and_losses);
+	RUN(test_an_event_about_no_slot_leaves_the_readings);
+	RUN(test_weakest_is_per_slot);
 	return TEST_EXIT();
 }

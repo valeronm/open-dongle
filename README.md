@@ -1,9 +1,9 @@
 # SpareDongle
 
 An open receiver for wireless keyboards, running on a [Pro Micro nRF52840](#hardware). It
-supports the NuPhy Air75 V2's 2.4G link, Logitech Unifying keyboards and Bluetooth LE keyboards,
-one [protocol](#keyboard-protocols) at a time; the keyboards tested are the Air75 V2 and the MX
-Keys. [docs/protocols.md](docs/protocols.md) compares it with each keyboard's own receiver and with
+supports the NuPhy Air75 V2's 2.4G link, Logitech Unifying keyboards and Bluetooth LE keyboards
+and mice, one [protocol](#keyboard-protocols) at a time; the devices tested are the Air75 V2 and
+the MX Keys keyboards and the MX Master 3S mouse. [docs/protocols.md](docs/protocols.md) compares it with each keyboard's own receiver and with
 pairing a Bluetooth keyboard to the PC. The keyboard keeps its own firmware.
 
 ## Hardware
@@ -56,8 +56,8 @@ pairing, so switching back needs no new pairing.
 
 ## Pairing
 
-`spare-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. A dongle with no
-keyboard paired keeps pairing open from the moment it is plugged in until one pairs.
+`spare-dongle pair`, or `a` in the live view, opens pairing for 30 seconds. A dongle with nothing
+paired keeps pairing open from the moment it is plugged in until a device pairs.
 
 In NuPhy and Unifying mode, plugging the dongle in also opens pairing while a keyboard is paired,
 until that keyboard connects or 30 seconds pass, so switch it off first or put it in pairing mode.
@@ -70,21 +70,23 @@ low power while pairing. If the link gets worse after the Wi-Fi around you chang
 **Unifying:** switch the keyboard off and on. On a keyboard with Easy-Switch keys, such as the MX
 Keys, first hold an Easy-Switch key until it blinks fast.
 
-**Bluetooth:** `spare-dongle pair` prints a six-digit passkey. Put the keyboard in Bluetooth pairing
-mode, type the passkey on it and press Enter. A keyboard with no passkey step, such as the Air75
-V2, pairs with `spare-dongle pair --no-passkey`. Opening pairing drops the connected keyboard until
-the window closes, and once a keyboard is stored, plugging the dongle in opens nothing. The dongle
-stores up to four keyboards, and a full list refuses a new pairing until one is
-[forgotten](docs/tool.md#bluetooth-mode). The MX Keys pairs under a new address each time, so
-pairing it again leaves its old entry to forget.
+**Bluetooth:** the dongle connects one keyboard and one mouse at a time, or either alone.
+`spare-dongle pair` prints a six-digit passkey. Put the keyboard in Bluetooth pairing mode, type the
+passkey on it and press Enter. A keyboard with no passkey step, such as the Air75 V2, pairs with
+`spare-dongle pair --no-passkey`. A mouse pairs in either window without a passkey: put it in
+pairing mode while pairing is open. Opening pairing keeps the connected devices, and a device that
+pairs takes the place of the connected one of its kind. Once a device is stored, plugging the
+dongle in opens nothing. The dongle stores up to eight keyboards and mice, and a full list refuses
+a new pairing until one is [forgotten](docs/tool.md#bluetooth-mode). The MX Keys and the MX Master
+3S pair under a new address each time, so pairing one again leaves its old entry to forget.
 
 ## LED
 
 | LED | Meaning |
 |-----|---------|
-| short flash every second | no keyboard link |
+| short flash every second | nothing connected |
 | fast blink | pairing is open |
-| solid | connected |
+| solid | a keyboard or a mouse is connected |
 | off | the PC has suspended USB |
 | three flashes every two seconds | the radio failed to start |
 

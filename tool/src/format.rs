@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Local};
 use crate::board::State;
 use crate::protocol::{
     Action, BUSY_DBM, BluetoothLink, Event, EventKind, Link, Noise, NuphyState, Protocol,
-    STRONG_DBM, Status, StoredKeyboard, UnifyingState, VersionMismatch, Watch, bucket_floor,
+    STRONG_DBM, Slot, Status, StoredDevice, UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -23,44 +23,51 @@ fn address(most_significant_first: impl Iterator<Item = u8>) -> String {
     bytes.join(":")
 }
 
-fn keyboard_address(k: &StoredKeyboard) -> String {
-    address(k.addr[1..].iter().rev().copied())
+fn bluetooth_address(d: &StoredDevice) -> String {
+    address(d.addr[1..].iter().rev().copied())
 }
 
-fn keyboard_name(k: &StoredKeyboard) -> &str {
-    k.name.as_deref().unwrap_or("unnamed")
+fn device_address(d: &StoredDevice, protocol: Protocol) -> String {
+    match protocol {
+        Protocol::Bluetooth => bluetooth_address(d),
+        Protocol::Nuphy => format!("ID {}", hex(&d.addr[..4])),
+        Protocol::Unifying => format!("serial {}, WPID {}", hex(&d.addr[2..6]), hex(&d.addr[..2])),
+    }
 }
 
-/// The keyboard `keyboard_lines` numbers `place`, counting from 1.
-pub fn keyboard_at(list: &[StoredKeyboard], place: usize) -> Option<&StoredKeyboard> {
+fn device_name(d: &StoredDevice) -> &str {
+    d.name.as_deref().unwrap_or("unnamed")
+}
+
+/// The device `device_lines` numbers `place`, counting from 1.
+pub fn device_at(list: &[StoredDevice], place: usize) -> Option<&StoredDevice> {
     list.get(place.checked_sub(1)?)
 }
 
-/// One numbered line per stored keyboard, in the order `forget` counts them.
-pub fn keyboard_lines(list: &[StoredKeyboard]) -> Vec<String> {
+/// One numbered line per stored device, in the order `forget` counts them.
+pub fn device_lines(list: &[StoredDevice], protocol: Protocol) -> Vec<String> {
     if list.is_empty() {
-        return vec!["no keyboard is stored".into()];
+        return vec!["no device is stored".into()];
     }
-    let width = list
-        .iter()
-        .map(|k| keyboard_name(k).len())
-        .max()
-        .unwrap_or(0);
+    let widest =
+        |column: fn(&StoredDevice) -> &str| list.iter().map(|d| column(d).len()).max().unwrap_or(0);
+    let (kinds, names) = (widest(|d| d.kind.name()), widest(device_name));
     list.iter()
         .enumerate()
-        .map(|(i, k)| {
-            let marks: Vec<&str> = [
-                k.connected.then_some("connected"),
-                k.no_passkey.then_some("paired without a passkey"),
+        .map(|(i, d)| {
+            let marks: Vec<String> = [
+                d.slot.map(|slot| format!("connected in slot {slot}")),
+                d.no_passkey.then(|| "paired without a passkey".into()),
             ]
             .into_iter()
             .flatten()
             .collect();
             let line = format!(
-                "{}  {:width$}  {}  {}",
+                "{}  {:kinds$}  {:names$}  {}  {}",
                 i + 1,
-                keyboard_name(k),
-                keyboard_address(k),
+                d.kind.name(),
+                device_name(d),
+                device_address(d, protocol),
                 marks.join(", ")
             );
             line.trim_end().to_string()
@@ -68,11 +75,12 @@ pub fn keyboard_lines(list: &[StoredKeyboard]) -> Vec<String> {
         .collect()
 }
 
-pub fn forget_question(k: &StoredKeyboard) -> String {
+/// Only Bluetooth forgets a device, so the address is a Bluetooth one.
+pub fn forget_question(d: &StoredDevice) -> String {
     format!(
         "Forget {} ({})? It has to be paired again to be used.",
-        keyboard_name(k),
-        keyboard_address(k)
+        device_name(d),
+        bluetooth_address(d)
     )
 }
 
@@ -94,7 +102,7 @@ pub fn pairing_open(protocol: Protocol, passkey: Option<u32>) -> String {
         (Protocol::Bluetooth, Some(passkey)) => format!(
             "put the keyboard in Bluetooth pairing mode, then type {passkey:06} on it and press Enter"
         ),
-        (Protocol::Bluetooth, None) => "put the keyboard in Bluetooth pairing mode".into(),
+        (Protocol::Bluetooth, None) => "put the keyboard or mouse in Bluetooth pairing mode".into(),
     };
     format!("{PAIRING_OPEN} for 30 s; {how}")
 }
@@ -269,9 +277,34 @@ pub fn state_name(s: &Status) -> &'static str {
             UnifyingState::Connected => "connected",
             UnifyingState::Silent => "silent",
         },
-        Link::Bluetooth(BluetoothLink::NoKeyboard) => "no keyboard",
-        Link::Bluetooth(BluetoothLink::Connected { .. }) => "connected",
+        Link::Bluetooth(BluetoothLink::NothingConnected) => "nothing connected",
+        Link::Bluetooth(BluetoothLink::Connected) => "connected",
         Link::Bluetooth(BluetoothLink::StartFailed) => "Bluetooth failed to start",
+    }
+}
+
+/// The slot's state; under NuPhy and Unifying, whose one slot is the link, the link's.
+pub fn slot_state(s: &Status, slot: &Slot) -> &'static str {
+    match bluetooth_slot_health(s, slot) {
+        Some(LinkHealth::Connected) => "connected",
+        Some(LinkHealth::Waiting) => "not connected",
+        Some(_) => "not paired",
+        None => state_name(s),
+    }
+}
+
+pub fn slot_health(s: &Status, slot: &Slot) -> LinkHealth {
+    bluetooth_slot_health(s, slot).unwrap_or_else(|| link_health(s))
+}
+
+/// `None` where the link's state is the slot's: under NuPhy and Unifying, and while Bluetooth
+/// failed to start.
+fn bluetooth_slot_health(s: &Status, slot: &Slot) -> Option<LinkHealth> {
+    match s.link {
+        Link::Bluetooth(BluetoothLink::StartFailed) | Link::Nuphy(_) | Link::Unifying(_) => None,
+        Link::Bluetooth(_) if slot.connected => Some(LinkHealth::Connected),
+        Link::Bluetooth(_) if slot.stored => Some(LinkHealth::Waiting),
+        Link::Bluetooth(_) => Some(LinkHealth::NotPaired),
     }
 }
 
@@ -297,7 +330,7 @@ pub fn link_health(s: &Status) -> LinkHealth {
             UnifyingState::Connected => LinkHealth::Connected,
             UnifyingState::Silent => LinkHealth::Waiting,
         },
-        Link::Bluetooth(BluetoothLink::Connected { .. }) => LinkHealth::Connected,
+        Link::Bluetooth(BluetoothLink::Connected) => LinkHealth::Connected,
         Link::Bluetooth(_) => LinkHealth::NotPaired,
     }
 }
@@ -441,13 +474,13 @@ pub fn noise(n: Option<Noise>) -> String {
     })
 }
 
-fn since_key(e: &Event) -> String {
+fn since_input(e: &Event, input: &str) -> String {
     match e.b {
-        // The firmware reports 255 both for no key since boot and for a last key 255 or more
+        // The firmware reports 255 both for no input since boot and for a last input 255 or more
         // minutes ago.
-        u8::MAX if e.time_ms < u8::MAX as u64 * 60_000 => "no key since boot".into(),
-        u8::MAX => "no key for over 4 h".into(),
-        m => format!("{m} min after the last key"),
+        u8::MAX if e.time_ms < u8::MAX as u64 * 60_000 => format!("no {input} since boot"),
+        u8::MAX => format!("no {input} for over 4 h"),
+        m => format!("{m} min after the last {input}"),
     }
 }
 
@@ -467,18 +500,25 @@ fn event_address(e: &Event) -> String {
     address(event_address_bytes(e).into_iter())
 }
 
-/// A forgotten keyboard is known only by its address.
-fn event_keyboard(e: &Event, stored: &[StoredKeyboard]) -> String {
+/// A forgotten device is known only by its address.
+fn event_device(e: &Event, stored: &[StoredDevice]) -> String {
     let addr = event_address_bytes(e);
     stored
         .iter()
-        .find(|k| k.addr[1..].iter().rev().eq(addr.iter()))
-        .and_then(|k| k.name.clone())
+        .find(|d| d.addr[1..].iter().rev().eq(addr.iter()))
+        .and_then(|d| d.name.clone())
         .unwrap_or_else(|| event_address(e))
 }
 
-pub fn describe_event(e: &Event, link: &Link, stored: &[StoredKeyboard]) -> String {
-    let protocol = link.protocol();
+fn event_kind(e: &Event, s: &Status) -> &'static str {
+    e.slot
+        .and_then(|slot| s.slot(slot))
+        .map_or("device", |slot| slot.kind.name())
+}
+
+/// `s` is the status the event's slot is looked up in.
+pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String {
+    let protocol = s.protocol();
     match e.kind {
         EventKind::Boot => format!("booted, reset by {}", reset_causes(e.value)),
         EventKind::Paired => format!(
@@ -497,7 +537,7 @@ pub fn describe_event(e: &Event, link: &Link, stored: &[StoredKeyboard]) -> Stri
             },
             duration(e.value),
             e.a as i8,
-            since_key(e),
+            since_input(e, "key"),
             noise(e.noise)
         ),
         EventKind::Survey => format!("pairing survey picked {} {} {}", e.a, e.b, e.c),
@@ -546,20 +586,26 @@ pub fn describe_event(e: &Event, link: &Link, stored: &[StoredKeyboard]) -> Stri
         ),
         EventKind::UnifyingPaired => {
             let wpid = [e.a, e.b];
-            let name = match link {
-                Link::Unifying(Some(u)) if u.wpid == wpid => u.name.as_deref(),
+            let name = match &s.link {
+                Link::Unifying(Some(u)) if u.wpid == wpid => s.device.name.as_deref(),
                 _ => None,
             };
             let kind = unifying_kind(e.c).unwrap_or("device");
             let device = name.map_or(kind.to_string(), |name| format!("{kind} {name}"));
             format!("paired {device}, WPID {}{}", hex(&wpid), saving(e.value))
         }
-        EventKind::PairingOpened => match (e.a, e.b) {
-            (1, 1) => "pairing opened at boot, until a keyboard pairs".into(),
-            (1, _) => "pairing opened at boot".into(),
-            (_, 1) => "pairing opened, until a keyboard pairs".into(),
-            _ => "pairing opened".into(),
-        },
+        EventKind::PairingOpened => {
+            let device = match protocol {
+                Protocol::Bluetooth => "device",
+                Protocol::Nuphy | Protocol::Unifying => "keyboard",
+            };
+            match (e.a, e.b) {
+                (1, 1) => format!("pairing opened at boot, until a {device} pairs"),
+                (1, _) => "pairing opened at boot".into(),
+                (_, 1) => format!("pairing opened, until a {device} pairs"),
+                _ => "pairing opened".into(),
+            }
+        }
         EventKind::PairingClosed => "pairing closed, nothing paired".into(),
         EventKind::PairingTimeout => match protocol {
             Protocol::Nuphy => {
@@ -572,30 +618,40 @@ pub fn describe_event(e: &Event, link: &Link, stored: &[StoredKeyboard]) -> Stri
         EventKind::Reconnect => "keyboard reconnected".into(),
         EventKind::Attack => "forged keystroke, attack mode for 5 s".into(),
         EventKind::BluetoothConnected => {
-            format!("keyboard {} connected", event_keyboard(e, stored))
+            format!("{} {} connected", event_kind(e, s), event_device(e, stored))
         }
         EventKind::BluetoothDisconnected => format!(
-            "keyboard disconnected: {}, {}",
+            "{} disconnected: {}, {}",
+            event_kind(e, s),
             match e.a {
                 0x08 => "it went silent".into(),
                 0x13 => "it closed the link".into(),
                 0x16 => "the dongle closed the link".into(),
                 reason => format!("reason {reason:#04x}"),
             },
-            since_key(e)
+            since_input(
+                e,
+                if event_kind(e, s) == "keyboard" {
+                    "key"
+                } else {
+                    "input"
+                }
+            )
         ),
         EventKind::BluetoothPaired => format!(
-            "paired keyboard {} {} a passkey",
-            event_keyboard(e, stored),
+            "paired {} {} {} a passkey",
+            event_kind(e, s),
+            event_device(e, stored),
             if e.c == 1 { "with" } else { "without" }
         ),
         EventKind::BluetoothRefused if e.a == 1 => {
             "pairing refused: the passkey was not typed".into()
         }
-        EventKind::BluetoothRefused => "pairing refused by the keyboard".into(),
+        EventKind::BluetoothRefused => format!("pairing refused by the {}", event_kind(e, s)),
         EventKind::BluetoothBondLost => format!(
-            "keyboard {} lost its pairing; forget it and pair again",
-            event_keyboard(e, stored)
+            "{} {} lost its pairing; forget it and pair again",
+            event_kind(e, s),
+            event_device(e, stored)
         ),
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
@@ -605,19 +661,20 @@ pub fn describe_event(e: &Event, link: &Link, stored: &[StoredKeyboard]) -> Stri
 mod tests {
     use super::*;
     use crate::protocol::{
-        NuphyLink, read_status,
+        DeviceKind, read_status,
         tests::{fixture, status_in_protocol, status_of, unifying},
     };
     use chrono::TimeZone;
 
-    const NUPHY: Link = Link::Nuphy(NuphyLink {
-        state: NuphyState::Connected,
-        own: None,
-        forced: None,
-        keyboard_id: None,
-        keyboard_name: None,
-    });
-    const UNIFYING: Link = Link::Unifying(None);
+    fn nuphy() -> Status {
+        status_of(Protocol::Nuphy)
+    }
+
+    fn unpaired_unifying() -> Status {
+        let mut s = status_of(Protocol::Unifying);
+        s.link = Link::Unifying(None);
+        s
+    }
 
     #[test]
     fn the_flash_question_names_the_file_the_board_and_its_state() {
@@ -637,8 +694,8 @@ mod tests {
     #[test]
     fn a_flash_of_firmware_in_a_newer_protocol_says_to_update_the_tool() {
         assert_eq!(
-            flashed(read_status(&status_in_protocol(4)).unwrap()),
-            "flashed; the dongle speaks diagnostic protocol 4, this tool 3; install the \
+            flashed(read_status(&status_in_protocol(5)).unwrap()),
+            "flashed; the dongle speaks diagnostic protocol 5, this tool 4; install the \
              spare-dongle tool from the firmware's release"
         );
     }
@@ -669,7 +726,7 @@ mod tests {
 
     #[test]
     fn describes_bluetooth_keyboards_by_address() {
-        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        let bt = status_of(Protocol::Bluetooth);
         let at = |kind, c| event(kind, 0xeb, 0xbb, c, 0x49a6_9ad9);
         assert_eq!(
             describe_event(&at(EventKind::BluetoothConnected, 0), &bt, &[]),
@@ -691,8 +748,8 @@ mod tests {
 
     #[test]
     fn names_a_stored_bluetooth_keyboard() {
-        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
-        let stored = crate::protocol::read_keyboards(&fixture("keyboards.hex")).unwrap();
+        let bt = status_of(Protocol::Bluetooth);
+        let stored = crate::protocol::read_devices(&fixture("devices.hex")).unwrap();
         let at = |kind| event(kind, 0xeb, 0xbb, 1, 0x49a6_9ad9);
         assert_eq!(
             describe_event(&at(EventKind::BluetoothConnected), &bt, &stored),
@@ -710,7 +767,7 @@ mod tests {
 
     #[test]
     fn describes_a_bluetooth_disconnect_by_its_reason() {
-        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        let bt = status_of(Protocol::Bluetooth);
         let gone = |reason| {
             describe_event(
                 &event(EventKind::BluetoothDisconnected, reason, 3, 0, 0),
@@ -738,7 +795,7 @@ mod tests {
 
     #[test]
     fn describes_a_refused_bluetooth_pairing_by_who_refused() {
-        let bt = Link::Bluetooth(BluetoothLink::NoKeyboard);
+        let bt = status_of(Protocol::Bluetooth);
         assert_eq!(
             describe_event(&event(EventKind::BluetoothRefused, 0, 0, 0, 0), &bt, &[]),
             "pairing refused by the keyboard"
@@ -755,6 +812,7 @@ mod tests {
         let back = Event {
             time_ms: 0,
             kind: EventKind::LinkUp,
+            slot: Some(0),
             a: 33,
             b: 0xc1,
             c: 1,
@@ -762,7 +820,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&back, &NUPHY, &[]),
+            describe_event(&back, &nuphy(), &[]),
             "link restored after 4 s on channel 33, signal -63 dBm"
         );
         let first = Event {
@@ -771,7 +829,7 @@ mod tests {
             ..back
         };
         assert_eq!(
-            describe_event(&first, &NUPHY, &[]),
+            describe_event(&first, &nuphy(), &[]),
             "link up 900 ms after boot on channel 33, signal -63 dBm"
         );
     }
@@ -782,6 +840,7 @@ mod tests {
         let moved = Event {
             time_ms: 0,
             kind: EventKind::LinkMoved,
+            slot: Some(0),
             a: 2,
             b: 70,
             c: 0,
@@ -789,7 +848,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&moved, &NUPHY, &[]),
+            describe_event(&moved, &nuphy(), &[]),
             "moved from channel 2 to channel 70"
         );
     }
@@ -800,6 +859,7 @@ mod tests {
         let requested = Event {
             time_ms: 0,
             kind: EventKind::LinkMoved,
+            slot: Some(0),
             a: 41,
             b: 5,
             c: 2,
@@ -807,12 +867,13 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&requested, &UNIFYING, &[]),
+            describe_event(&requested, &unpaired_unifying(), &[]),
             "moved from channel 41 to channel 5 on request"
         );
         let moved = Event {
             time_ms: 0,
             kind: EventKind::LinkMoved,
+            slot: Some(0),
             a: 5,
             b: 41,
             c: 1,
@@ -820,7 +881,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&moved, &UNIFYING, &[]),
+            describe_event(&moved, &unpaired_unifying(), &[]),
             "moved from channel 5 to channel 41 for less noise: 46.00% on 5, 2.10% on 41"
         );
     }
@@ -842,6 +903,7 @@ mod tests {
         let gap = Event {
             time_ms: 0,
             kind: EventKind::LinkGap,
+            slot: Some(0),
             a: 38,
             b: 0xae,
             c: 0xb1,
@@ -849,7 +911,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&gap, &NUPHY, &[]),
+            describe_event(&gap, &nuphy(), &[]),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, noise -"
         );
         let noisy = Event {
@@ -861,44 +923,113 @@ mod tests {
             ..gap
         };
         assert_eq!(
-            describe_event(&noisy, &NUPHY, &[]),
+            describe_event(&noisy, &nuphy(), &[]),
             "gap of 340 ms on channel 38, signal -82 dBm before, -79 dBm after, \
              noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
     }
 
     #[test]
-    fn stored_keyboards_are_numbered_with_their_marks() {
-        let list = [
-            StoredKeyboard {
-                addr: [1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
-                name: Some("MX Keys".into()),
-                connected: true,
-                no_passkey: false,
-            },
-            StoredKeyboard {
-                addr: [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6],
-                name: None,
-                connected: false,
-                no_passkey: true,
-            },
-        ];
+    fn stored_devices_are_numbered_with_their_kinds_and_slots() {
+        let list = crate::protocol::read_devices(&fixture("devices.hex")).unwrap();
         assert_eq!(
-            keyboard_lines(&list),
+            device_lines(&list, Protocol::Bluetooth),
             [
-                "1  MX Keys  EB:BB:49:A6:9A:D9  connected",
-                "2  unnamed  D6:7D:3C:4B:A8:24  paired without a passkey",
+                "1  keyboard  MX Keys       EB:BB:49:A6:9A:D9  connected in slot 0",
+                "2  mouse     MX Master 3S  C8:F2:E0:11:3C:5A  connected in slot 1, paired without a passkey",
             ]
         );
-        assert_eq!(keyboard_lines(&[]), ["no keyboard is stored"]);
+        let unnamed = StoredDevice {
+            addr: [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6],
+            kind: DeviceKind::Keyboard,
+            name: None,
+            slot: None,
+            no_passkey: false,
+        };
+        assert_eq!(
+            device_lines(&[unnamed], Protocol::Bluetooth),
+            ["1  keyboard  unnamed  D6:7D:3C:4B:A8:24"]
+        );
+        assert_eq!(
+            device_lines(&[], Protocol::Bluetooth),
+            ["no device is stored"]
+        );
+    }
+
+    #[test]
+    fn an_esb_keyboard_is_listed_by_the_ids_its_status_shows() {
+        let keyboard = |addr| StoredDevice {
+            addr,
+            kind: DeviceKind::Keyboard,
+            name: Some("MX Keys".into()),
+            slot: Some(0),
+            no_passkey: false,
+        };
+        assert_eq!(
+            device_lines(
+                &[keyboard([0x70, 0x15, 0xa3, 0x29, 0, 0, 0])],
+                Protocol::Nuphy
+            ),
+            ["1  keyboard  MX Keys  ID 7015a329  connected in slot 0"]
+        );
+        assert_eq!(
+            device_lines(
+                &[keyboard([0x70, 0x15, 0xb8, 0xbc, 0xd5, 0xb3, 0])],
+                Protocol::Unifying
+            ),
+            ["1  keyboard  MX Keys  serial b8bcd5b3, WPID 7015  connected in slot 0"]
+        );
+    }
+
+    #[test]
+    fn bluetooth_events_name_the_device_of_their_slot() {
+        let s = crate::protocol::tests::mouse_status();
+        let stored = crate::protocol::read_devices(&fixture("devices.hex")).unwrap();
+        let mouse = |kind, a, c| Event {
+            slot: Some(1),
+            ..event(kind, a, 0xf2, c, 0xe011_3c5a)
+        };
+        let d = |e: Event| describe_event(&e, &s, &stored);
+        assert_eq!(
+            d(mouse(EventKind::BluetoothConnected, 0xc8, 0)),
+            "mouse MX Master 3S connected"
+        );
+        assert_eq!(
+            d(mouse(EventKind::BluetoothPaired, 0xc8, 0)),
+            "paired mouse MX Master 3S without a passkey"
+        );
+        assert_eq!(
+            d(mouse(EventKind::BluetoothBondLost, 0xc8, 0)),
+            "mouse MX Master 3S lost its pairing; forget it and pair again"
+        );
+        let gone = Event {
+            slot: Some(1),
+            ..event(EventKind::BluetoothDisconnected, 0x08, 3, 0, 0)
+        };
+        assert_eq!(
+            d(gone),
+            "mouse disconnected: it went silent, 3 min after the last input"
+        );
+        assert_eq!(
+            d(event(EventKind::PairingOpened, 1, 1, 0, 0)),
+            "pairing opened at boot, until a device pairs"
+        );
+        let refused = Event {
+            slot: Some(1),
+            ..event(EventKind::BluetoothRefused, 0, 0, 0, 0)
+        };
+        assert_eq!(d(refused), "pairing refused by the mouse");
+        let keyboard = event(EventKind::BluetoothConnected, 0xeb, 0xbb, 0, 0x49a6_9ad9);
+        assert_eq!(d(keyboard), "keyboard MX Keys connected");
     }
 
     #[test]
     fn forgetting_asks_about_the_keyboard_by_name_and_address() {
-        let k = StoredKeyboard {
+        let k = StoredDevice {
             addr: [1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
+            kind: DeviceKind::Keyboard,
             name: Some("MX Keys".into()),
-            connected: false,
+            slot: None,
             no_passkey: false,
         };
         assert_eq!(
@@ -926,6 +1057,7 @@ mod tests {
         let lost = Event {
             time_ms: 0,
             kind: EventKind::LinkLost,
+            slot: Some(0),
             a: 0xb9,
             b: 3,
             c: 0,
@@ -933,7 +1065,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&lost, &NUPHY, &[]),
+            describe_event(&lost, &nuphy(), &[]),
             "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -"
         );
         let noisy = Event {
@@ -945,12 +1077,13 @@ mod tests {
             ..lost
         };
         assert_eq!(
-            describe_event(&noisy, &NUPHY, &[]),
+            describe_event(&noisy, &nuphy(), &[]),
             "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
         let paired = Event {
             time_ms: 0,
             kind: EventKind::Paired,
+            slot: Some(0),
             a: 26,
             b: 30,
             c: 34,
@@ -958,7 +1091,7 @@ mod tests {
             noise: None,
         };
         assert_eq!(
-            describe_event(&paired, &NUPHY, &[]),
+            describe_event(&paired, &nuphy(), &[]),
             "paired on channels 26 30 34"
         );
         let failed = Event {
@@ -966,7 +1099,7 @@ mod tests {
             ..paired
         };
         assert_eq!(
-            describe_event(&failed, &NUPHY, &[]),
+            describe_event(&failed, &nuphy(), &[]),
             "paired on channels 26 30 34, saving failed: -5"
         );
     }
@@ -975,6 +1108,7 @@ mod tests {
         Event {
             time_ms: 0,
             kind,
+            slot: Some(0),
             a,
             b,
             c,
@@ -987,7 +1121,7 @@ mod tests {
     fn a_unifying_silence_is_not_called_a_loss() {
         let silent = event(EventKind::LinkLost, 0xc4, 255, 0, 2300);
         assert_eq!(
-            describe_event(&silent, &UNIFYING, &[]),
+            describe_event(&silent, &unpaired_unifying(), &[]),
             "keyboard silent after 2 s, last signal -60 dBm, no key since boot, noise -"
         );
         let later = Event {
@@ -995,7 +1129,7 @@ mod tests {
             ..silent
         };
         assert_eq!(
-            describe_event(&later, &UNIFYING, &[]),
+            describe_event(&later, &unpaired_unifying(), &[]),
             "keyboard silent after 2 s, last signal -60 dBm, no key for over 4 h, noise -"
         );
     }
@@ -1004,14 +1138,14 @@ mod tests {
     fn a_link_up_after_a_wake_says_the_keyboard_woke() {
         let woke = event(EventKind::LinkUp, 2, 0xc4, 2, 1_920_000);
         assert_eq!(
-            describe_event(&woke, &UNIFYING, &[]),
+            describe_event(&woke, &unpaired_unifying(), &[]),
             "keyboard woke after 32 min 0 s on channel 2, signal -60 dBm"
         );
     }
 
     #[test]
     fn a_pairing_event_names_the_device_when_it_is_the_one_paired_now() {
-        let mx_keys = status_of(Protocol::Unifying).link;
+        let mx_keys = status_of(Protocol::Unifying);
         assert_eq!(
             describe_event(
                 &event(EventKind::UnifyingPaired, 0x70, 0x15, 1, 0),
@@ -1032,7 +1166,7 @@ mod tests {
 
     #[test]
     fn describes_the_unifying_events() {
-        let d = |e: Event| describe_event(&e, &UNIFYING, &[]);
+        let d = |e: Event| describe_event(&e, &unpaired_unifying(), &[]);
         assert_eq!(
             d(event(EventKind::UnifyingPaired, 0x40, 0x8a, 2, 0)),
             "paired mouse, WPID 408a"
@@ -1072,7 +1206,7 @@ mod tests {
             "pairing attempt timed out at request 2"
         );
         assert_eq!(
-            describe_event(&event(EventKind::PairingTimeout, 0, 0, 0, 0), &NUPHY, &[]),
+            describe_event(&event(EventKind::PairingTimeout, 0, 0, 0, 0), &nuphy(), &[]),
             "pairing attempt timed out waiting for the keyboard's confirm"
         );
         assert_eq!(

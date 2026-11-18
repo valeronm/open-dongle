@@ -359,6 +359,16 @@ static void test_silence_for_1_s_loses_the_link(void)
 	CHECK_EQ(led(), LINK_LED_IDLE);
 }
 
+static void test_the_link_is_connected_from_its_first_packet_until_it_is_lost(void)
+{
+	init(home);
+	CHECK(!link_connected(&l));
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK(link_connected(&l));
+	tick(1010);
+	CHECK(!link_connected(&l));
+}
+
 static void test_invalid_message_does_not_keep_the_link(void)
 {
 	init(home);
@@ -447,6 +457,12 @@ static void test_a_keyboard_heard_on_the_pairing_channel_is_moved_home(void)
 	CHECK_EQ(out.channel, home[0]);
 	expect_status(3, 0);
 	CHECK_EQ(led(), LINK_LED_CONNECTED);
+}
+
+static void test_the_link_is_connected_while_it_moves_home(void)
+{
+	hear_keyboard_on_the_pairing_channel(home);
+	CHECK(link_connected(&l));
 }
 
 static void test_silence_after_the_move_home_starts_loses_the_link(void)
@@ -976,6 +992,8 @@ int main(void)
 	RUN(test_suspend_is_resent_after_a_reconnect);
 	RUN(test_resume_then_suspend_sends_it_again);
 	RUN(test_silence_for_1_s_loses_the_link);
+	RUN(test_the_link_is_connected_from_its_first_packet_until_it_is_lost);
+	RUN(test_the_link_is_connected_while_it_moves_home);
 	RUN(test_invalid_message_does_not_keep_the_link);
 	RUN(test_pipe0_traffic_does_not_keep_a_connected_link);
 	RUN(test_a_radio_pause_restarts_the_silence_timer);

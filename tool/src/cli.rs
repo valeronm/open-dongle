@@ -14,82 +14,43 @@ use crate::format::{
     unifying_kind, uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{
-    Action, Counter, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol, Status,
-    StoredKeyboard, Watch,
+    Action, Counter, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol,
+    Slot, SlotMinute, SlotStatus, Status, StoredDevice, Watch, shown_slots,
 };
 use crate::{dfu, format, uf2};
 
-pub fn status(s: &Status) -> Result<()> {
-    for line in status_lines(s) {
+/// Prints `s`'s link-wide lines and a section per shown slot, asking the dongle for the slots
+/// past `s`'s own.
+pub fn status<T: Transport>(dev: &mut Device<T>, s: &Status) -> Result<()> {
+    for line in status_lines(s, &dev.shown(s)?) {
         println!("{line}");
     }
     Ok(())
 }
 
-fn status_lines(s: &Status) -> Vec<String> {
-    let c = s.counters;
-    let name = s.link.keyboard_name().unwrap_or("unnamed");
-    let (link, offer, keyboard) = match &s.link {
-        Link::Unifying(unifying) => {
-            let row = unifying.as_ref().map(|k| {
-                let (label, kind) = match unifying_kind(k.kind) {
-                    Some(kind) => (kind, String::new()),
-                    None => ("device", format!(", type {:#04x}", k.kind)),
-                };
-                let value = format!(
-                    "{name}, serial {}, WPID {}{kind}",
-                    hex(&k.serial),
-                    hex(&k.wpid)
-                );
-                (label, value)
-            });
-            (String::new(), String::new(), row)
-        }
-        Link::Nuphy(nuphy) => {
-            let id = nuphy.keyboard_id.map(|id| format!(", ID {}", hex(&id)));
-            let row = (nuphy.keyboard_name.is_some() || id.is_some())
-                .then(|| ("keyboard", format!("{name}{}", id.unwrap_or_default())));
-            (
-                format!(" ({})", paired(nuphy.own)),
-                format!(", {}", pairing_offer(nuphy.forced)),
-                row,
-            )
-        }
-        Link::Bluetooth(_) => {
-            let row = s.link.keyboard_name().map(|n| ("keyboard", n.to_string()));
-            (String::new(), String::new(), row)
-        }
+fn status_lines(s: &Status, devices: &[SlotStatus]) -> Vec<String> {
+    let (link, offer) = match &s.link {
+        Link::Nuphy(nuphy) => (
+            format!(" ({})", paired(nuphy.own)),
+            format!(", {}", pairing_offer(nuphy.forced)),
+        ),
+        _ => (String::new(), String::new()),
     };
-    let channels = s.protocol().has_channels();
     let counters: Vec<String> = s
         .protocol()
         .counters()
         .iter()
-        .filter_map(|&counter| Some(format!("{} {}", counter.name(), c.get(counter)?)))
+        .filter_map(|&counter| Some(format!("{} {}", counter.name(), s.counters.get(counter)?)))
         .collect();
-    let mut rows = vec![
+    let link = if s.protocol().has_channels() {
+        format!("{} on channel {}{link}", state_name(s), s.channel)
+    } else {
+        state_name(s).to_string()
+    };
+    let rows = vec![
         ("firmware", version(s.firmware_version)),
         ("protocol", s.protocol().name().to_string()),
-        (
-            "link",
-            if channels {
-                format!("{} on channel {}{link}", state_name(s), s.channel)
-            } else {
-                state_name(s).to_string()
-            },
-        ),
-    ];
-    rows.extend(keyboard);
-    if s.signal_shown() {
-        let level = s
-            .last_rssi
-            .map_or(String::new(), |dbm| format!("{dbm} dBm, "));
-        rows.push((
-            "signal",
-            format!("{level}{}", last_packet(s.last_rx_age_ms)),
-        ));
-    }
-    rows.extend([
+        ("link", link),
         (
             "pairing",
             format!("{}{offer}", if s.pairing_open { "open" } else { "closed" }),
@@ -112,10 +73,68 @@ fn status_lines(s: &Status) -> Vec<String> {
                 s.events_total.saturating_sub(s.events_oldest)
             ),
         ),
-    ]);
+    ];
+    let mut lines = labeled(rows);
+    for d in devices {
+        if let Some(slot) = s.slot(d.slot) {
+            lines.push(String::new());
+            lines.extend(labeled(slot_rows(s, slot, d)));
+        }
+    }
+    lines
+}
+
+fn labeled(rows: Vec<(&str, String)>) -> Vec<String> {
     rows.into_iter()
         .map(|(label, value)| status_label(label) + &value)
         .collect()
+}
+
+fn slot_rows(s: &Status, slot: &Slot, d: &SlotStatus) -> Vec<(&'static str, String)> {
+    let (label, details) = match &s.link {
+        Link::Unifying(Some(k)) => {
+            let (label, kind) = match unifying_kind(k.kind) {
+                Some(kind) => (kind, String::new()),
+                None => ("device", format!(", type {:#04x}", k.kind)),
+            };
+            let details = format!(", serial {}, WPID {}{kind}", hex(&k.serial), hex(&k.wpid));
+            (label, details)
+        }
+        Link::Nuphy(nuphy) => (
+            slot.kind.name(),
+            nuphy
+                .keyboard_id
+                .map_or(String::new(), |id| format!(", ID {}", hex(&id))),
+        ),
+        _ => (slot.kind.name(), String::new()),
+    };
+    let device = if slot.stored || slot.connected {
+        let state = if slot.connected {
+            "connected"
+        } else {
+            "not connected"
+        };
+        let name = d.name.as_deref().unwrap_or("unnamed");
+        format!("{name}{details}, {state}")
+    } else {
+        "not paired".into()
+    };
+    let mut rows = vec![(label, device)];
+    if s.signal_shown(d) {
+        let level = d.signal.map_or(String::new(), |dbm| format!("{dbm} dBm, "));
+        rows.push((
+            "signal",
+            format!("{level}{}", last_packet(d.last_packet_ms)),
+        ));
+    }
+    let counters: Vec<String> = s
+        .protocol()
+        .counters()
+        .iter()
+        .filter_map(|&counter| Some(format!("{} {}", counter.name(), d.get(counter)?)))
+        .collect();
+    rows.push(("counters", counters.join(" ")));
+    rows
 }
 
 pub fn require_nuphy(s: &Status, what: &str) -> Result<()> {
@@ -155,37 +174,37 @@ pub fn pair<T: Transport>(
     Ok(format::pairing_open(protocol, passkey))
 }
 
-pub fn keyboards<T: Transport>(dev: &mut Device<T>) -> Result<()> {
-    for line in format::keyboard_lines(&dev.keyboards()?) {
+pub fn devices<T: Transport>(dev: &mut Device<T>, protocol: Protocol) -> Result<()> {
+    for line in format::device_lines(&dev.devices()?, protocol) {
         println!("{line}");
     }
     Ok(())
 }
 
-/// Empty outside Bluetooth, the only protocol that stores a keyboard list.
-pub fn stored_keyboards<T: Transport>(
+/// Empty outside Bluetooth, the only protocol whose events name a stored device by its address.
+pub fn stored_devices<T: Transport>(
     dev: &mut Device<T>,
     protocol: Protocol,
-) -> Result<Vec<StoredKeyboard>> {
+) -> Result<Vec<StoredDevice>> {
     if protocol == Protocol::Bluetooth {
-        dev.keyboards()
+        dev.devices()
     } else {
         Ok(Vec::new())
     }
 }
 
-/// `place` is the keyboard's number in the list `keyboards` prints, from 1.
+/// `place` is the device's number in the list `devices` prints, from 1.
 pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Result<()> {
-    let list = dev.keyboards()?;
-    let Some(keyboard) = format::keyboard_at(&list, place) else {
+    let list = dev.devices()?;
+    let Some(device) = format::device_at(&list, place) else {
         bail!(
-            "there is no keyboard {place}; `{} keyboards` lists the {} stored",
+            "there is no device {place}; `{} devices` lists the {} stored",
             crate::TOOL,
             list.len()
         );
     };
-    if confirm(&format::forget_question(keyboard), yes)? {
-        dev.forget(keyboard)?;
+    if confirm(&format::forget_question(device), yes)? {
+        dev.forget(device)?;
         println!("forgotten");
     }
     Ok(())
@@ -216,12 +235,13 @@ pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
     drop(dev);
     let deadline = std::time::Instant::now() + RETURN_WAIT;
     std::thread::sleep(Duration::from_secs(1));
-    let s = loop {
+    let (mut dev, s) = loop {
         std::thread::sleep(Duration::from_millis(300));
-        if let Ok(Ok(s)) = device::open_unchecked(serial).and_then(|mut d| d.read_status())
+        if let Ok(mut d) = device::open_unchecked(serial)
+            && let Ok(Ok(s)) = d.read_status()
             && s.uptime_ms < before.uptime_ms
         {
-            break s;
+            break (d, s);
         }
         if std::time::Instant::now() > deadline {
             bail!("the dongle did not come back within {RETURN_WAIT:?}; replug it");
@@ -230,53 +250,90 @@ pub fn protocol(serial: Option<&str>, set: Option<Protocol>) -> Result<()> {
     if s.protocol() != want {
         bail!("the dongle came back running {}", s.protocol().name());
     }
-    status(&s)
+    status(&mut dev, &s)
 }
 
-fn minute_line(protocol: Protocol, m: &Minute) -> String {
-    let counters: Vec<String> = protocol
-        .counters()
-        .iter()
-        .filter_map(|&counter| {
-            let width = if counter == Counter::Packets { 5 } else { 3 };
-            m.get(counter)
-                .map(|n| format!("{} {n:width$}", counter.name()))
-        })
-        .collect();
-    let signal = m
-        .rssi
-        .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
-    format!(
-        "{}  signal {signal}  {}",
-        counters.join("  "),
-        format::noise(m.noise)
-    )
+/// `slots` holds each shown slot's part of the minute; the noise, of variable width, goes last.
+fn minute_line(protocol: Protocol, m: &Minute, slots: &[(DeviceKind, SlotMinute)]) -> String {
+    let columns = |get: &dyn Fn(Counter) -> Option<u16>| -> Vec<String> {
+        protocol
+            .counters()
+            .iter()
+            .filter_map(|&counter| {
+                let width = if counter == Counter::Packets { 5 } else { 3 };
+                get(counter).map(|n| format!("{} {n:width$}", counter.name()))
+            })
+            .collect()
+    };
+    let devices = slots.iter().map(|(kind, d)| {
+        let signal = d
+            .rssi
+            .map_or("-".into(), |r| format!("{}/{}/{}", r.min, r.avg, r.max));
+        let counters = columns(&|counter| d.get(counter));
+        format!("{}: {}  signal {signal}", kind.name(), counters.join("  "))
+    });
+    columns(&|counter| m.get(counter))
+        .into_iter()
+        .chain(devices)
+        .chain([format::noise(m.noise)])
+        .collect::<Vec<_>>()
+        .join("  ")
 }
 
 pub fn history<T: Transport>(dev: &mut Device<T>, s: &Status, minutes: u32) -> Result<()> {
     let now = Local::now();
-    let from = s.minute_next.saturating_sub(minutes);
-    for (index, m) in dev.minutes_between(from, s.minute_next, s.protocol())? {
+    for (index, line) in history_rows(dev, s, minutes)? {
         let at = wall_clock(now, s.uptime_ms, u64::from(index) * 60_000);
-        println!(
-            "{}  {}",
-            at.format("%Y-%m-%d %H:%M:%S"),
-            minute_line(s.protocol(), &m)
-        );
+        println!("{}  {line}", at.format("%Y-%m-%d %H:%M:%S"));
     }
     Ok(())
+}
+
+/// The last `minutes` minutes by index, with the link-wide fields from the first shown slot's.
+fn history_rows<T: Transport>(
+    dev: &mut Device<T>,
+    s: &Status,
+    minutes: u32,
+) -> Result<Vec<(u32, String)>> {
+    let from = s.minute_next.saturating_sub(minutes);
+    let protocol = s.protocol();
+    let mut slots = Vec::new();
+    for slot in shown_slots(&s.slots) {
+        if let Some(kind) = s.slot(slot).map(|k| k.kind) {
+            slots.push((
+                kind,
+                dev.minutes_between(from, s.minute_next, slot, protocol)?,
+            ));
+        }
+    }
+    let Some((_, first)) = slots.first() else {
+        return Ok(Vec::new());
+    };
+    Ok(first
+        .iter()
+        .map(|(index, m)| {
+            let parts: Vec<(DeviceKind, SlotMinute)> = slots
+                .iter()
+                .filter_map(|(kind, minutes)| {
+                    let (_, minute) = minutes.iter().find(|(i, _)| i == index)?;
+                    Some((*kind, minute.device))
+                })
+                .collect();
+            (*index, minute_line(protocol, m, &parts))
+        })
+        .collect())
 }
 
 pub fn events<T: Transport>(dev: &mut Device<T>, s: &Status, count: u32) -> Result<()> {
     let now = Local::now();
     let from = s.events_total.saturating_sub(count);
-    let stored = stored_keyboards(dev, s.protocol())?;
+    let stored = stored_devices(dev, s.protocol())?;
     for (_, e) in dev.events_between(from, s.events_total)? {
         let at = wall_clock(now, s.uptime_ms, e.time_ms);
         println!(
             "{}  {}",
             at.format("%Y-%m-%d %H:%M:%S%.3f"),
-            describe_event(&e, &s.link, &stored)
+            describe_event(&e, s, &stored)
         );
     }
     Ok(())
@@ -522,20 +579,25 @@ fn upload(port: &str, image: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::tests::{nuphy, status_of, unifying};
+    use crate::protocol::tests::{mouse_status, nuphy, status_of, unifying};
     use crate::protocol::{BluetoothLink, Command, Link, Protocol};
 
     fn strings(values: &[&str]) -> Vec<String> {
         values.iter().map(|v| v.to_string()).collect()
     }
 
+    /// The lines `status` prints for a dongle whose shown slots are all `s`'s own.
+    fn lines(s: &Status) -> Vec<String> {
+        status_lines(s, std::slice::from_ref(&s.device))
+    }
+
     #[test]
     fn a_bluetooth_status_shows_no_channel_or_signal() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.last_rssi = None;
-        let lines = status_lines(&s);
+        s.device.signal = None;
+        let lines = lines(&s);
         let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
-        assert!(link.ends_with("no keyboard"), "{link}");
+        assert!(link.ends_with("nothing connected"), "{link}");
         assert!(!lines.iter().any(|l| l.starts_with("signal")));
         assert!(
             lines
@@ -545,25 +607,12 @@ mod tests {
     }
 
     #[test]
-    fn a_connected_bluetooth_keyboard_is_named() {
-        let mut s = status_of(Protocol::Bluetooth);
-        s.link = Link::Bluetooth(BluetoothLink::Connected {
-            name: Some("MX Keys".into()),
-        });
-        let lines = status_lines(&s);
-        let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
-        assert!(link.ends_with("connected"), "{link}");
-        let keyboard = lines.iter().find(|l| l.starts_with("keyboard")).unwrap();
-        assert!(keyboard.ends_with("MX Keys"), "{keyboard}");
-    }
-
-    #[test]
     fn a_connected_bluetooth_keyboard_shows_its_signal_and_last_packet() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.link = Link::Bluetooth(BluetoothLink::Connected { name: None });
-        s.last_rssi = Some(-58);
-        s.last_rx_age_ms = Some(400);
-        let lines = status_lines(&s);
+        s.link = Link::Bluetooth(BluetoothLink::Connected);
+        s.device.signal = Some(-58);
+        s.device.last_packet_ms = Some(400);
+        let lines = lines(&s);
         let signal = lines.iter().find(|l| l.starts_with("signal")).unwrap();
         assert!(
             signal.ends_with(" -58 dBm, last packet 400 ms ago"),
@@ -576,9 +625,9 @@ mod tests {
     #[test]
     fn a_nuphy_status_with_no_reading_shows_no_signal_level() {
         let mut s = status_of(Protocol::Nuphy);
-        s.last_rssi = None;
-        s.last_rx_age_ms = None;
-        let lines = status_lines(&s);
+        s.device.signal = None;
+        s.device.last_packet_ms = None;
+        let lines = lines(&s);
         let signal = lines.iter().find(|l| l.starts_with("signal")).unwrap();
         assert!(signal.ends_with(" no packet since boot"), "{signal}");
         assert!(!signal.contains("dBm"), "{signal}");
@@ -588,9 +637,56 @@ mod tests {
     fn a_failed_bluetooth_start_is_reported() {
         let mut s = status_of(Protocol::Bluetooth);
         s.link = Link::Bluetooth(BluetoothLink::StartFailed);
-        let lines = status_lines(&s);
+        let lines = lines(&s);
         let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
         assert!(link.ends_with("Bluetooth failed to start"), "{link}");
+    }
+
+    #[test]
+    fn a_bluetooth_status_has_a_section_for_each_shown_slot() {
+        let s = mouse_status();
+        let keyboard = SlotStatus {
+            slot: 0,
+            name: Some("MX Keys".into()),
+            signal: None,
+            last_packet_ms: None,
+            packets: 10,
+            gaps: None,
+            link_losses: None,
+        };
+        assert_eq!(
+            status_lines(&s, &[keyboard, s.device.clone()]),
+            [
+                "firmware  1.2.3",
+                "protocol  Bluetooth",
+                "link      connected",
+                "pairing   closed",
+                "usb       live",
+                "uptime    50d 02:25:19, reset by pin",
+                "counters  dropped 2 usb-retries 5 merges 6",
+                "history   1440 minutes, 512 events held",
+                "",
+                "keyboard  MX Keys, not connected",
+                "counters  packets 10",
+                "",
+                "mouse     MX Master 3S, connected",
+                "signal    -60 dBm, last packet 250 ms ago",
+                "counters  packets 2000",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_slot_with_nothing_paired_says_so() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.slots[0].stored = false;
+        s.device.name = None;
+        s.device.signal = None;
+        let lines = lines(&s);
+        assert!(
+            lines.contains(&"keyboard  not paired".to_string()),
+            "{lines:#?}"
+        );
     }
 
     #[test]
@@ -688,28 +784,31 @@ mod tests {
 
     #[test]
     fn forgetting_a_place_outside_the_list_sends_nothing() {
-        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let list = crate::protocol::tests::fixture("devices.hex");
         let mut dev = Device::new(
             Fake::new(move |req| {
-                assert_eq!(req[0], Command::Keyboards as u8);
+                assert_eq!(req[0], Command::Devices as u8);
                 parts(req[0], req[1], &list)
             }),
             0,
         );
         for place in [0, 3] {
             let err = forget(&mut dev, place, true).unwrap_err().to_string();
-            assert!(err.contains("lists the 2 stored"), "{err}");
+            assert_eq!(
+                err,
+                format!("there is no device {place}; `spare-dongle devices` lists the 2 stored")
+            );
         }
     }
 
     #[test]
     fn forgetting_sends_the_address_of_the_keyboard_at_that_place() {
-        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let list = crate::protocol::tests::fixture("devices.hex");
         let sent = std::rc::Rc::new(std::cell::Cell::new(None));
         let seen = sent.clone();
         let mut dev = Device::new(
             Fake::new(move |req| {
-                if req[0] == Command::Keyboards as u8 {
+                if req[0] == Command::Devices as u8 {
                     return parts(req[0], req[1], &list);
                 }
                 seen.set(Some((req[0], <[u8; 7]>::try_from(&req[6..13]).unwrap())));
@@ -722,7 +821,7 @@ mod tests {
             sent.get(),
             Some((
                 Command::Forget as u8,
-                [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6]
+                [1, 0x5a, 0x3c, 0x11, 0xe0, 0xf2, 0xc8]
             ))
         );
     }
@@ -869,18 +968,20 @@ mod tests {
     fn prints_a_nuphy_status() {
         let s = status_of(Protocol::Nuphy);
         assert_eq!(
-            status_lines(&s),
+            lines(&s),
             [
                 "firmware  1.2.3",
                 "protocol  NuPhy",
                 "link      connected on channel 26 (paired 26 30 34)",
-                "keyboard  MX Keys, ID 7015a329",
-                "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open, offers channels 62 52 44, set by hand",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
-                "counters  packets 1000 invalid 1 dropped 2 channels 3 losses 4 gaps 8 usb-retries 5 merges 6 surveys 7",
+                "counters  invalid 1 dropped 2 channels 3 usb-retries 5 merges 6 surveys 7",
                 "history   1440 minutes, 512 events held",
+                "",
+                "keyboard  MX Keys, ID 7015a329, connected",
+                "signal    -71 dBm, last packet 12 ms ago",
+                "counters  packets 1000 losses 4 gaps 8",
             ]
         );
     }
@@ -890,7 +991,7 @@ mod tests {
         let mut s = status_of(Protocol::Nuphy);
         s.pairing_open = false;
         assert!(
-            status_lines(&s)
+            lines(&s)
                 .contains(&"pairing   closed, offers channels 62 52 44, set by hand".to_string())
         );
     }
@@ -899,28 +1000,35 @@ mod tests {
     fn prints_a_unifying_status() {
         let s = status_of(Protocol::Unifying);
         assert_eq!(
-            status_lines(&s),
+            lines(&s),
             [
                 "firmware  1.2.3",
                 "protocol  Unifying",
                 "link      connected on channel 62",
-                "keyboard  MX Keys, serial b8bcd5b3, WPID 7015",
-                "signal    -71 dBm, last packet 12 ms ago",
                 "pairing   open",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
-                "counters  packets 1000 invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
+                "counters  invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
                 "history   1440 minutes, 512 events held",
+                "",
+                "keyboard  MX Keys, serial b8bcd5b3, WPID 7015, connected",
+                "signal    -71 dBm, last packet 12 ms ago",
+                "counters  packets 1000",
             ]
         );
     }
 
     #[test]
-    fn a_unifying_status_with_no_keyboard_paired_has_no_keyboard_line() {
+    fn a_unifying_status_with_no_keyboard_paired_says_its_slot_is_not_paired() {
         let mut s = status_of(Protocol::Unifying);
         s.link = Link::Unifying(None);
-        let lines = status_lines(&s);
-        assert!(!lines.iter().any(|l| l.starts_with("keyboard")));
+        s.slots[0].stored = false;
+        s.slots[0].connected = false;
+        let lines = lines(&s);
+        assert!(
+            lines.contains(&"keyboard  not paired".to_string()),
+            "{lines:#?}"
+        );
         assert_eq!(lines[2], "link      not paired on channel 62");
     }
 
@@ -928,71 +1036,127 @@ mod tests {
     fn a_nuphy_keyboard_line_holds_what_is_known_of_the_keyboard() {
         let id = [0x70, 0x15, 0xa3, 0x29];
         for (id, name, line) in [
-            (Some(id), None, Some("keyboard  unnamed, ID 7015a329")),
+            (Some(id), None, "keyboard  unnamed, ID 7015a329, connected"),
             (
                 None,
                 Some("NuPhy Air75 V2"),
-                Some("keyboard  NuPhy Air75 V2"),
+                "keyboard  NuPhy Air75 V2, connected",
             ),
-            (None, None, None),
+            (None, None, "keyboard  unnamed, connected"),
         ] {
             let mut s = status_of(Protocol::Nuphy);
             nuphy(&mut s).keyboard_id = id;
-            nuphy(&mut s).keyboard_name = name.map(String::from);
-            let lines = status_lines(&s);
-            let keyboard = lines.iter().find(|l| l.starts_with("keyboard"));
-            assert_eq!(keyboard.map(String::as_str), line);
+            s.device.name = name.map(String::from);
+            let lines = lines(&s);
+            assert!(lines.contains(&line.to_string()), "{lines:#?}");
         }
     }
 
     #[test]
     fn a_unifying_device_line_is_labeled_with_its_type() {
         for (kind, line) in [
-            (2, "mouse     MX Keys, serial b8bcd5b3, WPID 7015"),
-            (4, "presenter MX Keys, serial b8bcd5b3, WPID 7015"),
+            (
+                2,
+                "mouse     MX Keys, serial b8bcd5b3, WPID 7015, connected",
+            ),
+            (
+                4,
+                "presenter MX Keys, serial b8bcd5b3, WPID 7015, connected",
+            ),
             (
                 0x7f,
-                "device    MX Keys, serial b8bcd5b3, WPID 7015, type 0x7f",
+                "device    MX Keys, serial b8bcd5b3, WPID 7015, type 0x7f, connected",
             ),
         ] {
             let mut s = status_of(Protocol::Unifying);
             unifying(&mut s).kind = kind;
-            assert_eq!(status_lines(&s)[3], line);
+            let lines = lines(&s);
+            assert!(lines.contains(&line.to_string()), "{lines:#?}");
         }
     }
 
     #[test]
     fn a_keyboard_without_a_name_prints_as_unnamed() {
         let mut s = status_of(Protocol::Unifying);
-        unifying(&mut s).name = None;
+        s.device.name = None;
         assert!(
-            status_lines(&s).contains(&"keyboard  unnamed, serial b8bcd5b3, WPID 7015".to_string())
+            lines(&s)
+                .contains(&"keyboard  unnamed, serial b8bcd5b3, WPID 7015, connected".to_string())
         );
     }
 
     fn minute() -> Minute {
         Minute {
-            packets: 120,
             invalid: 1,
             dropped: 0,
             channel_changes: 2,
-            link_losses: Some(3),
             usb_retries: 5,
-            gaps: Some(4),
-            rssi: None,
             noise: None,
+            device: SlotMinute {
+                packets: 120,
+                gaps: Some(4),
+                link_losses: Some(3),
+                rssi: None,
+            },
         }
     }
 
     #[test]
-    fn a_history_line_lists_the_counters_the_protocol_counts() {
+    fn a_history_line_lists_the_link_wide_counters_then_each_slots() {
+        let keyboard = (DeviceKind::Keyboard, minute().device);
         assert_eq!(
-            minute_line(Protocol::Nuphy, &minute()),
-            "packets   120  invalid   1  dropped   0  channels   2  losses   3  gaps   4  usb-retries   5  signal -  noise -"
+            minute_line(Protocol::Nuphy, &minute(), &[keyboard]),
+            "invalid   1  dropped   0  channels   2  usb-retries   5  keyboard: packets   120  losses   3  gaps   4  signal -  noise -"
         );
         assert_eq!(
-            minute_line(Protocol::Unifying, &minute()),
-            "packets   120  invalid   1  dropped   0  channels   2  usb-retries   5  signal -  noise -"
+            minute_line(Protocol::Unifying, &minute(), &[keyboard]),
+            "invalid   1  dropped   0  channels   2  usb-retries   5  keyboard: packets   120  signal -  noise -"
+        );
+        let mouse = SlotMinute {
+            packets: 30,
+            gaps: None,
+            link_losses: None,
+            rssi: Some(crate::protocol::Rssi {
+                min: -60,
+                avg: -55,
+                max: -50,
+            }),
+        };
+        assert_eq!(
+            minute_line(
+                Protocol::Bluetooth,
+                &minute(),
+                &[keyboard, (DeviceKind::Mouse, mouse)]
+            ),
+            "dropped   0  usb-retries   5  keyboard: packets   120  signal -  mouse: packets    30  signal -60/-55/-50  noise -"
+        );
+    }
+
+    #[test]
+    fn history_asks_for_each_shown_slots_minutes() {
+        let mut s = mouse_status();
+        s.device.slot = 0;
+        s.minute_next = 1442;
+        s.minute_oldest = 0;
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                assert_eq!(req[0], Command::History as u8);
+                let from = u32::from_le_bytes(req[2..6].try_into().unwrap());
+                let packets = if req[6] == 1 { 9 } else { 7 };
+                let mut p = from.to_le_bytes().to_vec();
+                let n = 1442 - from;
+                p.push(n as u8);
+                for _ in 0..n {
+                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, packets, 0, 0, 0, 0, 0, 0]);
+                }
+                parts(req[0], req[1], &p)
+            }),
+            0,
+        );
+        let row = "dropped   0  usb-retries   0  keyboard: packets     7  signal -  mouse: packets     9  signal -  noise -";
+        assert_eq!(
+            history_rows(&mut dev, &s, 2).unwrap(),
+            [(1440, row.to_string()), (1441, row.to_string())]
         );
     }
 }

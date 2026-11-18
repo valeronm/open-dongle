@@ -15,7 +15,7 @@
 static const uint8_t pairing_channels[] = {PAIRING_CHANNEL, 50, 80};
 const uint8_t link_fixed_channels[LINK_FIXED_CHANNELS] = {16, 22, 44, 48, 58, 72, 78};
 
-static bool connected(const struct link *l)
+bool link_connected(const struct link *l)
 {
 	return l->state == LINK_CONNECTED || l->state == LINK_MOVING_HOME;
 }
@@ -184,7 +184,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 	if (pipe != 1 || l->state == LINK_SURVEY || l->state == LINK_PAIRING) {
 		return;
 	}
-	if (connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {
+	if (link_connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {
 		out->gap_ms = now_ms - l->last_rx_ms;
 		out->gap_channel = l->channel;
 	}
@@ -253,7 +253,7 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 	case LINK_MOVING_HOME:
 	case LINK_PAIRING:
 		if (now_ms - l->last_rx_ms >= IDLE_AFTER_MS) {
-			out->lost = connected(l);
+			out->lost = link_connected(l);
 			out->pairing_expired = l->state == LINK_PAIRING;
 			go_idle(l, now_ms, out);
 		}
@@ -323,7 +323,7 @@ enum link_led link_led(const struct link *l, uint32_t now_ms)
 	if (l->state == LINK_IDLE) {
 		return LINK_LED_IDLE;
 	}
-	return connected(l) ? LINK_LED_CONNECTED : LINK_LED_PAIRING;
+	return link_connected(l) ? LINK_LED_CONNECTED : LINK_LED_PAIRING;
 }
 
 static bool is_pairing_channel(uint8_t ch)

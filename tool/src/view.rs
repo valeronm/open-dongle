@@ -20,13 +20,14 @@ use ratatui::{
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
-    channel_role, counted_share, describe_event, forget_question, keyboard_at, keyboard_lines,
-    last_packet, link_health, noise_level, noise_ruler, paired, share, state_name, status_label,
-    switch_question, uptime, usb_state, wall_clock, watch_role, watch_summary,
+    channel_role, counted_share, describe_event, device_at, device_lines, forget_question,
+    last_packet, link_health, noise_level, noise_ruler, paired, share, slot_health, slot_state,
+    state_name, status_label, switch_question, uptime, usb_state, wall_clock, watch_role,
+    watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
-    Protocol, Status, Step, StoredKeyboard, Watch, step_channel,
+    Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -35,6 +36,8 @@ const EVENT_ROWS: usize = 8;
 const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
 const STATUS_ROWS: u16 = 3;
+/// The narrowest a slot's status box and chart draw uncut.
+const PANEL_MIN_WIDTH: u16 = 59;
 const SEPARATOR: &str = "   ";
 /// A link that averaged -70 dBm had no gaps, and gaps followed packets at -78 dBm or weaker.
 const SIGNAL_GOOD_DBM: i8 = -70;
@@ -54,9 +57,9 @@ type MinuteDbm = fn(&Minute) -> Option<i8>;
 /// Each line lies over the ones before it.
 const SIGNAL_LINES: [(&str, Color, MinuteDbm); 4] = [
     ("noise peak", Color::Gray, |m| m.noise.map(|n| n.peak)),
-    ("min", Color::Red, |m| m.rssi.map(|r| r.min)),
-    ("avg", Color::Yellow, |m| m.rssi.map(|r| r.avg)),
-    ("max", Color::Green, |m| m.rssi.map(|r| r.max)),
+    ("min", Color::Red, |m| m.device.rssi.map(|r| r.min)),
+    ("avg", Color::Yellow, |m| m.device.rssi.map(|r| r.avg)),
+    ("max", Color::Green, |m| m.device.rssi.map(|r| r.max)),
 ];
 
 #[derive(Clone, Copy)]
@@ -73,7 +76,7 @@ struct Strip {
 impl Strip {
     fn value(&self, m: &Minute) -> u16 {
         match self.source {
-            Source::Counter(counter) => m.get(counter).unwrap_or(0),
+            Source::Counter(counter) => m.get(counter).or(m.device.get(counter)).unwrap_or(0),
             Source::Busy => m.noise.map_or(0, |n| n.busy),
         }
     }
@@ -293,18 +296,26 @@ fn role_color(role: ChannelRole) -> Color {
     }
 }
 
+/// One shown slot's status and minutes as last fetched.
+pub(crate) struct SlotHistory {
+    pub(crate) device: SlotStatus,
+    pub(crate) minutes: Vec<(u32, Minute)>,
+}
+
 /// The dongle's status and history as last fetched, and the view's place in them, kept in step
 /// with its indexes.
 pub(crate) struct History {
+    /// Slot 0's status, which carries the link-wide fields and the slot table.
     pub(crate) status: Status,
     pub(crate) boot: DateTime<Local>,
-    pub(crate) minutes: Vec<(u32, Minute)>,
+    /// The shown slots, in slot order.
+    pub(crate) slots: Vec<SlotHistory>,
     pub(crate) events: Vec<(u32, Event)>,
     /// The number of the event shown at the top of the events list, or `None` to follow the newest.
     pub(crate) events_top: Option<u32>,
     /// The minutes the chart's right edge sits before the newest one.
     pub(crate) minutes_back: usize,
-    pub(crate) keyboards: Vec<StoredKeyboard>,
+    pub(crate) devices: Vec<StoredDevice>,
 }
 
 fn boot_time(s: &Status) -> DateTime<Local> {
@@ -313,21 +324,27 @@ fn boot_time(s: &Status) -> DateTime<Local> {
 
 impl History {
     pub(crate) fn new(status: Status) -> Self {
+        let slots = shown_slots(&status.slots)
+            .contains(&status.device.slot)
+            .then(|| SlotHistory {
+                device: status.device.clone(),
+                minutes: Vec::new(),
+            });
         History {
             boot: boot_time(&status),
+            slots: slots.into_iter().collect(),
             status,
-            minutes: Vec::new(),
             events: Vec::new(),
             events_top: None,
             minutes_back: 0,
-            keyboards: Vec::new(),
+            devices: Vec::new(),
         }
     }
 
     /// `minutes_back` clamped so the chart stays full.
     fn scrolled(&self, width: usize) -> usize {
-        self.minutes_back
-            .min(self.minutes.len().saturating_sub(width))
+        let held = self.slots.first().map_or(0, |slot| slot.minutes.len());
+        self.minutes_back.min(held.saturating_sub(width))
     }
 
     fn scroll_older(&mut self, width: usize) {
@@ -350,14 +367,30 @@ impl History {
         } else {
             self.status = s;
         }
+        let shown = shown_slots(&self.status.slots);
+        self.slots.retain(|h| shown.contains(&h.device.slot));
+        for slot in shown {
+            let s = &self.status;
+            let device = if slot == s.device.slot {
+                s.device.clone()
+            } else {
+                dev.slot_status(slot)?
+            };
+            let at = self.slots.partition_point(|h| h.device.slot < slot);
+            if self.slots.get(at).is_none_or(|h| h.device.slot != slot) {
+                let minutes = Vec::new();
+                self.slots.insert(at, SlotHistory { device, minutes });
+            } else {
+                self.slots[at].device = device;
+            }
+            let minutes = &mut self.slots[at].minutes;
+            minutes.retain(|(i, _)| *i >= s.minute_oldest && *i < s.minute_next);
+            let from = minutes.last().map_or(s.minute_oldest, |(i, _)| i + 1);
+            minutes.extend(dev.minutes_between(from, s.minute_next, slot, s.protocol())?);
+        }
         let s = &self.status;
-        self.minutes
-            .retain(|(i, _)| *i >= s.minute_oldest && *i < s.minute_next);
         self.events
             .retain(|(i, _)| *i >= s.events_oldest && *i < s.events_total);
-        let from = self.minutes.last().map_or(s.minute_oldest, |(i, _)| i + 1);
-        self.minutes
-            .extend(dev.minutes_between(from, s.minute_next, s.protocol())?);
         let from = self.events.last().map_or(
             s.events_total.saturating_sub(EVENTS_KEPT as u32),
             |(i, _)| i + 1,
@@ -366,7 +399,7 @@ impl History {
             .extend(dev.events_between(from, s.events_total)?);
         let excess = self.events.len().saturating_sub(EVENTS_KEPT);
         self.events.drain(..excess);
-        self.keyboards = crate::cli::stored_keyboards(dev, self.status.protocol())?;
+        self.devices = crate::cli::stored_devices(dev, self.status.protocol())?;
         Ok(())
     }
 }
@@ -417,7 +450,7 @@ enum Prompt {
     Noise,
     Action(Action),
     Switch(Protocol),
-    Forget(StoredKeyboard),
+    Forget(StoredDevice),
 }
 
 impl Prompt {
@@ -426,7 +459,7 @@ impl Prompt {
             Prompt::Noise => NOISE_QUESTION.to_string(),
             Prompt::Action(action) => action_question(*action).to_string(),
             Prompt::Switch(to) => switch_question(*to),
-            Prompt::Forget(keyboard) => forget_question(keyboard),
+            Prompt::Forget(device) => forget_question(device),
         };
         format!("{question} y/n")
     }
@@ -485,7 +518,7 @@ enum Key {
     Choose(Choice),
     Pair,
     Moves,
-    Keyboards,
+    Devices,
 }
 
 fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
@@ -498,7 +531,7 @@ fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
         Key::Ask(Prompt::Action(Action::Bootloader)),
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
-    const KEYBOARDS: (char, &str, Key) = ('k', "keyboards", Key::Keyboards);
+    const DEVICES: (char, &str, Key) = ('d', "devices", Key::Devices);
     let channels = protocol.has_channels();
     let pair = if protocol == Protocol::Bluetooth {
         ('a', "pair", Key::Choose(Choice::Passkey))
@@ -510,7 +543,7 @@ fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
         channels.then_some(NOISE),
         channels.then_some(MOVES),
         Some(pair),
-        (protocol == Protocol::Bluetooth).then_some(KEYBOARDS),
+        (protocol == Protocol::Bluetooth).then_some(DEVICES),
         Some(switch),
         Some(REBOOT),
         Some(BOOTLOADER),
@@ -551,6 +584,8 @@ fn error_text(e: &anyhow::Error) -> String {
 struct Session<T: Transport> {
     device: Device<T>,
     history: History,
+    /// The place in `history.slots` of the leftmost panel drawn.
+    first_panel: usize,
     /// The last refresh's error, while the dongle answers but its reply failed.
     refresh_error: Option<String>,
     pane: Pane,
@@ -564,7 +599,7 @@ enum Pane {
     Noise(Vec<NoiseChannel>),
     /// Reread on every poll.
     Moves(Watch),
-    Keyboards,
+    Devices,
 }
 
 #[expect(
@@ -594,6 +629,8 @@ struct Drawn {
     event_rows: usize,
     /// `None` while the history chart is not on screen.
     plot_width: Option<usize>,
+    /// Whether some shown slot's panel was left out.
+    cycling: bool,
 }
 
 pub fn run(serial: Option<String>) -> Result<()> {
@@ -654,10 +691,25 @@ impl App {
 }
 
 impl<T: Transport> Session<T> {
+    /// The shown slots whose panels the view draws at `width`, left to right.
+    fn panels(&self, width: u16) -> Vec<&SlotHistory> {
+        let slots = &self.history.slots;
+        let drawn = panels_fitting(width).min(slots.len());
+        (0..drawn)
+            .map(|i| &slots[(self.first_panel + i) % slots.len()])
+            .collect()
+    }
+
+    /// Whether `width` leaves out some shown slot's panel.
+    fn cycling(&self, width: u16) -> bool {
+        panels_fitting(width) < self.history.slots.len()
+    }
+
     fn new(device: Device<T>, status: Status) -> Self {
         Session {
             device,
             history: History::new(status),
+            first_panel: 0,
             refresh_error: None,
             pane: Pane::History,
             prompt: None,
@@ -695,19 +747,22 @@ impl<T: Transport> Session<T> {
             KeyCode::Char('q') => return Some(Outcome::Quit),
             KeyCode::Char('[') => self.step(Step::Down),
             KeyCode::Char(']') => self.step(Step::Up),
+            KeyCode::Char('o') if drawn.cycling => {
+                self.first_panel = (self.first_panel + 1) % history.slots.len();
+            }
             KeyCode::Char(c)
-                if let Pane::Keyboards = self.pane
+                if let Pane::Devices = self.pane
                     && let Some(place) = c.to_digit(10)
-                    && let Some(keyboard) = keyboard_at(&history.keyboards, place as usize) =>
+                    && let Some(device) = device_at(&history.devices, place as usize) =>
             {
-                self.prompt = Some(Prompt::Forget(keyboard.clone()));
+                self.prompt = Some(Prompt::Forget(device.clone()));
             }
             KeyCode::Char(c) => match self.key(c) {
                 Some(Key::Ask(prompt)) => self.prompt = Some(prompt),
                 Some(Key::Choose(choice)) => self.choosing = Some(choice),
                 Some(Key::Pair) => self.pair(false),
                 Some(Key::Moves) => self.show_moves(),
-                Some(Key::Keyboards) => self.pane = Pane::Keyboards,
+                Some(Key::Devices) => self.pane = Pane::Devices,
                 None => {}
             },
             KeyCode::Esc => self.pane = Pane::History,
@@ -797,9 +852,9 @@ impl<T: Transport> Session<T> {
                 "done".to_string()
             }),
             Prompt::Action(c) => self.device.action(c).map(|()| "done".to_string()),
-            Prompt::Forget(keyboard) => self
+            Prompt::Forget(stored) => self
                 .device
-                .forget(&keyboard)
+                .forget(&stored)
                 .map(|()| "forgotten".to_string()),
             Prompt::Switch(to) => self.device.protocol(Some(to)).map(|(_, rebooting)| {
                 if rebooting {
@@ -826,6 +881,9 @@ impl<T: Transport> Session<T> {
                         .into_iter()
                         .map(|(key, label, _)| format!("{key} {label}"))
                         .collect();
+                    if self.cycling(u16::try_from(width).unwrap_or(u16::MAX)) {
+                        hints.push("o device".into());
+                    }
                     if self.protocol().has_channels() {
                         hints.push("[/] channel".into());
                     }
@@ -876,13 +934,10 @@ impl<T: Transport> App<T> {
     }
 
     fn draw(&mut self, f: &mut Frame) {
-        let (session, help) = self.connection.view(f.area().width as usize);
-        let status = session.map(|s| &s.history.status);
-        let title = std::iter::once(crate::PRODUCT)
-            .chain(status.map(|s| s.protocol().name()))
-            .chain(status.and_then(|s| s.link.keyboard_name()))
-            .collect::<Vec<_>>()
-            .join(" · ");
+        let width = f.area().width;
+        let (session, help) = self.connection.view(usize::from(width));
+        let history = session.map(|s| &s.history);
+        let status = history.map(|h| &h.status);
         let [top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(STATUS_ROWS + 2),
             Constraint::Min(history_min_rows(status.map(Status::protocol))),
@@ -890,32 +945,60 @@ impl<T: Transport> App<T> {
             Constraint::Length(help.len() as u16),
         ])
         .areas(f.area());
-        f.render_widget(
-            Paragraph::new(status_lines(status)).block(Block::bordered().title(title)),
-            top,
-        );
-        let plot_width = match session.map(|s| (&s.pane, &s.history.status)) {
-            Some((Pane::Noise(noise), status)) => {
-                draw_noise(f, middle, noise, status);
+        let mut panels: Vec<Option<&SlotHistory>> = session
+            .map_or(Vec::new(), |s| s.panels(width))
+            .into_iter()
+            .map(Some)
+            .collect();
+        if panels.is_empty() {
+            panels.push(None);
+        }
+        let named = session.is_some_and(|s| s.cycling(width));
+        let columns = Layout::horizontal(vec![Constraint::Fill(1); panels.len()]);
+        for (area, slot) in columns.split(top).iter().zip(&panels) {
+            let device = slot.map(|h| &h.device);
+            f.render_widget(
+                Paragraph::new(status_lines(status, device))
+                    .block(Block::bordered().title(panel_title(status, device))),
+                *area,
+            );
+        }
+        let plot_width = match session.map(|s| (&s.pane, &s.history)) {
+            Some((Pane::Noise(noise), history)) => {
+                draw_noise(f, middle, noise, &history.status);
                 None
             }
-            Some((Pane::Moves(watch), status)) => {
-                draw_moves(f, middle, watch, status);
+            Some((Pane::Moves(watch), history)) => {
+                draw_moves(f, middle, watch, &history.status);
                 None
             }
-            Some((Pane::Keyboards, _)) => {
-                draw_keyboards(f, middle, session.map_or(&[][..], |s| &s.history.keyboards));
+            Some((Pane::Devices, history)) => {
+                draw_devices(f, middle, history);
                 None
             }
-            Some((Pane::History, _)) | None => Some(draw_history(f, middle, session)),
+            Some((Pane::History, _)) | None => columns
+                .split(middle)
+                .iter()
+                .zip(&panels)
+                .map(|(area, slot)| draw_history(f, *area, history, *slot, named))
+                .min(),
         };
-        let event_rows = draw_events(f, bottom, session.map(|s| &s.history));
+        let event_rows = draw_events(f, bottom, history);
         f.render_widget(Paragraph::new(help.join("\n")), footer);
         self.drawn = Drawn {
             event_rows,
             plot_width,
+            cycling: named,
         };
     }
+}
+
+fn panel_title(status: Option<&Status>, device: Option<&SlotStatus>) -> String {
+    std::iter::once(crate::PRODUCT)
+        .chain(status.map(|s| s.protocol().name()))
+        .chain(device.and_then(|d| d.name.as_deref()))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 impl<T: Transport> Connection<T> {
@@ -931,17 +1014,24 @@ impl<T: Transport> Connection<T> {
     }
 }
 
-fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
+fn panels_fitting(width: u16) -> usize {
+    usize::from(width / PANEL_MIN_WIDTH).max(1)
+}
+
+fn status_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<'static>> {
     let Some(s) = status else {
         return vec![Line::from("disconnected")];
     };
     let channels = s.protocol().has_channels();
-    let mut link = vec![Span::styled(
-        state_name(s),
-        Style::new().fg(link_color(link_health(s))),
-    )];
-    if s.signal_shown() {
-        if let Some(dbm) = s.last_rssi {
+    let (state, health) = match device.and_then(|d| s.slot(d.slot)) {
+        Some(slot) => (slot_state(s, slot), slot_health(s, slot)),
+        None => (state_name(s), link_health(s)),
+    };
+    let mut link = vec![Span::styled(state, Style::new().fg(link_color(health)))];
+    if let Some(d) = device
+        && s.signal_shown(d)
+    {
+        if let Some(dbm) = d.signal {
             link.extend([
                 Span::raw(SEPARATOR),
                 Span::styled(format!("{dbm} dBm"), Style::new().fg(signal_color(dbm))),
@@ -949,7 +1039,7 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
         }
         link.push(Span::raw(format!(
             "{SEPARATOR}{}",
-            last_packet(s.last_rx_age_ms)
+            last_packet(d.last_packet_ms)
         )));
     }
     let mut dongle = vec![Span::raw(format!(
@@ -972,16 +1062,36 @@ fn status_lines(status: Option<&Status>) -> Vec<Line<'static>> {
     rows
 }
 
-fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Session<T>>) -> usize {
+/// `named` puts the slot's device in the title.
+fn draw_history(
+    f: &mut Frame,
+    area: Rect,
+    history: Option<&History>,
+    slot: Option<&SlotHistory>,
+    named: bool,
+) -> usize {
+    let mut title = legend(
+        "signal dBm",
+        "━ ",
+        SIGNAL_LINES
+            .iter()
+            .rev()
+            .map(|&(name, color, _)| (name, color)),
+    );
+    if named && let Some((history, slot)) = history.zip(slot) {
+        let d = &slot.device;
+        let kind = history
+            .status
+            .slot(d.slot)
+            .map_or("device", |k| k.kind.name());
+        let device = d
+            .name
+            .as_ref()
+            .map_or(kind.to_string(), |name| format!("{kind} {name}"));
+        title.spans.insert(0, Span::raw(format!("{device} · ")));
+    }
     let block = Block::bordered()
-        .title(legend(
-            "signal dBm",
-            "━ ",
-            SIGNAL_LINES
-                .iter()
-                .rev()
-                .map(|&(name, color, _)| (name, color)),
-        ))
+        .title(title)
         .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -991,23 +1101,20 @@ fn draw_history<T: Transport>(f: &mut Frame, area: Rect, session: Option<&Sessio
         Constraint::Fill(1),
     ])
     .areas(inner);
-    let kept: Vec<&Strip> = strips(session.map(Session::protocol)).collect();
+    let kept: Vec<&Strip> = strips(history.map(|h| h.status.protocol())).collect();
     let rows = Layout::vertical(panel_rows(kept.len()));
     let [dbm_labels, strip_labels, _] = rows.areas(gutter);
     let [chart_axis, _, _] = rows.areas(axis_line);
     let [chart, strips, axis] = rows.areas(plot);
 
     let width = usize::from(plot.width);
-    let (shown, boot): (&[(u32, Minute)], _) = match session {
-        Some(session) => {
-            let minutes = &session.history.minutes;
-            let end = minutes.len() - session.history.scrolled(width);
-            (
-                &minutes[end.saturating_sub(width)..end],
-                Some(session.history.boot),
-            )
+    let (shown, boot): (&[(u32, Minute)], _) = match (history, slot) {
+        (Some(history), Some(slot)) => {
+            let minutes = &slot.minutes;
+            let end = minutes.len().saturating_sub(history.scrolled(width));
+            (&minutes[end.saturating_sub(width)..end], Some(history.boot))
         }
-        None => (&[], None),
+        _ => (&[], None),
     };
 
     let runs: Vec<_> = SIGNAL_LINES
@@ -1188,12 +1295,10 @@ fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn draw_keyboards(f: &mut Frame, area: Rect, stored: &[StoredKeyboard]) {
-    let block = Block::bordered().title("stored keyboards; a keyboard's number forgets it");
-    f.render_widget(
-        Paragraph::new(keyboard_lines(stored).join("\n")).block(block),
-        area,
-    );
+fn draw_devices(f: &mut Frame, area: Rect, history: &History) {
+    let block = Block::bordered().title("stored devices; a device's number forgets it");
+    let lines = device_lines(&history.devices, history.status.protocol());
+    f.render_widget(Paragraph::new(lines.join("\n")).block(block), area);
 }
 
 fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
@@ -1222,7 +1327,7 @@ fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
             ListItem::new(format!(
                 "{}  {}",
                 at.format(CLOCK),
-                describe_event(e, &history.status.link, &history.keyboards)
+                describe_event(e, &history.status, &history.devices)
             ))
         })
         .collect();
@@ -1236,9 +1341,9 @@ mod tests {
     use crate::device::tests::{Fake, error_part, parts};
     use crate::format::pairing_open;
     use crate::protocol::REPORT_LEN;
-    use crate::protocol::tests::{nuphy, status_of, status_running};
+    use crate::protocol::tests::{mouse_status, nuphy, status_of, status_running};
     use crate::protocol::{
-        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Protocol, Rssi,
+        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Protocol, Rssi, SlotMinute,
     };
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
@@ -1247,6 +1352,7 @@ mod tests {
         let event = Event {
             time_ms: 0,
             kind: EventKind::LinkLost,
+            slot: Some(0),
             a: 0,
             b: 0,
             c: 0,
@@ -1312,27 +1418,28 @@ mod tests {
 
     fn quiet() -> Minute {
         Minute {
-            packets: 1,
             invalid: 0,
             dropped: 0,
             channel_changes: 0,
-            link_losses: Some(0),
             usb_retries: 0,
-            gaps: Some(0),
-            rssi: None,
             noise: None,
+            device: SlotMinute {
+                packets: 1,
+                gaps: Some(0),
+                link_losses: Some(0),
+                rssi: None,
+            },
         }
     }
 
     fn with_signal(dbm: i8) -> Minute {
-        Minute {
-            rssi: Some(Rssi {
-                min: dbm,
-                avg: dbm,
-                max: dbm,
-            }),
-            ..quiet()
-        }
+        let mut m = quiet();
+        m.device.rssi = Some(Rssi {
+            min: dbm,
+            avg: dbm,
+            max: dbm,
+        });
+        m
     }
 
     fn boot() -> DateTime<Local> {
@@ -1360,7 +1467,12 @@ mod tests {
     fn every_counter_strip_plots_a_counter_a_minute_holds() {
         for strip in &STRIPS {
             if let Source::Counter(counter) = strip.source {
-                assert!(quiet().get(counter).is_some(), "{}", strip.name);
+                let m = quiet();
+                assert!(
+                    m.get(counter).or(m.device.get(counter)).is_some(),
+                    "{}",
+                    strip.name
+                );
             }
         }
     }
@@ -1402,8 +1514,8 @@ mod tests {
             Some(protocol) => {
                 let mut app = app_with(status_of(protocol));
                 let h = history(&mut app);
-                h.minutes = (0..10).map(|i| (i, quiet())).collect();
-                h.minutes[4].1 = marked;
+                h.slots[0].minutes = (0..10).map(|i| (i, quiet())).collect();
+                h.slots[0].minutes[4].1 = marked;
                 app
             }
             None => App::new(None),
@@ -1411,7 +1523,14 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(60, height)).unwrap();
         terminal
             .draw(|f| {
-                draw_history(f, f.area(), app.session_mut().map(|s| &*s));
+                let history = app.session_mut().map(|s| &s.history);
+                draw_history(
+                    f,
+                    f.area(),
+                    history,
+                    history.and_then(|h| h.slots.first()),
+                    false,
+                );
             })
             .unwrap();
         screen(&terminal)
@@ -1536,7 +1655,7 @@ mod tests {
             ),
             status_of(Protocol::Nuphy),
         );
-        history(&mut app).minutes = vec![(0, quiet())];
+        history(&mut app).slots[0].minutes = vec![(0, quiet())];
         let status = session(&mut app).device.status();
         app.refresh(status);
         assert_eq!(
@@ -1544,14 +1663,14 @@ mod tests {
             "the dongle refused Status: the radio failed"
         );
         assert!(app.session_mut().is_some());
-        assert_eq!(history(&mut app).minutes.len(), 1);
+        assert_eq!(history(&mut app).slots[0].minutes.len(), 1);
     }
 
     #[test]
     fn a_unifying_dongle_fetches_its_history() {
         let h = fetched(dongle_in(Protocol::Unifying, 1, 200 * 60_000, 130, 0));
         assert_eq!(h.status.protocol(), Protocol::Unifying);
-        assert_eq!(h.minutes.len(), 130);
+        assert_eq!(h.slots[0].minutes.len(), 130);
     }
 
     #[test]
@@ -1607,7 +1726,7 @@ mod tests {
         let mut app = app_with(status_of(Protocol::Bluetooth));
         let hints = [
             "a pair",
-            "k keyboards",
+            "d devices",
             "p protocol",
             "r reboot",
             "b bootloader",
@@ -1628,14 +1747,14 @@ mod tests {
     fn bluetooth_dongle_forgetting_into(
         sent: std::rc::Rc<std::cell::Cell<Option<[u8; 7]>>>,
     ) -> App<Fake> {
-        let list = crate::protocol::tests::fixture("keyboards.hex");
+        let list = crate::protocol::tests::fixture("devices.hex");
         let mut app = app_on(
             Device::new(
                 Fake::new(move |req| {
                     if req[0] == Command::Forget as u8 {
                         sent.set(Some(req[6..13].try_into().unwrap()));
                     }
-                    let payload: &[u8] = if req[0] == Command::Keyboards as u8 {
+                    let payload: &[u8] = if req[0] == Command::Devices as u8 {
                         &list
                     } else {
                         &[]
@@ -1651,16 +1770,18 @@ mod tests {
     }
 
     #[test]
-    fn the_keyboards_pane_forgets_the_keyboard_at_the_pressed_number() {
+    fn the_devices_pane_lists_each_kind_and_forgets_the_device_at_the_pressed_number() {
         let sent = std::rc::Rc::new(std::cell::Cell::new(None));
         let mut app = bluetooth_dongle_forgetting_into(sent.clone());
         press(&mut app, 'k');
+        assert!(matches!(session(&mut app).pane, Pane::History));
+        press(&mut app, 'd');
         let text = screen(&drawn(&mut app)).join("\n");
-        assert!(text.contains("1  MX Keys"), "{text}");
-        assert!(text.contains("2  NuPhy Air75 V2-1"), "{text}");
+        assert!(text.contains("1  keyboard  MX Keys"), "{text}");
+        assert!(text.contains("2  mouse     MX Master 3S"), "{text}");
         press(&mut app, '2');
         assert!(
-            footer(&mut app).starts_with("Forget NuPhy Air75 V2-1 (D6:7D:3C:4B:A8:24)?"),
+            footer(&mut app).starts_with("Forget MX Master 3S (C8:F2:E0:11:3C:5A)?"),
             "{}",
             footer(&mut app)
         );
@@ -1668,8 +1789,206 @@ mod tests {
             panic!("y should answer the forget question");
         };
         session(&mut app).answer(prompt);
-        assert_eq!(sent.get(), Some([1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6]));
+        assert_eq!(sent.get(), Some([1, 0x5a, 0x3c, 0x11, 0xe0, 0xf2, 0xc8]));
         assert_eq!(footer(&mut app), "forgotten");
+    }
+
+    fn drawn_at<T: Transport>(app: &mut App<T>, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| app.draw(f)).unwrap();
+        screen(&terminal)
+    }
+
+    fn footer_at<T: Transport>(app: &App<T>, width: u16) -> String {
+        app.connection.view(usize::from(width)).1.join("\n")
+    }
+
+    /// A Bluetooth dongle with the MX Keys stored and the MX Master 3S connected.
+    fn keyboard_and_mouse() -> App<Fake> {
+        let mouse = mouse_status();
+        let mut s = mouse.clone();
+        s.device = SlotStatus {
+            slot: 0,
+            name: Some("MX Keys".into()),
+            signal: None,
+            last_packet_ms: None,
+            packets: 10,
+            gaps: None,
+            link_losses: None,
+        };
+        let mut app = app_with(s);
+        history(&mut app).slots.push(SlotHistory {
+            device: mouse.device,
+            minutes: Vec::new(),
+        });
+        app
+    }
+
+    const KEYBOARD_TITLE: &str = "SpareDongle · Bluetooth · MX Keys";
+    const MOUSE_TITLE: &str = "SpareDongle · Bluetooth · MX Master 3S";
+    const CHART_ROW: usize = STATUS_ROWS as usize + 2;
+
+    fn signal_legend() -> String {
+        legend(
+            "signal dBm",
+            "━ ",
+            SIGNAL_LINES
+                .iter()
+                .rev()
+                .map(|&(name, color, _)| (name, color)),
+        )
+        .to_string()
+    }
+
+    /// The narrowest view that draws its one slot's status box and chart titles uncut.
+    fn narrowest_whole(mut app: App<Fake>) -> u16 {
+        let h = history(&mut app);
+        let device = &h.slots[0].device;
+        let title = panel_title(Some(&h.status), Some(device));
+        let lines: Vec<String> = status_lines(Some(&h.status), Some(device))
+            .iter()
+            .map(Line::to_string)
+            .collect();
+        (20..=200)
+            .find(|&width| {
+                let rows = drawn_at(&mut app, width, 24);
+                rows[0].contains(&title)
+                    && lines
+                        .iter()
+                        .enumerate()
+                        .all(|(i, line)| inside_box(&rows[1 + i]) == line)
+                    && rows[CHART_ROW].contains(&signal_legend())
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_slot_panel_is_as_wide_as_the_view_needs_for_one_slot() {
+        let mouse = app_with(mouse_status());
+        let needed = [
+            app_with(status_of(Protocol::Nuphy)),
+            app_with(status_of(Protocol::Unifying)),
+            app_with(status_of(Protocol::Bluetooth)),
+            mouse,
+        ]
+        .into_iter()
+        .map(narrowest_whole)
+        .max();
+        assert_eq!(Some(PANEL_MIN_WIDTH), needed);
+    }
+
+    #[test]
+    fn slots_sit_side_by_side_in_slot_order_when_the_width_fits_them() {
+        let mut app = keyboard_and_mouse();
+        let width = 2 * PANEL_MIN_WIDTH;
+        let rows = drawn_at(&mut app, width, 30);
+        let keyboard = rows[0].find(KEYBOARD_TITLE);
+        let mouse = rows[0].find(MOUSE_TITLE);
+        assert!(keyboard.zip(mouse).is_some_and(|(k, m)| k < m), "{rows:#?}");
+        assert_eq!(
+            rows[CHART_ROW].matches("┌signal dBm").count(),
+            2,
+            "{rows:#?}"
+        );
+        assert_eq!(rows.iter().filter(|r| r.contains("┌events")).count(), 1);
+        assert!(!footer_at(&app, width).contains("o device"));
+    }
+
+    #[test]
+    fn each_slot_panel_shows_its_own_device_state_and_signal() {
+        let mut app = keyboard_and_mouse();
+        let rows = drawn_at(&mut app, 2 * PANEL_MIN_WIDTH, 30);
+        let (keyboard, mouse) = rows[1].split_at(rows[1].find("││").unwrap() + 3);
+        assert_eq!(inside_box(keyboard), "link      not connected");
+        assert_eq!(
+            inside_box(mouse),
+            "link      connected   -60 dBm   last packet 250 ms ago"
+        );
+    }
+
+    #[test]
+    fn a_view_too_narrow_for_every_slot_shows_one_and_o_cycles_through_them() {
+        let mut app = keyboard_and_mouse();
+        let width = 2 * PANEL_MIN_WIDTH - 1;
+        let rows = drawn_at(&mut app, width, 30);
+        assert!(rows[0].contains(KEYBOARD_TITLE), "{rows:#?}");
+        assert!(!rows[0].contains(MOUSE_TITLE), "{rows:#?}");
+        assert!(
+            rows[CHART_ROW].contains("keyboard MX Keys · signal dBm"),
+            "{rows:#?}"
+        );
+        assert!(footer_at(&app, width).contains("o device"));
+        press(&mut app, 'o');
+        let rows = drawn_at(&mut app, width, 30);
+        assert!(rows[0].contains(MOUSE_TITLE), "{rows:#?}");
+        assert!(
+            rows[CHART_ROW].contains("mouse MX Master 3S · signal dBm"),
+            "{rows:#?}"
+        );
+        press(&mut app, 'o');
+        let rows = drawn_at(&mut app, width, 30);
+        assert!(rows[0].contains(KEYBOARD_TITLE), "{rows:#?}");
+    }
+
+    #[test]
+    fn a_view_of_one_slot_has_no_o() {
+        let mut app = app_with(status_of(Protocol::Bluetooth));
+        let rows = drawn_at(&mut app, 80, 24);
+        assert!(!footer_at(&app, 80).contains("o device"));
+        assert!(rows[CHART_ROW].starts_with("┌signal dBm"), "{rows:#?}");
+        press(&mut app, 'o');
+        assert_eq!(drawn_at(&mut app, 80, 24), rows);
+    }
+
+    /// A Bluetooth dongle answering for whichever slot is asked, with `stored` its slot table and
+    /// each slot's minutes holding `7 + 2 * slot` packets.
+    fn bluetooth_dongle(stored: [bool; 2]) -> Device<Fake> {
+        Device::new(
+            Fake::new(move |req| {
+                let payload = match req[0] {
+                    1 => {
+                        let mut p = crate::protocol::tests::fixture("status-slot1.hex");
+                        let slot_at = p.len() - 42;
+                        p[slot_at] = req[6];
+                        p[slot_at - 3] = u8::from(stored[0]);
+                        p[slot_at - 1] = u8::from(stored[1]);
+                        p
+                    }
+                    2 => {
+                        let from = u32::from_le_bytes(req[2..6].try_into().unwrap()).max(60);
+                        let n = 1500u32.saturating_sub(from).min(40) as u8;
+                        let mut p = from.to_le_bytes().to_vec();
+                        p.push(n);
+                        for _ in 0..n {
+                            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 7 + 2 * req[6], 0, 0, 0, 0, 0, 0]);
+                        }
+                        p
+                    }
+                    13 => vec![0],
+                    _ => vec![0, 0, 0, 0, 0],
+                };
+                parts(req[0], req[1], &payload)
+            }),
+            0,
+        )
+    }
+
+    fn slots_fetched(stored: [bool; 2]) -> Vec<(u8, Option<u16>)> {
+        fetched(bluetooth_dongle(stored))
+            .slots
+            .iter()
+            .map(|h| {
+                let packets = h.minutes.first().map(|(_, m)| m.device.packets);
+                (h.device.slot, packets)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_refresh_fetches_each_shown_slots_status_and_minutes() {
+        assert_eq!(slots_fetched([true, true]), [(0, Some(7)), (1, Some(9))]);
+        assert_eq!(slots_fetched([false, true]), [(1, Some(9))]);
+        assert_eq!(slots_fetched([true, false]), [(0, Some(7))]);
     }
 
     #[test]
@@ -1678,6 +1997,7 @@ mod tests {
         let connected = Event {
             time_ms: 0,
             kind: EventKind::BluetoothConnected,
+            slot: Some(0),
             a: 0xeb,
             b: 0xbb,
             c: 0,
@@ -1802,7 +2122,7 @@ mod tests {
         assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
         assert_eq!(
             footer(&mut app),
-            "pairing is open for 30 s; put the keyboard in Bluetooth pairing mode"
+            "pairing is open for 30 s; put the keyboard or mouse in Bluetooth pairing mode"
         );
         press(&mut app, 'a');
         press(&mut app, 'x');
@@ -1862,7 +2182,7 @@ mod tests {
 
     #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
-        let dongle_row = |s: &Status| status_lines(Some(s))[2].to_string();
+        let dongle_row = |s: &Status| status_lines(Some(s), Some(&s.device))[2].to_string();
         assert!(dongle_row(&status_of(Protocol::Unifying)).ends_with("   pairing open"));
         let mut s = status_of(Protocol::Nuphy);
         assert!(dongle_row(&s).ends_with("   pairing open"));
@@ -2041,10 +2361,8 @@ mod tests {
 
     #[test]
     fn a_minute_sits_in_one_column_across_the_chart_and_the_strips() {
-        let marked = Minute {
-            gaps: Some(3),
-            ..with_signal(-60)
-        };
+        let mut marked = with_signal(-60);
+        marked.device.gaps = Some(3);
         let rows = panel_with(marked, history_min_rows(Some(Protocol::Nuphy)));
         let gaps = rows
             .iter()
@@ -2090,10 +2408,8 @@ mod tests {
 
     #[test]
     fn minutes_without_packets_split_the_signal_into_runs() {
-        let without = Minute {
-            packets: 0,
-            ..quiet()
-        };
+        let mut without = quiet();
+        without.device.packets = 0;
         let shown = [
             (10, with_signal(-60)),
             (11, with_signal(-61)),
@@ -2101,7 +2417,7 @@ mod tests {
             (13, with_signal(-70)),
         ];
         assert_eq!(
-            dbm_runs(&shown, |m| m.rssi.map(|r| r.avg)),
+            dbm_runs(&shown, |m| m.device.rssi.map(|r| r.avg)),
             vec![vec![(0.0, -60.0), (1.0, -61.0)], vec![(3.0, -70.0)]]
         );
     }
@@ -2126,7 +2442,7 @@ mod tests {
         let mut p = first.to_le_bytes().to_vec();
         p.push(count);
         for _ in 0..count {
-            p.extend([boot, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, boot, 0, 0, 0, 0, 0, 0]);
         }
         p
     }
@@ -2185,7 +2501,7 @@ mod tests {
         let s = dev.status().unwrap();
         assert!(h.refresh(&mut dev, s).is_err());
         assert_eq!(h.status.uptime_ms, 201 * 60_000);
-        assert_eq!(h.minutes.len(), 130);
+        assert_eq!(h.slots[0].minutes.len(), 130);
     }
 
     fn app_watching(watch: Vec<u8>) -> (App<Fake>, std::rc::Rc<std::cell::Cell<usize>>) {
@@ -2338,7 +2654,7 @@ mod tests {
     fn the_arrows_scroll_the_chart_only_while_it_is_drawn() {
         let mut app = app_with(status_of(Protocol::Nuphy));
         let s = session(&mut app);
-        s.history.minutes = (0..130).map(|i| (i, quiet())).collect();
+        s.history.slots[0].minutes = (0..130).map(|i| (i, quiet())).collect();
         let hidden = Drawn::default();
         s.handle(KeyCode::Left, hidden);
         assert_eq!(s.history.minutes_back, 0);
@@ -2363,14 +2679,14 @@ mod tests {
     #[test]
     fn the_history_scroll_stops_where_the_chart_is_still_full() {
         let mut h = History::new(status_of(Protocol::Nuphy));
-        h.minutes = (0..130).map(|i| (i, quiet())).collect();
+        h.slots[0].minutes = (0..130).map(|i| (i, quiet())).collect();
         for _ in 0..20 {
             h.scroll_older(50);
         }
         assert_eq!(h.minutes_back, 80);
         h.scroll_newer(50);
         assert_eq!(h.minutes_back, 70);
-        h.minutes.truncate(60);
+        h.slots[0].minutes.truncate(60);
         h.scroll_newer(50);
         assert_eq!(h.minutes_back, 0);
     }
@@ -2378,16 +2694,19 @@ mod tests {
     #[test]
     fn fetches_all_held_minutes_page_by_page() {
         let h = fetched(dongle(1, 200 * 60_000, 130, 0));
-        assert_eq!(h.minutes.len(), 130);
-        assert_eq!(h.minutes.first().map(|m| m.0), Some(0));
-        assert_eq!(h.minutes.last().map(|m| m.0), Some(129));
+        assert_eq!(h.slots[0].minutes.len(), 130);
+        assert_eq!(h.slots[0].minutes.first().map(|m| m.0), Some(0));
+        assert_eq!(h.slots[0].minutes.last().map(|m| m.0), Some(129));
     }
 
     #[test]
     fn a_clear_drops_minutes_before_the_new_oldest() {
         let mut h = fetched(dongle(1, 200 * 60_000, 130, 0));
         catch_up(&mut h, dongle(1, 201 * 60_000, 131, 130)).unwrap();
-        assert_eq!(h.minutes.iter().map(|m| m.0).collect::<Vec<_>>(), vec![130]);
+        assert_eq!(
+            h.slots[0].minutes.iter().map(|m| m.0).collect::<Vec<_>>(),
+            vec![130]
+        );
     }
 
     #[test]
@@ -2415,9 +2734,10 @@ mod tests {
         assert_eq!(h.events_top, None);
         assert_eq!(h.minutes_back, 0);
         assert_eq!(
-            h.minutes
+            h.slots[0]
+                .minutes
                 .iter()
-                .map(|m| (m.0, m.1.packets))
+                .map(|m| (m.0, m.1.device.packets))
                 .collect::<Vec<_>>(),
             vec![(0, 2), (1, 2)]
         );
@@ -2462,10 +2782,10 @@ mod tests {
     #[test]
     fn a_bluetooth_status_box_shows_no_signal_or_channels() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.last_rssi = None;
+        s.device.signal = None;
         let rows = screen(&status_box(&s));
         let rows = &rows[..usize::from(STATUS_ROWS) + 2];
-        assert!(rows.iter().any(|r| r.contains("no keyboard")));
+        assert!(rows.iter().any(|r| r.contains("not connected")));
         assert!(!rows.iter().any(|r| r.contains("dBm")));
         assert!(!rows.iter().any(|r| r.contains("channels")));
     }
@@ -2473,9 +2793,10 @@ mod tests {
     #[test]
     fn a_connected_bluetooth_status_box_shows_the_signal_and_last_packet() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.link = Link::Bluetooth(BluetoothLink::Connected { name: None });
-        s.last_rssi = Some(-58);
-        s.last_rx_age_ms = Some(400);
+        s.link = Link::Bluetooth(BluetoothLink::Connected);
+        s.slots[0].connected = true;
+        s.device.signal = Some(-58);
+        s.device.last_packet_ms = Some(400);
         let rows = screen(&status_box(&s));
         assert_eq!(
             inside_box(&rows[1]),
@@ -2487,8 +2808,8 @@ mod tests {
     #[test]
     fn a_status_box_with_no_reading_shows_no_signal_level() {
         let mut s = status_of(Protocol::Nuphy);
-        s.last_rssi = None;
-        s.last_rx_age_ms = None;
+        s.device.signal = None;
+        s.device.last_packet_ms = None;
         let rows = screen(&status_box(&s));
         assert_eq!(
             inside_box(&rows[1]),
@@ -2514,7 +2835,7 @@ mod tests {
     #[test]
     fn the_title_ends_at_the_protocol_before_the_keyboard_sent_its_name() {
         let mut unnamed = status_of(Protocol::Nuphy);
-        nuphy(&mut unnamed).keyboard_name = None;
+        unnamed.device.name = None;
         let rows = screen(&status_box(&unnamed));
         assert!(rows[0].starts_with("┌SpareDongle · NuPhy─"), "{}", rows[0]);
     }
@@ -2566,7 +2887,7 @@ mod tests {
         assert_eq!(cell_at(&terminal, 1, "connected").fg, Color::Green);
         assert_eq!(cell_at(&terminal, 1, "-71 dBm").fg, Color::Yellow);
         let mut weak = status_of(Protocol::Nuphy);
-        weak.last_rssi = Some(-80);
+        weak.device.signal = Some(-80);
         assert_eq!(cell_at(&status_box(&weak), 1, "-80 dBm").fg, Color::Red);
         assert_eq!(cell_at(&terminal, 3, "pairing open").fg, Color::Cyan);
         let mut s = status_of(Protocol::Unifying);

@@ -35,6 +35,30 @@ static void test_request_carries_the_bytes_after_arg(void)
 	CHECK_MEM(&req.data[2], none, DIAG_REQUEST_DATA_LEN - 2);
 }
 
+static void test_a_request_fixture_carries_the_slot_after_arg(void)
+{
+	uint8_t buf[DIAG_REPORT_LEN] = {0};
+	struct diag_request req;
+
+	CHECK_EQ(load_fixture("request.hex", buf, sizeof(buf)), DIAG_REQUEST_LEN + 1);
+	CHECK(diag_parse_request(buf, sizeof(buf), &req));
+	CHECK_EQ(req.command, DIAG_HISTORY);
+	CHECK_EQ(req.seq, 9);
+	CHECK_EQ(req.arg, 1440);
+	CHECK_EQ(req.data[0], 1);
+}
+
+static void check_status_fixture(const char *name, const struct diag_status *s)
+{
+	uint8_t want[DIAG_PAYLOAD_MAX];
+	uint8_t got[DIAG_PAYLOAD_MAX];
+	size_t want_len = load_fixture(name, want, sizeof(want));
+	size_t got_len = diag_encode_status(got, s);
+
+	CHECK_EQ(got_len, want_len);
+	CHECK_MEM(got, want, want_len);
+}
+
 static void test_status_matches_fixture(void)
 {
 	const struct diag_status s = {
@@ -46,16 +70,11 @@ static void test_status_matches_fixture(void)
 		.own = {26, 30, 34},
 		.forced = {62, 52, 44},
 		.keyboard_id = {0x70, 0x15, 0xa3, 0x29},
-		.last_rssi = -71,
-		.last_rx_age_ms = 12,
 		.usb_live = true,
-		.totals = {.packets = {1000},
-			   .invalid = 1,
-			   .dropped = 2,
-			   .channel_changes = 3,
-			   .link_losses = 4,
-			   .usb_retries = 5,
-			   .gaps = 8},
+		.invalid = 1,
+		.dropped = 2,
+		.channel_changes = 3,
+		.usb_retries = 5,
 		.merges = 6,
 		.surveys = 7,
 		.minute_next = 1500,
@@ -66,15 +85,47 @@ static void test_status_matches_fixture(void)
 		.pairing_open = true,
 		.keyboard_serial = {0xb8, 0xbc, 0xd5, 0xb3},
 		.keyboard_type = 1,
-		.keyboard_name = "MX Keys",
+		.slot_count = 1,
+		.slots = {{.kind = DEVICE_KEYBOARD, .stored = true, .ready = true}},
+		.slot = 0,
+		.last_rssi = -71,
+		.last_rx_age_ms = 12,
+		.packets = 1000,
+		.gaps = 8,
+		.link_losses = 4,
+		.name = "MX Keys",
 	};
-	uint8_t want[DIAG_PAYLOAD_MAX];
-	uint8_t got[DIAG_PAYLOAD_MAX];
-	size_t want_len = load_fixture("status.hex", want, sizeof(want));
-	size_t got_len = diag_encode_status(got, &s);
 
-	CHECK_EQ(got_len, want_len);
-	CHECK_MEM(got, want, want_len);
+	check_status_fixture("status.hex", &s);
+}
+
+static void test_a_mouse_slot_status_matches_fixture(void)
+{
+	const struct diag_status s = {
+		.firmware_version = {1, 2, 3},
+		.uptime_ms = 0x0102030405ull,
+		.reset_cause = 1,
+		.link_state = 1,
+		.usb_live = true,
+		.dropped = 2,
+		.usb_retries = 5,
+		.merges = 6,
+		.minute_next = 1500,
+		.minute_oldest = 60,
+		.events_total = 600,
+		.events_oldest = 88,
+		.protocol = PROTOCOL_BLUETOOTH,
+		.slot_count = 2,
+		.slots = {{.kind = DEVICE_KEYBOARD, .stored = true},
+			  {.kind = DEVICE_MOUSE, .stored = true, .ready = true}},
+		.slot = 1,
+		.last_rssi = -60,
+		.last_rx_age_ms = 250,
+		.packets = 2000,
+		.name = "MX Master 3S",
+	};
+
+	check_status_fixture("status-slot1.hex", &s);
 }
 
 static void test_a_76_byte_payload_goes_out_in_two_parts(void)
@@ -135,17 +186,18 @@ static void test_a_wrong_protocol_error_carries_the_active_protocol(void)
 static void test_minutes_match_fixture(void)
 {
 	const struct history_minute m[] = {
-		{.packets = {300},
+		{.packets = {7, 300},
 		 .usb_retries = 1,
-		 .gaps = 3,
-		 .rssi = {{.min = -80, .avg = -70, .max = -60}},
+		 .gaps = {9, 3},
+		 .link_losses = {9, 0},
+		 .rssi = {{.min = -1, .avg = -1, .max = -1}, {.min = -80, .avg = -70, .max = -60}},
 		 .noise = {.peak = -41, .busy = 102, .strong = 5}},
-		{.channel_changes = 12, .link_losses = 1},
+		{.channel_changes = 12, .link_losses = {0, 1}},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];
 	size_t want_len = load_fixture("minutes.hex", want, sizeof(want));
-	size_t got_len = diag_encode_minutes(got, 1440, m, 2);
+	size_t got_len = diag_encode_minutes(got, 1440, m, 2, 1);
 
 	CHECK_EQ(got_len, want_len);
 	CHECK_MEM(got, want, want_len);
@@ -154,9 +206,10 @@ static void test_minutes_match_fixture(void)
 static void test_events_match_fixture(void)
 {
 	const struct history_event e[] = {
-		{.time_ms = 5000, .type = HISTORY_LINK_LOST, .a = (uint8_t)-71, .value = 1200,
-		 .noise = {.peak = -50, .busy = 2500, .strong = 300}},
-		{.time_ms = 7000, .type = HISTORY_PAIRED, .a = 26, .b = 30, .c = 34},
+		{.time_ms = 5000, .type = HISTORY_LINK_LOST, .slot = 0, .a = (uint8_t)-71,
+		 .value = 1200, .noise = {.peak = -50, .busy = 2500, .strong = 300}},
+		{.time_ms = 7000, .type = HISTORY_SURVEY, .slot = DEVICE_NO_SLOT, .a = 26, .b = 30,
+		 .c = 34},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];
@@ -173,7 +226,7 @@ static void test_a_full_page_fits_the_payload_buffer(void)
 	static const struct history_event e[DIAG_EVENTS_PER_PAGE];
 	uint8_t out[2 * DIAG_PAYLOAD_MAX];
 
-	CHECK(diag_encode_minutes(out, 0, m, DIAG_MINUTES_PER_PAGE) <= DIAG_PAYLOAD_MAX);
+	CHECK(diag_encode_minutes(out, 0, m, DIAG_MINUTES_PER_PAGE, 0) <= DIAG_PAYLOAD_MAX);
 	CHECK(diag_encode_events(out, 0, e, DIAG_EVENTS_PER_PAGE) <= DIAG_PAYLOAD_MAX);
 }
 
@@ -291,7 +344,7 @@ static void test_command_numbers_match_fixture(void)
 	const uint8_t got[] = {DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_NOISE,
 			       DIAG_REBOOT, DIAG_BOOTLOADER, DIAG_CLEAR, DIAG_FORCE_CHANNELS,
 			       DIAG_PAIR, DIAG_PROTOCOL, DIAG_MOVE, DIAG_WATCH,
-			       DIAG_KEYBOARDS, DIAG_FORGET};
+			       DIAG_DEVICES, DIAG_FORGET};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("commands.hex", want, sizeof(want));
 
@@ -321,7 +374,7 @@ static void test_error_codes_match_fixture(void)
 {
 	const uint8_t got[] = {DIAG_ERR_UNKNOWN_COMMAND, DIAG_ERR_RADIO, DIAG_ERR_BAD_CHANNELS,
 			       DIAG_ERR_STORE, DIAG_ERR_WRONG_PROTOCOL, DIAG_ERR_NOT_MOVABLE,
-			       DIAG_ERR_KEY_HELD, DIAG_ERR_LIST_FULL, DIAG_ERR_NO_SUCH_KEYBOARD};
+			       DIAG_ERR_KEY_HELD, DIAG_ERR_LIST_FULL, DIAG_ERR_NO_SUCH_DEVICE};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("error-codes.hex", want, sizeof(want));
 
@@ -351,46 +404,46 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 	CHECK(!diag_channels_arg(0, channels));
 }
 
-static void test_keyboards_match_fixture(void)
+static void test_devices_match_fixture(void)
 {
 	struct btlist list = {.count = 2};
-	uint8_t got[DIAG_PAYLOAD_MAX];
-	uint8_t want[DIAG_PAYLOAD_MAX];
-	size_t want_len = load_fixture("keyboards.hex", want, sizeof(want));
+	uint8_t got[DIAG_DEVICES_MAX];
+	uint8_t want[DIAG_DEVICES_MAX];
+	size_t want_len = load_fixture("devices.hex", want, sizeof(want));
 
 	memcpy(list.entries[0].addr, (uint8_t[]){1, 0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb}, 7);
 	memcpy(list.entries[0].name, "MX Keys", 7);
-	memcpy(list.entries[1].addr, (uint8_t[]){1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6}, 7);
-	memcpy(list.entries[1].name, "NuPhy Air75 V2-1", 16);
+	memcpy(list.entries[1].addr, (uint8_t[]){1, 0x5a, 0x3c, 0x11, 0xe0, 0xf2, 0xc8}, 7);
+	memcpy(list.entries[1].name, "MX Master 3S", 12);
+	list.entries[1].kind = DEVICE_MOUSE;
 	list.entries[1].no_passkey = true;
-	CHECK_EQ(diag_encode_keyboards(got, &list, (const uint8_t *const[]){list.entries[0].addr, NULL}),
+	CHECK_EQ(diag_encode_devices(got, &list,
+				     (const uint8_t *const[]){list.entries[0].addr,
+							      list.entries[1].addr}),
 		 want_len);
 	CHECK_MEM(got, want, want_len);
-	CHECK_EQ(diag_encode_keyboards(got, &list, (const uint8_t *const[]){NULL, NULL}), want_len);
-	CHECK_EQ(got[8], 0);
 }
 
-static void test_a_listed_mouse_is_flagged_and_both_slots_connect(void)
+static void test_a_device_ready_in_no_slot_is_sent_with_none(void)
 {
 	struct btlist list = {0};
 	const uint8_t keyboard[BTPOLICY_ADDR_LEN] = {1, 1};
 	const uint8_t mouse[BTPOLICY_ADDR_LEN] = {1, 2};
-	uint8_t got[DIAG_KEYBOARDS_MAX];
+	uint8_t got[DIAG_DEVICES_MAX];
 
 	btlist_paired(&list, keyboard, DEVICE_KEYBOARD, false);
 	btlist_paired(&list, mouse, DEVICE_MOUSE, true);
-	diag_encode_keyboards(got, &list, (const uint8_t *const[]){keyboard, mouse});
-	CHECK_EQ(got[0], 2);
-	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN],
-		 DIAG_KEYBOARD_MOUSE | DIAG_KEYBOARD_NO_PASSKEY | DIAG_KEYBOARD_CONNECTED);
-	CHECK_EQ(got[1 + DIAG_KEYBOARD_LEN + BTPOLICY_ADDR_LEN], DIAG_KEYBOARD_CONNECTED);
+	CHECK_EQ(diag_encode_devices(got, &list, (const uint8_t *const[]){keyboard, NULL}),
+		 1 + 2 * DIAG_DEVICE_LEN);
+	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN + 2], DEVICE_NO_SLOT);
+	CHECK_EQ(got[1 + DIAG_DEVICE_LEN + BTPOLICY_ADDR_LEN + 2], 0);
 }
 
 static void test_a_protocol_answers_only_its_commands(void)
 {
 	static const uint8_t everywhere[] = {
 		DIAG_STATUS, DIAG_HISTORY, DIAG_EVENTS, DIAG_REBOOT, DIAG_BOOTLOADER,
-		DIAG_CLEAR,  DIAG_PROTOCOL, DIAG_PAIR, 0, 200,
+		DIAG_CLEAR,  DIAG_PROTOCOL, DIAG_PAIR, DIAG_DEVICES, 0, 200,
 	};
 	static const uint8_t not_bluetooth[] = {DIAG_NOISE, DIAG_MOVE, DIAG_WATCH};
 
@@ -404,9 +457,8 @@ static void test_a_protocol_answers_only_its_commands(void)
 		CHECK(diag_command_answered(not_bluetooth[i], PROTOCOL_UNIFYING));
 		CHECK(!diag_command_answered(not_bluetooth[i], PROTOCOL_BLUETOOTH));
 	}
-	CHECK(diag_command_answered(DIAG_KEYBOARDS, PROTOCOL_BLUETOOTH));
 	CHECK(diag_command_answered(DIAG_FORGET, PROTOCOL_BLUETOOTH));
-	CHECK(!diag_command_answered(DIAG_KEYBOARDS, PROTOCOL_NUPHY));
+	CHECK(!diag_command_answered(DIAG_FORGET, PROTOCOL_NUPHY));
 	CHECK(!diag_command_answered(DIAG_FORGET, PROTOCOL_UNIFYING));
 	CHECK(diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_NUPHY));
 	CHECK(!diag_command_answered(DIAG_FORCE_CHANNELS, PROTOCOL_UNIFYING));
@@ -418,7 +470,9 @@ int main(void)
 	RUN(test_keyboard_channel_tables_match_fixtures);
 	RUN(test_request_carries_command_seq_and_arg);
 	RUN(test_request_carries_the_bytes_after_arg);
+	RUN(test_a_request_fixture_carries_the_slot_after_arg);
 	RUN(test_status_matches_fixture);
+	RUN(test_a_mouse_slot_status_matches_fixture);
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);
 	RUN(test_an_empty_payload_is_one_part);
 	RUN(test_error_sets_the_flag_and_code);
@@ -437,8 +491,8 @@ int main(void)
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);
-	RUN(test_keyboards_match_fixture);
-	RUN(test_a_listed_mouse_is_flagged_and_both_slots_connect);
+	RUN(test_devices_match_fixture);
+	RUN(test_a_device_ready_in_no_slot_is_sent_with_none);
 	RUN(test_a_protocol_answers_only_its_commands);
 	return TEST_EXIT();
 }

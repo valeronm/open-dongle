@@ -35,6 +35,9 @@ bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
 bool btlist_remove(struct btlist *l, const uint8_t *addr);
 
 bool btlist_has(const struct btlist *l, const uint8_t *addr);
+bool btlist_has_kind(const struct btlist *l, enum device_kind kind);
+/* The most recently connected entry of the kind, or NULL when none is listed. */
+const struct btlist_entry *btlist_latest(const struct btlist *l, enum device_kind kind);
 /* DEVICE_NO_KIND for an address not in the list. */
 enum device_kind btlist_kind(const struct btlist *l, const uint8_t *addr);
 

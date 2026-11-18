@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- In Bluetooth mode the dongle connects a mouse beside the keyboard, or either alone, and presents
+  it to the PC as a USB mouse.
+- A mouse pairs in any pairing window without a passkey, and a device that pairs replaces the
+  connected one of its kind.
+- The dongle stores up to eight Bluetooth devices.
+- `spare-dongle status`, `history` and the live view report each device separately; the live view
+  shows them side by side when the terminal is wide enough, and otherwise `o` steps through them.
+- Events name the device they are about.
+- `spare-dongle keyboards` is now `spare-dongle devices` and lists each device's kind, and the live
+  view's `k` is now `d`.
+- While a Bluetooth slot is free the dongle scans slowly, so the connected device keeps its full
+  report rate; a keyboard may need a key press to reconnect after the dongle restarts.
+- The LED shows connected while a keyboard or a mouse is connected.
+- The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
+
 ## [0.3.0] - 2026-11-18
 
 - The project is renamed SpareDongle, and its tool `spare-dongle`.

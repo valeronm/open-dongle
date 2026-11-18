@@ -13,8 +13,9 @@
 
 #define TICK_MS 10
 
-_Static_assert(sizeof(((struct diag_status *)0)->keyboard_name) >= UNIFYING_NAME_MAX,
-	       "status name");
+_Static_assert(sizeof(((struct diag_status *)0)->name) >= UNIFYING_NAME_MAX, "status name");
+_Static_assert(BTLIST_NAME_LEN >= UNIFYING_NAME_MAX, "device list name");
+_Static_assert(BTPOLICY_ADDR_LEN >= 2 + UNIFYING_SERIAL_LEN, "device list address");
 _Static_assert(sizeof(((struct diag_status *)0)->keyboard_serial) == UNIFYING_SERIAL_LEN,
 	       "status serial");
 
@@ -58,7 +59,7 @@ static void on_paired(void)
 	unifying_record_of(&session.pairing, record);
 	err = store_save_unifying(record, sizeof(record));
 	printk("pairing saved: %d\n", err);
-	core_log(HISTORY_UNIFYING_PAIRED, session.pairing.device.wpid[0],
+	core_log(HISTORY_UNIFYING_PAIRED, 0, session.pairing.device.wpid[0],
 		 session.pairing.device.wpid[1], session.pairing.device.type, (uint32_t)err);
 }
 
@@ -113,19 +114,19 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 		if (out->invalid) {
 			core_count(CORE_INVALID);
 		} else {
-			core_packet(DEVICE_KEYBOARD);
-			core_rssi(DEVICE_KEYBOARD, item->rssi);
+			core_packet(0);
+			core_rssi(0, item->rssi);
 		}
 	}
 	if (out->heard != UNIFYING_HEARD_NONE) {
-		core_log(HISTORY_LINK_UP, session.channel, (uint8_t)item->rssi,
+		core_log(HISTORY_LINK_UP, 0, session.channel, (uint8_t)item->rssi,
 			 link_up_kind(out->heard), out->down_ms);
 	}
 	if (out->reconnected) {
-		core_log(HISTORY_RECONNECT, out->release_all, 0, 0, 0);
+		core_log(HISTORY_RECONNECT, 0, out->release_all, 0, 0, 0);
 	}
 	if (out->attack_started) {
-		core_log(HISTORY_ATTACK, 0, 0, 0, 0);
+		core_log(HISTORY_ATTACK, 0, 0, 0, 0, 0);
 	}
 	if (out->event == UNIFYING_RX_ANSWERED_1) {
 		sys_rand_get(next_nonce, sizeof(next_nonce));
@@ -145,7 +146,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 		on_paired();
 	}
 	for (size_t i = 0; i < out->reports; i++) {
-		core_submit(DEVICE_KEYBOARD, &out->report[i]);
+		core_submit(0, &out->report[i]);
 	}
 	if (out->release_all) {
 		core_release_keys();
@@ -161,15 +162,15 @@ static void apply_tick(const struct unifying_out *out)
 		queue_leds(out->leds);
 	}
 	if (out->went_silent) {
-		core_log(HISTORY_LINK_LOST, (uint8_t)session.rssi, core_minutes_since_input(DEVICE_KEYBOARD), 0,
-			 out->silent_ms);
+		core_log(HISTORY_LINK_LOST, 0, (uint8_t)session.rssi,
+			 core_minutes_since_input(0), 0, out->silent_ms);
 	}
 	if (out->attempt_expired) {
 		printk("pairing timed out\n");
-		core_log(HISTORY_PAIRING_TIMEOUT, out->expired_step, 0, 0, 0);
+		core_log(HISTORY_PAIRING_TIMEOUT, DEVICE_NO_SLOT, out->expired_step, 0, 0, 0);
 	}
 	if (out->window_closed) {
-		core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
+		core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	}
 	if (out->set_channel) {
 		core_set_channel(out->channel);
@@ -233,10 +234,21 @@ static void show_state(uint64_t now)
 				: by_status[unifying_session_status(&session, now)]);
 }
 
-static void fill_status(struct diag_status *st)
+static void slots(struct diag_slot *out)
+{
+	out[0] = (struct diag_slot){
+		.kind = DEVICE_KEYBOARD,
+		.stored = unifying_has_device(&session.pairing),
+		.ready = unifying_session_status(&session, (uint64_t)k_uptime_get()) ==
+			 UNIFYING_CONNECTED,
+	};
+}
+
+static void fill_status(struct diag_status *st, uint8_t slot)
 {
 	uint64_t now = (uint64_t)k_uptime_get();
 
+	ARG_UNUSED(slot);
 	st->link_state = unifying_session_status(&session, now);
 	st->pairing_open = unifying_pairing_window_open(&session.pairing, now);
 	st->channel = session.channel;
@@ -250,13 +262,37 @@ static void fill_status(struct diag_status *st)
 		memcpy(st->keyboard_id, d->wpid, sizeof(d->wpid));
 		memcpy(st->keyboard_serial, d->serial, sizeof(st->keyboard_serial));
 		st->keyboard_type = d->type;
-		memcpy(st->keyboard_name, d->name, sizeof(d->name));
+		memcpy(st->name, d->name, sizeof(d->name));
 	}
+}
+
+static void send_devices(const struct diag_request *req, uint64_t now)
+{
+	static struct btlist list;
+	static uint8_t payload[DIAG_DEVICES_MAX];
+	const uint8_t *connected[DEVICE_SLOTS] = {0};
+
+	list = (struct btlist){0};
+	if (unifying_has_device(&session.pairing)) {
+		const struct unifying_device *d = &session.pairing.device;
+		struct btlist_entry *e = &list.entries[list.count++];
+
+		memcpy(e->addr, d->wpid, sizeof(d->wpid));
+		memcpy(&e->addr[sizeof(d->wpid)], d->serial, sizeof(d->serial));
+		memcpy(e->name, d->name, sizeof(d->name));
+		if (unifying_session_status(&session, now) == UNIFYING_CONNECTED) {
+			connected[0] = e->addr;
+		}
+	}
+	diag_reply(req, payload, diag_encode_devices(payload, &list, connected), DIAG_AFTER_NONE);
 }
 
 static void serve_diag(const struct diag_request *req, uint64_t now)
 {
 	switch (req->command) {
+	case DIAG_DEVICES:
+		send_devices(req, now);
+		break;
 	case DIAG_PAIR:
 		unifying_session_open_pairing(&session, PAIRWIN_REQUEST, now);
 		printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
@@ -272,6 +308,8 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
+	.slot_count = 1,
+	.slots = slots,
 	.fill_status = fill_status,
 	.movable = movable,
 	.candidates = unifying_session_channels,

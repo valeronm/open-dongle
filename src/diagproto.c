@@ -18,7 +18,6 @@ bool diag_command_answered(uint8_t command, enum protocol active)
 	case DIAG_MOVE:
 	case DIAG_WATCH:
 		return protocol_has_esb(active);
-	case DIAG_KEYBOARDS:
 	case DIAG_FORGET:
 		return active == PROTOCOL_BLUETOOTH;
 	default:
@@ -97,16 +96,11 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p += sizeof(s->forced);
 	memcpy(p, s->keyboard_id, sizeof(s->keyboard_id));
 	p += sizeof(s->keyboard_id);
-	*p++ = (uint8_t)s->last_rssi;
-	p = put_le(p, s->last_rx_age_ms, 4);
 	*p++ = (s->usb_live ? 1 : 0) | (s->usb_suspended ? 2 : 0);
-	p = put_le(p, s->totals.packets[DEVICE_KEYBOARD], 4);
-	p = put_le(p, s->totals.invalid, 4);
-	p = put_le(p, s->totals.dropped, 4);
-	p = put_le(p, s->totals.channel_changes, 4);
-	p = put_le(p, s->totals.link_losses, 4);
-	p = put_le(p, s->totals.usb_retries, 4);
-	p = put_le(p, s->totals.gaps, 4);
+	p = put_le(p, s->invalid, 4);
+	p = put_le(p, s->dropped, 4);
+	p = put_le(p, s->channel_changes, 4);
+	p = put_le(p, s->usb_retries, 4);
 	p = put_le(p, s->merges, 4);
 	p = put_le(p, s->surveys, 4);
 	p = put_le(p, s->minute_next, 4);
@@ -118,8 +112,20 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	memcpy(p, s->keyboard_serial, sizeof(s->keyboard_serial));
 	p += sizeof(s->keyboard_serial);
 	*p++ = s->keyboard_type;
-	memcpy(p, s->keyboard_name, sizeof(s->keyboard_name));
-	p += sizeof(s->keyboard_name);
+	*p++ = s->slot_count;
+	for (uint8_t i = 0; i < s->slot_count && i < DEVICE_SLOTS; i++) {
+		*p++ = s->slots[i].kind;
+		*p++ = (s->slots[i].stored ? DIAG_SLOT_STORED : 0) |
+		       (s->slots[i].ready ? DIAG_SLOT_READY : 0);
+	}
+	*p++ = s->slot;
+	*p++ = (uint8_t)s->last_rssi;
+	p = put_le(p, s->last_rx_age_ms, 4);
+	p = put_le(p, s->packets, 4);
+	p = put_le(p, s->gaps, 4);
+	p = put_le(p, s->link_losses, 4);
+	memcpy(p, s->name, sizeof(s->name));
+	p += sizeof(s->name);
 	return p - out;
 }
 
@@ -130,25 +136,26 @@ static uint8_t *put_noise(uint8_t *p, const struct noise_record *n)
 	return put_le(p, n->strong, 2);
 }
 
-size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m, size_t n)
+size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_minute *m, size_t n,
+			   uint8_t slot)
 {
 	uint8_t *p = put_le(out, first, 4);
 
 	*p++ = n;
 	for (size_t i = 0; i < n; i++) {
-		const struct history_rssi *rssi = &m[i].rssi[DEVICE_KEYBOARD];
+		const struct history_rssi *rssi = &m[i].rssi[slot];
 
-		p = put_le(p, m[i].packets[DEVICE_KEYBOARD], 2);
 		*p++ = m[i].invalid;
 		*p++ = m[i].dropped;
 		*p++ = m[i].channel_changes;
-		*p++ = m[i].link_losses;
 		*p++ = m[i].usb_retries;
-		*p++ = m[i].gaps;
+		p = put_noise(p, &m[i].noise);
+		p = put_le(p, m[i].packets[slot], 2);
+		*p++ = m[i].gaps[slot];
+		*p++ = m[i].link_losses[slot];
 		*p++ = (uint8_t)rssi->min;
 		*p++ = (uint8_t)rssi->avg;
 		*p++ = (uint8_t)rssi->max;
-		p = put_noise(p, &m[i].noise);
 	}
 	return p - out;
 }
@@ -161,6 +168,7 @@ size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_eve
 	for (size_t i = 0; i < n; i++) {
 		p = put_le(p, e[i].time_ms, 8);
 		*p++ = e[i].type;
+		*p++ = e[i].slot;
 		*p++ = e[i].a;
 		*p++ = e[i].b;
 		*p++ = e[i].c;
@@ -218,29 +226,28 @@ size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 	return p - out;
 }
 
-_Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored keyboard's name is sent whole");
+_Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored device's name is sent whole");
 
-size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
-			     const uint8_t *const connected[DEVICE_KINDS])
+size_t diag_encode_devices(uint8_t *out, const struct btlist *l,
+			   const uint8_t *const connected[DEVICE_SLOTS])
 {
 	uint8_t *p = out;
 
 	*p++ = l->count;
 	for (uint8_t i = 0; i < l->count; i++) {
 		const struct btlist_entry *e = &l->entries[i];
-		uint8_t flags = e->no_passkey ? DIAG_KEYBOARD_NO_PASSKEY : 0;
+		uint8_t slot = DEVICE_NO_SLOT;
 
-		if (e->kind == DEVICE_MOUSE) {
-			flags |= DIAG_KEYBOARD_MOUSE;
-		}
-		for (int k = 0; k < DEVICE_KINDS; k++) {
-			if (connected[k] && memcmp(e->addr, connected[k], sizeof(e->addr)) == 0) {
-				flags |= DIAG_KEYBOARD_CONNECTED;
+		for (uint8_t s = 0; s < DEVICE_SLOTS; s++) {
+			if (connected[s] && memcmp(e->addr, connected[s], sizeof(e->addr)) == 0) {
+				slot = s;
 			}
 		}
 		memcpy(p, e->addr, sizeof(e->addr));
 		p += sizeof(e->addr);
-		*p++ = flags;
+		*p++ = e->kind;
+		*p++ = e->no_passkey ? DIAG_DEVICE_NO_PASSKEY : 0;
+		*p++ = slot;
 		memcpy(p, e->name, sizeof(e->name));
 		p += sizeof(e->name);
 	}

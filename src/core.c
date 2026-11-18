@@ -31,9 +31,11 @@ static atomic_t usb_retries;
 static struct history history;
 static uint32_t counts[CORE_COUNTERS];
 static const struct core_loop *loop;
-static uint32_t packets[DEVICE_KINDS];
-/* Below 0 for a device that has sent nothing since boot. */
-static int64_t last_input_ms[DEVICE_KINDS];
+static uint32_t packets[DEVICE_SLOTS];
+static uint32_t gaps[DEVICE_SLOTS];
+static uint32_t link_losses[DEVICE_SLOTS];
+/* Below 0 for a slot that has sent nothing since boot. */
+static int64_t last_input_ms[DEVICE_SLOTS];
 static bool usb_was_suspended;
 static bool usb_seen_live;
 static struct chanwatch watch;
@@ -117,7 +119,7 @@ static void unlock_reports(bool wake_senders)
 	}
 }
 
-bool core_submit(enum device_kind device, const struct report *r)
+bool core_submit(uint8_t slot, const struct report *r)
 {
 	bool changed;
 
@@ -126,7 +128,7 @@ bool core_submit(enum device_kind device, const struct report *r)
 	unlock_reports(false);
 	if (changed) {
 		k_sem_give(&reports_ready[reports_iface(r->kind)]);
-		last_input_ms[device] = k_uptime_get();
+		last_input_ms[slot] = k_uptime_get();
 	}
 	if (changed && usb_suspended()) {
 		usb_wakeup();
@@ -162,19 +164,21 @@ static struct history_totals totals(void)
 		.invalid = counts[CORE_INVALID],
 		.dropped = core_rx_dropped(),
 		.channel_changes = counts[CORE_CHANNEL_CHANGES],
-		.link_losses = counts[CORE_LINK_LOSSES],
 		.usb_retries = core_usb_retries(),
-		.gaps = counts[CORE_GAPS],
 	};
 
 	memcpy(t.packets, packets, sizeof(t.packets));
+	memcpy(t.gaps, gaps, sizeof(t.gaps));
+	memcpy(t.link_losses, link_losses, sizeof(t.link_losses));
 	return t;
 }
 
-static void log_event(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+static void log_event(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c,
+		      uint32_t value)
 {
 	history_event(&history, &(struct history_event){.time_ms = k_uptime_get(),
 							.type = type,
+							.slot = slot,
 							.a = a,
 							.b = b,
 							.c = c,
@@ -197,11 +201,11 @@ static void take_noise(void)
 void core_start_history(const struct core_loop *l)
 {
 	loop = l;
-	for (int d = 0; d < DEVICE_KINDS; d++) {
-		last_input_ms[d] = -1;
+	for (int s = 0; s < DEVICE_SLOTS; s++) {
+		last_input_ms[s] = -1;
 	}
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_BOOT, 0, 0, 0, boot_reset_cause);
+	log_event(HISTORY_BOOT, DEVICE_NO_SLOT, 0, 0, 0, boot_reset_cause);
 }
 
 void core_count(enum core_counter c)
@@ -209,45 +213,56 @@ void core_count(enum core_counter c)
 	counts[c]++;
 }
 
-void core_packet(enum device_kind device)
+void core_packet(uint8_t slot)
 {
-	packets[device]++;
+	packets[slot]++;
 }
 
-void core_log(uint8_t type, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+void core_gap(uint8_t slot)
+{
+	gaps[slot]++;
+}
+
+void core_link_lost(uint8_t slot)
+{
+	link_losses[slot]++;
+}
+
+void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
 {
 	take_noise();
-	log_event(type, a, b, c, value);
+	log_event(type, slot, a, b, c, value);
 }
 
 void core_log_pairing_opened(const struct pairwin *w)
 {
-	core_log(HISTORY_PAIRING_OPENED, w->cause, w->until_paired, 0, 0);
+	core_log(HISTORY_PAIRING_OPENED, DEVICE_NO_SLOT, w->cause, w->until_paired, 0, 0);
 }
 
-void core_rssi(enum device_kind device, int8_t dbm)
+void core_rssi(uint8_t slot, int8_t dbm)
 {
 	take_noise();
-	history_rssi(&history, device, dbm);
+	history_rssi(&history, slot, dbm);
 }
 
-uint8_t core_minutes_since_input(enum device_kind device)
+uint8_t core_minutes_since_input(uint8_t slot)
 {
 	int64_t minutes;
 
-	if (last_input_ms[device] < 0) {
+	if (last_input_ms[slot] < 0) {
 		return UINT8_MAX;
 	}
-	minutes = (k_uptime_get() - last_input_ms[device]) / HISTORY_MINUTE_MS;
+	minutes = (k_uptime_get() - last_input_ms[slot]) / HISTORY_MINUTE_MS;
 	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
 }
 
+/* The noise watch runs only under ESB, whose protocols have one slot. */
 static uint8_t threshold_bucket(void)
 {
 	int8_t weakest;
 
-	return history_weakest(&history, DEVICE_KEYBOARD, &weakest) ? chanwatch_threshold_bucket(weakest)
-						   : CHANWATCH_NO_THRESHOLD;
+	return history_weakest(&history, 0, &weakest) ? chanwatch_threshold_bucket(weakest)
+						      : CHANWATCH_NO_THRESHOLD;
 }
 
 static void scan(void)
@@ -305,7 +320,7 @@ static enum diag_error apply_move(uint8_t to, uint8_t reason, uint32_t value, ui
 		return DIAG_ERR_RADIO;
 	}
 	chanwatch_hold(&watch, (uint64_t)k_uptime_get());
-	core_log(HISTORY_LINK_MOVED, *from, to, reason, value);
+	core_log(HISTORY_LINK_MOVED, DEVICE_NO_SLOT, *from, to, reason, value);
 	return 0;
 }
 
@@ -353,7 +368,8 @@ void core_poll(void)
 	usb_seen_live |= usb_live();
 	if (suspended != usb_was_suspended) {
 		if (usb_seen_live) {
-			core_log(suspended ? HISTORY_USB_SUSPEND : HISTORY_USB_RESUME, 0, 0, 0, 0);
+			core_log(suspended ? HISTORY_USB_SUSPEND : HISTORY_USB_RESUME,
+				 DEVICE_NO_SLOT, 0, 0, 0, 0);
 		}
 		usb_was_suspended = suspended;
 	}
@@ -406,18 +422,36 @@ static void clear(const struct diag_request *req)
 	atomic_clear(&usb_retries);
 	memset(counts, 0, sizeof(counts));
 	memset(packets, 0, sizeof(packets));
+	memset(gaps, 0, sizeof(gaps));
+	memset(link_losses, 0, sizeof(link_losses));
 	history_clear(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_CLEAR, 0, 0, 0, 0);
+	log_event(HISTORY_CLEAR, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
+static bool slot_asked(const struct diag_request *req, uint8_t *slot)
+{
+	*slot = req->data[0];
+	if (*slot >= loop->slot_count) {
+		diag_reply_error(req, DIAG_ERR_NO_SUCH_DEVICE, 0);
+		return false;
+	}
+	return true;
 }
 
 static void serve_minutes(const struct diag_request *req, uint8_t *payload)
 {
 	static struct history_minute page[DIAG_MINUTES_PER_PAGE];
 	uint32_t first;
-	size_t n = history_minutes(&history, req->arg, &first, page, ARRAY_SIZE(page));
+	uint8_t slot;
+	size_t n;
 
-	diag_reply(req, payload, diag_encode_minutes(payload, first, page, n), DIAG_AFTER_NONE);
+	if (!slot_asked(req, &slot)) {
+		return;
+	}
+	n = history_minutes(&history, req->arg, &first, page, ARRAY_SIZE(page));
+	diag_reply(req, payload, diag_encode_minutes(payload, first, page, n, slot),
+		   DIAG_AFTER_NONE);
 }
 
 static void serve_events(const struct diag_request *req, uint8_t *payload)
@@ -441,7 +475,7 @@ static void serve_noise(const struct diag_request *req, uint8_t *payload)
 		return;
 	}
 	loop->radio_resumed();
-	log_event(HISTORY_NOISE, 0, 0, 0, 0);
+	log_event(HISTORY_NOISE, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	diag_reply(req, payload, diag_encode_noise(payload, survey), DIAG_AFTER_NONE);
 }
 
@@ -545,19 +579,30 @@ uint32_t core_reset_cause(void)
 	return boot_reset_cause;
 }
 
-void core_fill_status(struct diag_status *st)
+void core_fill_status(struct diag_status *st, uint8_t slot)
 {
+	struct history_totals t = totals();
+
 	*st = (struct diag_status){
 		.uptime_ms = (uint64_t)k_uptime_get(),
 		.reset_cause = boot_reset_cause,
 		.protocol = active,
 		.usb_live = usb_live(),
 		.usb_suspended = usb_suspended(),
+		.invalid = t.invalid,
+		.dropped = t.dropped,
+		.channel_changes = t.channel_changes,
+		.usb_retries = t.usb_retries,
+		.slot_count = loop->slot_count,
+		.slot = slot,
 		.last_rssi = DIAG_NO_RSSI,
 		.last_rx_age_ms = UINT32_MAX,
+		.packets = t.packets[slot],
+		.gaps = t.gaps[slot],
+		.link_losses = t.link_losses[slot],
 	};
 	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
-	st->totals = totals();
+	loop->slots(st->slots);
 	st->merges = core_merges();
 	st->surveys = counts[CORE_SURVEYS];
 	st->minute_next = history.minute_next;
@@ -569,9 +614,13 @@ void core_fill_status(struct diag_status *st)
 static void serve_status(const struct diag_request *req, uint8_t *payload)
 {
 	struct diag_status st;
+	uint8_t slot;
 
-	core_fill_status(&st);
-	loop->fill_status(&st);
+	if (!slot_asked(req, &slot)) {
+		return;
+	}
+	core_fill_status(&st, slot);
+	loop->fill_status(&st, slot);
 	diag_reply(req, payload, diag_encode_status(payload, &st), DIAG_AFTER_NONE);
 }
 

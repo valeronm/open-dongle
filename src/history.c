@@ -23,7 +23,7 @@ void history_clear(struct history *h, uint64_t now_ms, const struct history_tota
 	h->minute_oldest = h->minute_next;
 	h->at_minute_start = *t;
 	h->events_oldest = h->events_total;
-	h->since_packet = (struct noise_tally){0};
+	memset(h->since_packet, 0, sizeof(h->since_packet));
 	reset_minute(h);
 }
 
@@ -40,15 +40,15 @@ static struct history_minute close_minute(const struct history *h, const struct 
 		.invalid = sat8(t->invalid - s->invalid),
 		.dropped = sat8(t->dropped - s->dropped),
 		.channel_changes = sat8(t->channel_changes - s->channel_changes),
-		.link_losses = sat8(t->link_losses - s->link_losses),
 		.usb_retries = sat8(t->usb_retries - s->usb_retries),
-		.gaps = sat8(t->gaps - s->gaps),
 	};
 
-	for (int d = 0; d < DEVICE_KINDS; d++) {
+	for (int d = 0; d < DEVICE_SLOTS; d++) {
 		const struct history_rssi_sum *r = &h->rssi[d];
 
 		m.packets[d] = sat16(t->packets[d] - s->packets[d]);
+		m.gaps[d] = sat8(t->gaps[d] - s->gaps[d]);
+		m.link_losses[d] = sat8(t->link_losses[d] - s->link_losses[d]);
 		if (r->count > 0) {
 			m.rssi[d] = (struct history_rssi){
 				.min = r->min,
@@ -76,9 +76,9 @@ void history_tick(struct history *h, uint64_t now_ms, const struct history_total
 	}
 }
 
-void history_rssi(struct history *h, enum device_kind device, int8_t dbm)
+void history_rssi(struct history *h, uint8_t slot, int8_t dbm)
 {
-	struct history_rssi_sum *r = &h->rssi[device];
+	struct history_rssi_sum *r = &h->rssi[slot];
 
 	if (r->count == 0 || dbm < r->min) {
 		r->min = dbm;
@@ -88,15 +88,14 @@ void history_rssi(struct history *h, enum device_kind device, int8_t dbm)
 	}
 	r->sum += dbm;
 	r->count++;
-	/* Gaps and losses are the keyboard's link. */
-	if (device == DEVICE_KEYBOARD) {
-		h->since_packet = (struct noise_tally){0};
-	}
+	h->since_packet[slot] = (struct noise_tally){0};
 }
 
 void history_noise(struct history *h, const struct noise_tally *t, bool home)
 {
-	noise_merge(&h->since_packet, t);
+	for (int d = 0; d < DEVICE_SLOTS; d++) {
+		noise_merge(&h->since_packet[d], t);
+	}
 	if (home) {
 		noise_merge(&h->noise, t);
 	}
@@ -107,9 +106,10 @@ void history_event(struct history *h, const struct history_event *e)
 	struct history_event *stored = &h->events[h->events_total % HISTORY_EVENTS];
 
 	*stored = *e;
-	if (e->type == HISTORY_LINK_GAP || e->type == HISTORY_LINK_LOST) {
-		stored->noise = noise_record(&h->since_packet);
-		h->since_packet = (struct noise_tally){0};
+	if ((e->type == HISTORY_LINK_GAP || e->type == HISTORY_LINK_LOST) &&
+	    e->slot < DEVICE_SLOTS) {
+		stored->noise = noise_record(&h->since_packet[e->slot]);
+		h->since_packet[e->slot] = (struct noise_tally){0};
 	}
 	h->events_total++;
 	if (h->events_total - h->events_oldest > HISTORY_EVENTS) {
@@ -145,18 +145,18 @@ size_t history_events(const struct history *h, uint32_t from, uint32_t *first,
 	return n;
 }
 
-bool history_weakest(const struct history *h, enum device_kind device, int8_t *out)
+bool history_weakest(const struct history *h, uint8_t slot, int8_t *out)
 {
-	bool found = h->rssi[device].count > 0;
+	bool found = h->rssi[slot].count > 0;
 
 	if (found) {
-		*out = h->rssi[device].min;
+		*out = h->rssi[slot].min;
 	}
 	if (h->minute_next > h->minute_oldest) {
 		const struct history_minute *m =
 			&h->minutes[(h->minute_next - 1) % HISTORY_MINUTES];
 
-		int8_t min = m->rssi[device].min;
+		int8_t min = m->rssi[slot].min;
 
 		if (min != 0 && (!found || min < *out)) {
 			*out = min;
@@ -166,11 +166,12 @@ bool history_weakest(const struct history *h, enum device_kind device, int8_t *o
 	return found;
 }
 
-struct history_event history_keyboard_event(uint8_t type, const uint8_t addr[HISTORY_ADDR_LEN],
-					    uint8_t c)
+struct history_event history_keyboard_event(uint8_t type, uint8_t slot,
+					    const uint8_t addr[HISTORY_ADDR_LEN], uint8_t c)
 {
 	return (struct history_event){
 		.type = type,
+		.slot = slot,
 		.a = addr[6],
 		.b = addr[5],
 		.c = c,

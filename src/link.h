@@ -120,6 +120,7 @@ void link_open_pairing(struct link *l, enum pairwin_cause cause, uint32_t now_ms
 /* A pair request starts a pairing only while this is true. */
 bool link_pairing_open(const struct link *l, uint32_t now_ms);
 enum link_led link_led(const struct link *l, uint32_t now_ms);
+bool link_connected(const struct link *l);
 
 /* Makes channel, one of the keyboard's non-pairing channels, the home of a paired link with
  * pairing closed and the host awake, connected or idle; the caller retunes the radio. */

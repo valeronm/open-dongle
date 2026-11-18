@@ -26,7 +26,9 @@ static bool link_was_lost;
 static bool heard;
 static uint32_t last_packet_ms;
 
-_Static_assert(sizeof(((struct diag_status *)0)->keyboard_name) >= NUPHY_NAME_MAX, "status name");
+_Static_assert(sizeof(((struct diag_status *)0)->name) >= NUPHY_NAME_MAX, "status name");
+_Static_assert(BTLIST_NAME_LEN >= NUPHY_NAME_MAX, "device list name");
+_Static_assert(BTPOLICY_ADDR_LEN >= NUPHY_ID_LEN, "device list address");
 
 static int home(void)
 {
@@ -78,14 +80,15 @@ static void apply(const struct link_out *out)
 
 		printk("paired, channels %u %u %u saved: %d\n", link.own[0], link.own[1],
 		       link.own[2], err);
-		core_log(HISTORY_PAIRED, link.own[0], link.own[1], link.own[2], (uint32_t)err);
+		core_log(HISTORY_PAIRED, 0, link.own[0], link.own[1], link.own[2], (uint32_t)err);
 	}
 	if (out->lost) {
 		uint32_t gap = k_uptime_get_32() - link.last_rx_ms;
 
-		core_count(CORE_LINK_LOSSES);
+		core_link_lost(0);
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		core_log(HISTORY_LINK_LOST, (uint8_t)keyboard_rssi, core_minutes_since_input(DEVICE_KEYBOARD), 0, gap);
+		core_log(HISTORY_LINK_LOST, 0, (uint8_t)keyboard_rssi,
+			 core_minutes_since_input(0), 0, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();
@@ -93,19 +96,19 @@ static void apply(const struct link_out *out)
 	if (out->up) {
 		uint8_t kind = link_was_lost ? HISTORY_UP_AGAIN : HISTORY_UP_FIRST;
 
-		core_log(HISTORY_LINK_UP, link.channel, (uint8_t)keyboard_rssi, kind,
+		core_log(HISTORY_LINK_UP, 0, link.channel, (uint8_t)keyboard_rssi, kind,
 			 k_uptime_get_32() - link_down_ms);
 	}
 	if (out->moved) {
-		core_log(HISTORY_LINK_MOVED, out->moved_from, out->channel, HISTORY_MOVED_TO_HOME,
-			 0);
+		core_log(HISTORY_LINK_MOVED, DEVICE_NO_SLOT, out->moved_from, out->channel,
+			 HISTORY_MOVED_TO_HOME, 0);
 	}
 	if (out->pairing_expired) {
-		core_log(HISTORY_PAIRING_TIMEOUT, 0, 0, 0, 0);
+		core_log(HISTORY_PAIRING_TIMEOUT, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	}
 	if (out->window_closed) {
 		printk("pairing closed\n");
-		core_log(HISTORY_PAIRING_CLOSED, 0, 0, 0, 0);
+		core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	}
 }
 
@@ -126,7 +129,7 @@ static void run_survey(void)
 	}
 	chan_pick(survey, picked);
 	printk("survey picked %u %u %u\n", picked[0], picked[1], picked[2]);
-	core_log(HISTORY_SURVEY, picked[0], picked[1], picked[2], 0);
+	core_log(HISTORY_SURVEY, DEVICE_NO_SLOT, picked[0], picked[1], picked[2], 0);
 	link_on_survey(&link, picked, k_uptime_get_32(), &out);
 	apply(&out);
 }
@@ -142,7 +145,7 @@ static void handle(const struct rx_item *item)
 		core_count(CORE_INVALID);
 		return;
 	}
-	core_packet(DEVICE_KEYBOARD);
+	core_packet(0);
 	if (item->pipe == 1) {
 		keyboard_rssi = item->rssi;
 	}
@@ -150,12 +153,12 @@ static void handle(const struct rx_item *item)
 	last_packet_ms = k_uptime_get_32();
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	if (out.gap_ms > 0) {
-		core_count(CORE_GAPS);
-		core_log(HISTORY_LINK_GAP, out.gap_channel, (uint8_t)rssi_before,
+		core_gap(0);
+		core_log(HISTORY_LINK_GAP, 0, out.gap_channel, (uint8_t)rssi_before,
 			 (uint8_t)item->rssi, out.gap_ms);
 	}
 	if (item->pipe == 1) {
-		core_rssi(DEVICE_KEYBOARD, item->rssi);
+		core_rssi(0, item->rssi);
 	}
 	apply(&out);
 	if (out.start_survey) {
@@ -165,17 +168,27 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	if (nuphy_report(&m, &next)) {
-		core_submit(DEVICE_KEYBOARD, &next);
+		core_submit(0, &next);
 	}
 	if (usb_suspended() && m.kind == NUPHY_HELLO) {
 		usb_wakeup();
 	}
 }
 
-static void fill_status(struct diag_status *s)
+static void slots(struct diag_slot *out)
+{
+	out[0] = (struct diag_slot){
+		.kind = DEVICE_KEYBOARD,
+		.stored = link.own_known,
+		.ready = link_connected(&link),
+	};
+}
+
+static void fill_status(struct diag_status *s, uint8_t slot)
 {
 	const uint8_t *forced;
 
+	ARG_UNUSED(slot);
 	s->link_state = link.state;
 	s->pairing_open = link_pairing_open(&link, k_uptime_get_32());
 	s->channel = link.channel;
@@ -191,20 +204,19 @@ static void fill_status(struct diag_status *s)
 		memcpy(s->forced, forced, sizeof(s->forced));
 	}
 	memcpy(s->keyboard_id, link.keyboard_id, sizeof(s->keyboard_id));
-	memcpy(s->keyboard_name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
+	memcpy(s->name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
 }
 
 static void print_counters(void)
 {
 	struct diag_status s;
 
-	core_fill_status(&s);
-	fill_status(&s);
+	core_fill_status(&s, 0);
+	fill_status(&s, 0);
 	printk("counters: packets %u invalid %u dropped %u channels %u losses %u gaps %u "
 	       "usb-retries %u merges %u surveys %u, ch%u state %d\n",
-	       s.totals.packets[DEVICE_KEYBOARD], s.totals.invalid, s.totals.dropped, s.totals.channel_changes,
-	       s.totals.link_losses, s.totals.gaps, s.totals.usb_retries, s.merges, s.surveys,
-	       link.channel, link.state);
+	       s.packets, s.invalid, s.dropped, s.channel_changes, s.link_losses, s.gaps,
+	       s.usb_retries, s.merges, s.surveys, link.channel, link.state);
 }
 
 static void force_channels(const struct diag_request *req)
@@ -232,9 +244,31 @@ static void force_channels(const struct diag_request *req)
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 
+static void send_devices(const struct diag_request *req)
+{
+	static struct btlist list;
+	static uint8_t payload[DIAG_DEVICES_MAX];
+	const uint8_t *connected[DEVICE_SLOTS] = {0};
+
+	list = (struct btlist){0};
+	if (link.own_known) {
+		struct btlist_entry *e = &list.entries[list.count++];
+
+		memcpy(e->addr, link.keyboard_id, sizeof(link.keyboard_id));
+		memcpy(e->name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
+		if (link_connected(&link)) {
+			connected[0] = e->addr;
+		}
+	}
+	diag_reply(req, payload, diag_encode_devices(payload, &list, connected), DIAG_AFTER_NONE);
+}
+
 static void serve_diag(const struct diag_request *req)
 {
 	switch (req->command) {
+	case DIAG_DEVICES:
+		send_devices(req);
+		break;
 	case DIAG_FORCE_CHANNELS:
 		force_channels(req);
 		break;
@@ -259,6 +293,8 @@ static enum chanmove_result move_on_request(uint8_t channel, uint8_t *from)
 static const struct core_loop loop = {
 	.home = home,
 	.radio_resumed = radio_resumed,
+	.slot_count = 1,
+	.slots = slots,
 	.fill_status = fill_status,
 	.movable = movable,
 	.candidates = candidates,

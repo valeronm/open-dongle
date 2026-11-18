@@ -129,37 +129,46 @@ the link key, then read and type keystrokes.[^mengs-1]
 
 ## Bluetooth LE
 
-The dongle is a HID over GATT host: it reads the keyboard's report map at every connection and
-translates its keyboard, media and system reports into the dongle's own USB reports.
+The dongle is a HID over GATT host: it reads each device's report map at every connection and
+translates a keyboard's keyboard, media and system reports and a mouse's pointer reports into the
+dongle's own USB reports. It holds one keyboard and one mouse at a time, each in its own slot, and
+tells them apart by the kind the device advertises.
 
 | | PC's Bluetooth | SpareDongle |  |
 |---|---|---|---|
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
 | Vendor reports, such as keys set up by Logitech Options | yes | ignored | 🔴 |
-| Mice | yes | no | 🔴 |
-| Keyboards | as many as the PC pairs | four stored, one connected | 🔴 |
+| Mice | yes | one, beside the keyboard | ⚪ |
+| Mouse wheel | high resolution where the PC's driver turns it on | in notches | 🔴 |
+| Devices | as many as the PC pairs | eight stored, a keyboard and a mouse connected | 🔴 |
 | Bluetooth Classic keyboards | yes | no | 🔴 |
 | Boot menus and PCs without Bluetooth | no | yes | 🟢 |
 | Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
 | Keyboard name and signal | in the PC's settings | shown by the tool | ⚪ |
 
-The nRF52840 has no Bluetooth Classic radio. A report map the dongle cannot parse, or one with no
-keyboard in it, refuses the keyboard.
+The nRF52840 has no Bluetooth Classic radio. A report map the dongle cannot parse refuses the
+device, and so does a keyboard's map with no keyboard in it or a mouse's map with no relative
+pointer, such as a tablet's.
 
 ### Reliability
 
-The dongle connects to whichever stored keyboard it hears first, and the others wait until that one
-disconnects. The MX Keys reconnects with adverts aimed at the dongle alone, and after the dongle
-restarts several times in a row it waits for a key press before it reconnects.
+The dongle connects to whichever stored device of each kind it hears first, and the others wait
+until that one disconnects. While a slot is free and pairing is closed it listens for its devices
+for a few milliseconds a second, because listening longer takes radio time from the connected
+device: a fast scan cost a moving mouse about an eighth of its reports. A device switched on
+reconnects within about a second. The MX Keys reconnects with a short burst of adverts aimed at the
+dongle alone, which the slow scan can miss after the dongle restarts; it then reconnects at its
+next key press, which reaches the PC a second or two late.
 
 ### Security
 
 Both keyboards tested pair only with LE legacy pairing, so the dongle allows it. Anyone who
 records a legacy pairing can derive its key and read the keyboard afterwards, with or without a
 passkey.[^crackle] The passkey makes the dongle pair the keyboard it was typed on; without one, any
-keyboard in pairing mode nearby can pair while the window is open. After pairing the link is
-encrypted, and only a stored keyboard connects.
+keyboard in pairing mode nearby can pair while the window is open. A mouse pairs without a
+passkey in either window, so any mouse in pairing mode nearby can pair while it is open. After
+pairing the link is encrypted, and only a stored device connects.
 
 ## Added by SpareDongle
 

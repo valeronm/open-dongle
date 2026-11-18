@@ -4,8 +4,9 @@ use anyhow::{Context, Result, bail};
 
 use crate::protocol::{
     Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
-    Reader, Status, StoredKeyboard, VersionMismatch, Watch, channels_arg, decode_events,
-    decode_minutes, decode_noise, decode_watch, parse_part, read_keyboards, read_status, request,
+    Reader, SlotStatus, Status, StoredDevice, VersionMismatch, Watch, channels_arg, decode_events,
+    decode_minutes, decode_noise, decode_watch, parse_part, read_devices, read_status, request,
+    shown_slots,
 };
 
 pub const VID: u16 = 0x2fe3;
@@ -147,6 +148,7 @@ impl<T: Transport> Device<T> {
         self.call(action.command(), 0, TIMEOUT).map(drop)
     }
 
+    /// Slot 0's status, which carries the link-wide fields and the slot table.
     pub fn status(&mut self) -> Result<Status> {
         Ok(self.read_status()??)
     }
@@ -155,14 +157,41 @@ impl<T: Transport> Device<T> {
         read_status(&self.call(Command::Status, 0, TIMEOUT)?)
     }
 
+    pub fn slot_status(&mut self, slot: u8) -> Result<SlotStatus> {
+        let reply = self.call_with(Command::Status, 0, &[slot], TIMEOUT)?;
+        Ok(read_status(&reply)??.device)
+    }
+
+    /// The status of each slot `shown_slots` picks from `s`'s slot table, reusing `s`'s own.
+    pub fn shown(&mut self, s: &Status) -> Result<Vec<SlotStatus>> {
+        shown_slots(&s.slots)
+            .into_iter()
+            .map(|slot| {
+                if slot == s.device.slot {
+                    Ok(s.device.clone())
+                } else {
+                    self.slot_status(slot)
+                }
+            })
+            .collect()
+    }
+
     /// Refuses a dongle that speaks a diagnostic protocol other than this tool's.
     pub fn checked(mut self) -> Result<(Self, Status)> {
         let status = self.status()?;
         Ok((self, status))
     }
 
-    pub fn minutes(&mut self, from: u32, protocol: Protocol) -> Result<(u32, Vec<Minute>)> {
-        decode_minutes(&self.call(Command::History, from, TIMEOUT)?, protocol)
+    pub fn minutes(
+        &mut self,
+        from: u32,
+        slot: u8,
+        protocol: Protocol,
+    ) -> Result<(u32, Vec<Minute>)> {
+        decode_minutes(
+            &self.call_with(Command::History, from, &[slot], TIMEOUT)?,
+            protocol,
+        )
     }
 
     pub fn events(&mut self, from: u32) -> Result<(u32, Vec<Event>)> {
@@ -198,12 +227,12 @@ impl<T: Transport> Device<T> {
         Ok((running, r.u8()? != 0))
     }
 
-    pub fn keyboards(&mut self) -> Result<Vec<StoredKeyboard>> {
-        read_keyboards(&self.call(Command::Keyboards, 0, TIMEOUT)?)
+    pub fn devices(&mut self) -> Result<Vec<StoredDevice>> {
+        read_devices(&self.call(Command::Devices, 0, TIMEOUT)?)
     }
 
-    pub fn forget(&mut self, keyboard: &StoredKeyboard) -> Result<()> {
-        self.call_with(Command::Forget, 0, &keyboard.addr, TIMEOUT)
+    pub fn forget(&mut self, device: &StoredDevice) -> Result<()> {
+        self.call_with(Command::Forget, 0, &device.addr, TIMEOUT)
             .map(drop)
     }
 
@@ -215,14 +244,16 @@ impl<T: Transport> Device<T> {
         decode_watch(&self.call(Command::Watch, 0, TIMEOUT)?)
     }
 
-    /// Returns the held minutes with their indexes, from `from` (or the oldest held) up to `end`.
+    /// Returns the slot's held minutes with their indexes, from `from` (or the oldest held) up to
+    /// `end`.
     pub fn minutes_between(
         &mut self,
         from: u32,
         end: u32,
+        slot: u8,
         protocol: Protocol,
     ) -> Result<Vec<(u32, Minute)>> {
-        collect_pages(from, end, |f| self.minutes(f, protocol))
+        collect_pages(from, end, |f| self.minutes(f, slot, protocol))
     }
 
     /// Returns the held events with their indexes, from `from` (or the oldest held) up to `end`.
@@ -385,14 +416,14 @@ pub(crate) mod tests {
 
     #[test]
     fn a_dongle_in_this_protocol_connects_with_its_status() {
-        let (_, status) = dongle_in_protocol(3).checked().unwrap();
+        let (_, status) = dongle_in_protocol(4).checked().unwrap();
         assert_eq!(status.channel, 26);
     }
 
     #[test]
     fn a_dongle_in_another_protocol_is_refused_on_connect() {
-        let err = dongle_in_protocol(4).checked().err().unwrap().to_string();
-        assert!(err.starts_with("the dongle speaks diagnostic protocol 4, this tool 3;"));
+        let err = dongle_in_protocol(3).checked().err().unwrap().to_string();
+        assert!(err.starts_with("the dongle speaks diagnostic protocol 3, this tool 4;"));
     }
 
     #[test]
@@ -413,13 +444,13 @@ pub(crate) mod tests {
                 let mut p = from.to_le_bytes().to_vec();
                 p.push(n);
                 for _ in 0..n {
-                    p.extend([1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
                 }
                 parts(req[0], req[1], &p)
             }),
             0,
         );
-        let m = dev.minutes_between(0, 130, Protocol::Nuphy).unwrap();
+        let m = dev.minutes_between(0, 130, 0, Protocol::Nuphy).unwrap();
         assert_eq!(m.len(), 130);
         assert_eq!((m[0].0, m[129].0), (0, 129));
     }
@@ -434,8 +465,90 @@ pub(crate) mod tests {
             }),
             0,
         );
-        let (first, m) = dev.minutes(1440, Protocol::Nuphy).unwrap();
+        let (first, m) = dev.minutes(1440, 0, Protocol::Nuphy).unwrap();
         assert_eq!((first, m.len()), (1440, 2));
+    }
+
+    #[test]
+    fn asks_for_a_slots_minutes_as_the_request_fixture_has_it() {
+        let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = sent.clone();
+        let mut dev = Device::new(
+            Fake::new(move |req| {
+                *seen.borrow_mut() = req.to_vec();
+                parts(req[0], req[1], &fixture("minutes.hex"))
+            }),
+            8,
+        );
+        dev.minutes(1440, 1, Protocol::Bluetooth).unwrap();
+        let expected = fixture("request.hex");
+        let sent = sent.borrow();
+        assert_eq!(&sent[..expected.len()], expected);
+        assert!(sent[expected.len()..].iter().all(|&b| b == 0));
+    }
+
+    #[test]
+    fn asks_for_a_slots_status_by_its_number() {
+        let mut dev = Device::new(
+            Fake::new(|req| {
+                let reply = if req[6] == 1 {
+                    "status-slot1.hex"
+                } else {
+                    "status.hex"
+                };
+                parts(req[0], req[1], &fixture(reply))
+            }),
+            0,
+        );
+        let device = dev.slot_status(1).unwrap();
+        assert_eq!(
+            (device.slot, device.name.as_deref()),
+            (1, Some("MX Master 3S"))
+        );
+    }
+
+    /// Answers status requests from status-slot1.hex as the slot asked, recording each slot asked.
+    fn bluetooth_dongle(asked: std::rc::Rc<std::cell::RefCell<Vec<u8>>>) -> Device<Fake> {
+        Device::new(
+            Fake::new(move |req| {
+                assert_eq!(req[0], Command::Status as u8);
+                asked.borrow_mut().push(req[6]);
+                let mut reply = fixture("status-slot1.hex");
+                let slot_at = reply.len() - 42;
+                reply[slot_at] = req[6];
+                parts(req[0], req[1], &reply)
+            }),
+            0,
+        )
+    }
+
+    /// Slot 0's status from a dongle whose slot table is `stored` and `connected` per slot.
+    fn slot_0_status(stored: [bool; 2], connected: [bool; 2]) -> Status {
+        let mut s = crate::protocol::tests::mouse_status();
+        s.device.slot = 0;
+        for (i, slot) in s.slots.iter_mut().enumerate() {
+            slot.stored = stored[i];
+            slot.connected = connected[i];
+        }
+        s
+    }
+
+    fn shown_from(s: &Status) -> (Vec<u8>, Vec<u8>) {
+        let asked = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let mut dev = bluetooth_dongle(asked.clone());
+        let shown = dev.shown(s).unwrap();
+        let slots = shown.iter().map(|d| d.slot).collect();
+        (slots, asked.take())
+    }
+
+    #[test]
+    fn the_shown_slots_past_the_first_reply_are_asked_for() {
+        let both = slot_0_status([true, true], [false, true]);
+        assert_eq!(shown_from(&both), (vec![0, 1], vec![1]));
+        let keyboard = slot_0_status([true, false], [true, false]);
+        assert_eq!(shown_from(&keyboard), (vec![0], vec![]));
+        let mouse = slot_0_status([false, true], [false, true]);
+        assert_eq!(shown_from(&mouse), (vec![1], vec![1]));
     }
 
     #[test]

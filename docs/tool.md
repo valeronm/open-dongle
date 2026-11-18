@@ -16,8 +16,8 @@ dongle into its firmware or its bootloader, and clear the history.
 
 ## Reading the dongle
 
-- `status`: the link, signal, USB state and counter totals.
-- `history`: per-minute counters and signal, oldest first.
+- `status`: the link, USB state and counter totals, and each device's signal and counters.
+- `history`: per-minute counters, and each device's packets and signal, oldest first.
 - `events`: the latest events, oldest first, among them every channel move with the noise on both
   channels.
 - `noise`: a noise map of every channel.
@@ -47,21 +47,33 @@ idle MX Keys sleeps after a few minutes.
 noise survey picks, and `channels auto` returns to the survey. The dongle keeps them in flash. A
 Unifying keyboard's channels are fixed by its firmware, so the command exists only in NuPhy mode.
 
+## Devices
+
+The dongle reports each device it holds in a numbered slot: NuPhy and Unifying have one, the
+keyboard, and Bluetooth has two, a keyboard and a mouse. `status`, `history` and the live view
+show every slot that has a device paired or connected, each with its own name, signal, last packet
+and counters; the channel, noise, USB and the other link-wide counters are shared. In the live
+view the slots stand side by side when the terminal is wide enough, and otherwise `o` steps
+through them. Event lines name the device they are about.
+
+`devices` lists the paired devices with their kind and the slot each is connected in.
+
 ## Bluetooth mode
 
-The keyboard hops across all channels, so the dongle has no channel, noise, gaps or moves to show,
-and refuses `noise`, `moves`, `move` and `channels`. The signal is the connection's, read from the
-radio once a second while a keyboard is connected. The events record each keyboard's connects,
-disconnects with their reason, pairings and refused pairings, and a keyboard that lost its pairing,
+The devices hop across all channels, so the dongle has no channel, noise, gaps or moves to show,
+and refuses `noise`, `moves`, `move` and `channels`. Each device's signal is its connection's, read
+from the radio once a second while it is connected. The events record each device's connects,
+disconnects with their reason, pairings and refused pairings, and a device that lost its pairing,
 which has to be forgotten and paired again.
 
 - `pair` prints the passkey to type on the keyboard; `pair --no-passkey` pairs a keyboard that has
-  no passkey step. In the live view `a` asks which of the two.
-- `keyboards` lists the stored keyboards, the most recently connected first, and `forget <n>`
-  removes the one at that place in the list. In the live view `k` shows the list in place of the
-  chart, and a keyboard's number asks to forget it.
+  no passkey step. A mouse pairs in either window without one. In the live view `a` asks which of
+  the two.
+- `devices` lists the stored keyboards and mice, the most recently connected first, and
+  `forget <n>` removes the one at that place in the list. In the live view `d` shows the list in
+  place of the chart, and a device's number asks to forget it.
 
-Event lines name a stored keyboard and give a forgotten one's address.
+Event lines name a stored device and give a forgotten one's address.
 
 ## Firmware and reset
 

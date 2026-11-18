@@ -86,11 +86,11 @@ enum Cmd {
         #[arg(long)]
         no_passkey: bool,
     },
-    /// List the Bluetooth keyboards the dongle stores, the most recently connected first
-    Keyboards,
-    /// Remove a stored Bluetooth keyboard, by its number in `keyboards`
+    /// List the devices the dongle stores; under Bluetooth the most recently connected first
+    Devices,
+    /// Remove a stored Bluetooth device, by its number in `devices`
     Forget {
-        /// The keyboard's number in the list `keyboards` prints
+        /// The device's number in the list `devices` prints
         place: usize,
         #[command(flatten)]
         confirm: Confirm,
@@ -127,7 +127,10 @@ fn main() -> Result<()> {
     let serial = args.serial.as_deref();
     match command {
         Cmd::Flash { file, confirm } => cli::flash(&file, serial, confirm.yes),
-        Cmd::Status => cli::status(&device::open(serial)?.1),
+        Cmd::Status => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::status(&mut dev, &s)
+        }
         Cmd::History { minutes } => {
             let (mut dev, s) = device::open(serial)?;
             cli::history(&mut dev, &s, minutes)
@@ -154,7 +157,10 @@ fn main() -> Result<()> {
             println!("{}", cli::pair(&mut dev, s.protocol(), no_passkey)?);
             Ok(())
         }
-        Cmd::Keyboards => cli::keyboards(&mut device::open(serial)?.0),
+        Cmd::Devices => {
+            let (mut dev, s) = device::open(serial)?;
+            cli::devices(&mut dev, s.protocol())
+        }
         Cmd::Forget { place, confirm } => {
             cli::forget(&mut device::open(serial)?.0, place, confirm.yes)
         }
@@ -170,5 +176,17 @@ fn main() -> Result<()> {
             c.yes,
         ),
         Cmd::Clear(c) => cli::action(&mut device::open(serial)?.0, Action::Clear, c.yes),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stored_list_is_the_devices_command() {
+        let parsed = |command: &str| Args::try_parse_from([TOOL, command]).is_ok();
+        assert!(parsed("devices"));
+        assert!(!parsed("keyboards"));
     }
 }
