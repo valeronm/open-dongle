@@ -1,19 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.3.0] - 2026-11-18
 
-- The project is renamed SpareDongle: the tool is `spare-dongle`, the release files and udev rule
-  carry that name, and the dongle names itself SpareDongle over USB and Bluetooth.
-- A third protocol, Bluetooth LE: the dongle stores up to four Bluetooth keyboards, connects one at
-  a time and presents it over USB like the other two.
-- In Bluetooth mode `spare-dongle pair` prints a passkey to type on the keyboard, and
-  `--no-passkey` pairs a keyboard without a passkey step, such as the Air75 V2.
-- `spare-dongle keyboards` lists the stored Bluetooth keyboards and `spare-dongle forget <n>`
-  removes the one at that place in the list.
-- The history records Bluetooth connects, disconnects with their reason, pairings, refused pairings
-  and a keyboard that lost its pairing; event lines name a stored keyboard.
-- In Bluetooth mode the live view's `k` lists the stored keyboards and forgets one, `a` asks
-  whether to pair with a passkey, and the footer leaves out the noise, moves and channel keys.
+- The project is renamed SpareDongle, and its tool `spare-dongle`.
+- A third protocol, Bluetooth LE, stores up to four keyboards and connects one at a time.
+- In Bluetooth mode `spare-dongle pair` prints a passkey to type on the keyboard.
+- `spare-dongle pair --no-passkey` pairs a keyboard without a passkey step, such as the Air75 V2.
+- `spare-dongle keyboards` lists the stored Bluetooth keyboards and `spare-dongle forget` removes
+  one.
+- The history records Bluetooth connects, disconnects, pairings and refused pairings.
+- In Bluetooth mode the live view's `k` lists and forgets keyboards.
 - The status and live view show a Bluetooth keyboard's name, signal and last packet.
 - Before the first packet the status shows no signal level instead of 0 dBm.
 - The diagnostic protocol is now 3, so the 0.2.0 tool can only `flash` new firmware.
