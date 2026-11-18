@@ -2,6 +2,18 @@
 
 #include "btpolicy.h"
 
+enum btpolicy_kind btpolicy_kind_of(uint16_t appearance)
+{
+	switch (appearance) {
+	case BTPOLICY_APPEARANCE_KEYBOARD:
+		return BTPOLICY_KEYBOARD;
+	case BTPOLICY_APPEARANCE_MOUSE:
+		return BTPOLICY_MOUSE;
+	default:
+		return BTPOLICY_NO_KIND;
+	}
+}
+
 void btpolicy_init(struct btpolicy *p)
 {
 	*p = (struct btpolicy){0};
@@ -17,93 +29,131 @@ static bool refused(const struct btpolicy *p, const uint8_t *addr)
 	return false;
 }
 
-bool btpolicy_interesting(const struct btpolicy_advert *a)
+static bool setting_up(const struct btpolicy *p)
 {
-	return a->connectable && (a->stored || a->hid_service);
+	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+		if (p->slots[k].state == BTPOLICY_CONNECTING ||
+		    p->slots[k].state == BTPOLICY_CONNECTED) {
+			return true;
+		}
+	}
+	return false;
 }
 
-bool btpolicy_wants(const struct btpolicy *p, const struct btpolicy_advert *a, bool window_open,
-		    uint8_t stored_count, uint32_t now_ms)
+bool btpolicy_interesting(const struct btpolicy_advert *a)
 {
-	if (p->state != BTPOLICY_IDLE || !btpolicy_interesting(a)) {
-		return false;
+	return a->connectable && (a->stored || (a->hid_service && a->kind != BTPOLICY_NO_KIND));
+}
+
+enum btpolicy_want btpolicy_wants(const struct btpolicy *p, const struct btpolicy_advert *a,
+				  bool window_open, uint8_t stored_count, uint32_t now_ms)
+{
+	const struct btpolicy_slot *s;
+
+	if (!btpolicy_interesting(a) || a->kind == BTPOLICY_NO_KIND || setting_up(p)) {
+		return BTPOLICY_IGNORE;
+	}
+	s = &p->slots[a->kind];
+	if (s->dropping) {
+		return BTPOLICY_IGNORE;
 	}
 	if (a->stored) {
-		return !window_open &&
-		       (!p->retry_pending || (int32_t)(now_ms - p->retry_at_ms) >= 0);
+		bool waited = !s->retry_pending || (int32_t)(now_ms - s->retry_at_ms) >= 0;
+
+		return s->state == BTPOLICY_IDLE && !window_open && waited ? BTPOLICY_CONNECT
+									    : BTPOLICY_IGNORE;
 	}
-	return window_open && !a->directed && stored_count < BTPOLICY_STORED_MAX &&
-	       !refused(p, a->addr);
+	if (!window_open || a->directed || stored_count >= BTPOLICY_STORED_MAX ||
+	    refused(p, a->addr)) {
+		return BTPOLICY_IGNORE;
+	}
+	return s->state == BTPOLICY_IDLE ? BTPOLICY_CONNECT : BTPOLICY_REPLACE;
 }
 
 void btpolicy_connecting(struct btpolicy *p, const struct btpolicy_advert *a)
 {
-	p->state = BTPOLICY_CONNECTING;
-	memcpy(p->peer, a->addr, BTPOLICY_ADDR_LEN);
-	p->peer_stored = a->stored;
+	struct btpolicy_slot *s = &p->slots[a->kind];
+
+	s->state = BTPOLICY_CONNECTING;
+	memcpy(s->peer, a->addr, BTPOLICY_ADDR_LEN);
+	s->peer_stored = a->stored;
 }
 
-void btpolicy_connected(struct btpolicy *p)
+void btpolicy_dropping(struct btpolicy *p, enum btpolicy_kind kind)
 {
-	p->state = BTPOLICY_CONNECTED;
+	p->slots[kind].dropping = true;
 }
 
-const uint8_t *btpolicy_peer(const struct btpolicy *p)
+void btpolicy_connected(struct btpolicy *p, enum btpolicy_kind kind)
 {
-	return p->state == BTPOLICY_IDLE ? NULL : p->peer;
+	p->slots[kind].state = BTPOLICY_CONNECTED;
 }
 
-static void refuse_peer(struct btpolicy *p)
+const uint8_t *btpolicy_peer(const struct btpolicy *p, enum btpolicy_kind kind)
 {
-	if (!refused(p, p->peer) && p->refused_count < BTPOLICY_STORED_MAX) {
-		memcpy(p->refused[p->refused_count++], p->peer, BTPOLICY_ADDR_LEN);
+	return p->slots[kind].state == BTPOLICY_IDLE ? NULL : p->slots[kind].peer;
+}
+
+static void refuse_peer(struct btpolicy *p, const uint8_t *peer)
+{
+	if (!refused(p, peer) && p->refused_count < BTPOLICY_STORED_MAX) {
+		memcpy(p->refused[p->refused_count++], peer, BTPOLICY_ADDR_LEN);
 	}
 }
 
-enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, bool passkey_used)
+enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, enum btpolicy_kind kind,
+				      bool passkey_used)
 {
-	if (p->window_open && p->passkey_demanded && !passkey_used) {
-		refuse_peer(p);
+	struct btpolicy_slot *s = &p->slots[kind];
+
+	if (kind == BTPOLICY_KEYBOARD && p->window_open && p->passkey_demanded && !passkey_used) {
+		refuse_peer(p, s->peer);
 		return BTPOLICY_PAIRING_FORGOTTEN;
 	}
-	p->peer_stored = true;
+	s->peer_stored = true;
 	return BTPOLICY_PAIRING_KEPT;
 }
 
-void btpolicy_ready(struct btpolicy *p)
+void btpolicy_ready(struct btpolicy *p, enum btpolicy_kind kind)
 {
-	p->state = BTPOLICY_READY;
+	p->slots[kind].state = BTPOLICY_READY;
 }
 
-bool btpolicy_is_ready(const struct btpolicy *p)
+bool btpolicy_is_ready(const struct btpolicy *p, enum btpolicy_kind kind)
 {
-	return p->state == BTPOLICY_READY;
+	return p->slots[kind].state == BTPOLICY_READY;
 }
 
-void btpolicy_disconnected(struct btpolicy *p, uint32_t now_ms, bool never_joined)
+void btpolicy_disconnected(struct btpolicy *p, enum btpolicy_kind kind, uint32_t now_ms,
+			   bool never_joined)
 {
-	bool failed = p->state != BTPOLICY_READY && p->peer_stored;
-	bool quick = failed && never_joined && p->quick_retries < BTPOLICY_QUICK_RETRIES;
+	struct btpolicy_slot *s = &p->slots[kind];
+	bool failed = s->state != BTPOLICY_READY && s->peer_stored;
+	bool quick = failed && never_joined && s->quick_retries < BTPOLICY_QUICK_RETRIES;
 
-	p->quick_retries = quick ? p->quick_retries + 1 : 0;
-	p->retry_pending = failed && !quick;
-	p->retry_at_ms = now_ms + BTPOLICY_RETRY_MS;
-	p->state = BTPOLICY_IDLE;
+	s->quick_retries = quick ? s->quick_retries + 1 : 0;
+	s->retry_pending = failed && !quick;
+	s->retry_at_ms = now_ms + BTPOLICY_RETRY_MS;
+	s->state = BTPOLICY_IDLE;
+	s->dropping = false;
 }
 
-enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum btpolicy_failure why)
+enum btpolicy_security btpolicy_security_failed(struct btpolicy *p, enum btpolicy_kind kind,
+						enum btpolicy_failure why)
 {
-	if (p->peer_stored) {
+	struct btpolicy_slot *s = &p->slots[kind];
+
+	if (s->peer_stored) {
 		return why == BTPOLICY_FAILURE_KEY_MISSING ? BTPOLICY_BOND_LOST
 							   : BTPOLICY_SECURITY_FAILED;
 	}
 	if (why != BTPOLICY_FAILURE_REFUSAL) {
 		return BTPOLICY_SECURITY_FAILED;
 	}
-	if (refused(p, p->peer)) {
+	if (refused(p, s->peer)) {
 		return BTPOLICY_REFUSED_BEFORE;
 	}
-	refuse_peer(p);
+	refuse_peer(p, s->peer);
 	return BTPOLICY_PAIRING_REFUSED;
 }
 
@@ -116,7 +166,18 @@ void btpolicy_window(struct btpolicy *p, bool open, bool passkey_demanded)
 	p->passkey_demanded = open && passkey_demanded;
 }
 
-bool btpolicy_scanning(const struct btpolicy *p)
+enum btpolicy_scan btpolicy_scan(const struct btpolicy *p)
 {
-	return p->state == BTPOLICY_IDLE;
+	bool slot_free = false;
+
+	if (setting_up(p)) {
+		return BTPOLICY_SCAN_OFF;
+	}
+	if (p->window_open) {
+		return BTPOLICY_SCAN_ACTIVE;
+	}
+	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+		slot_free |= p->slots[k].state == BTPOLICY_IDLE;
+	}
+	return slot_free ? BTPOLICY_SCAN_PASSIVE : BTPOLICY_SCAN_OFF;
 }

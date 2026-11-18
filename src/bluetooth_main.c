@@ -38,7 +38,7 @@ static struct hidkeys keys;
 static struct btpolicy policy;
 static struct btlist list;
 static struct pairwin window;
-static char name[BLE_NAME_MAX + 1];
+static char names[BTPOLICY_KINDS][BLE_NAME_MAX + 1];
 static int start_err;
 static bool passkey_asked;
 static bool rssi_read;
@@ -50,7 +50,7 @@ static uint32_t report_ms;
 static void fill_status(struct diag_status *st)
 {
 	st->link_state = start_err			? LINK_START_FAILED
-			 : btpolicy_is_ready(&policy)	? LINK_CONNECTED
+			 : btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) ? LINK_CONNECTED
 							: LINK_NO_KEYBOARD;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
 	if (rssi_read) {
@@ -59,8 +59,9 @@ static void fill_status(struct diag_status *st)
 	if (reported) {
 		st->last_rx_age_ms = k_uptime_get_32() - report_ms;
 	}
-	if (btpolicy_is_ready(&policy)) {
-		strncpy((char *)st->keyboard_name, name, sizeof(st->keyboard_name));
+	if (btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
+		strncpy((char *)st->keyboard_name, names[BTPOLICY_KEYBOARD],
+			sizeof(st->keyboard_name));
 	}
 }
 
@@ -107,11 +108,12 @@ static const char *map_fault(enum hidmap_result result)
 static void save_list(bool changed)
 {
 	if (changed && store_save_bluetooth(&list, sizeof(list)) != 0) {
-		printk("bluetooth keyboard list not saved\n");
+		printk("bluetooth device list not saved\n");
 	}
 }
 
-/* Bonds decide which keyboards are listed; the list adds their names, passkey mark and order. */
+/* Bonds decide which devices are listed; the list adds their kinds, names, passkey mark and
+ * order. */
 static void load_list(void)
 {
 	uint8_t bonded[BTPOLICY_STORED_MAX][BTPOLICY_ADDR_LEN];
@@ -149,7 +151,7 @@ static void send_leds(uint8_t leds)
 {
 	int err;
 
-	if (!btpolicy_is_ready(&policy) || !map.has_leds) {
+	if (!btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) || !map.has_leds) {
 		return;
 	}
 	err = ble_set_leds(map.led_report_id, leds);
@@ -158,21 +160,32 @@ static void send_leds(uint8_t leds)
 	}
 }
 
-static void on_advert(const struct btpolicy_advert *a)
+static void on_advert(const struct btpolicy_advert *heard)
 {
+	struct btpolicy_advert a = *heard;
 	uint32_t now = k_uptime_get_32();
 	int err;
 
-	if (!btpolicy_wants(&policy, a, pairwin_is_open(&window, now), ble_stored_count(), now)) {
-		return;
+	if (a.stored) {
+		a.kind = btlist_kind(&list, a.addr);
 	}
-	ble_scan(false);
-	err = ble_connect(a->addr);
+	switch (btpolicy_wants(&policy, &a, pairwin_is_open(&window, now), ble_stored_count(), now)) {
+	case BTPOLICY_IGNORE:
+		return;
+	case BTPOLICY_REPLACE:
+		btpolicy_dropping(&policy, a.kind);
+		ble_disconnect(a.kind);
+		return;
+	case BTPOLICY_CONNECT:
+		break;
+	}
+	ble_scan(BTPOLICY_SCAN_OFF);
+	err = ble_connect(a.kind, a.addr);
 	if (err) {
 		printk("bluetooth connect not started: %d\n", err);
 		return;
 	}
-	btpolicy_connecting(&policy, a);
+	btpolicy_connecting(&policy, &a);
 }
 
 static void on_failed(const struct ble_event *ev)
@@ -181,14 +194,14 @@ static void on_failed(const struct ble_event *ev)
 	if (ev->failed.stage != BLE_STAGE_SECURITY) {
 		return;
 	}
-	switch (btpolicy_security_failed(&policy, ev->failed.why)) {
+	switch (btpolicy_security_failed(&policy, ev->kind, ev->failed.why)) {
 	case BTPOLICY_PAIRING_REFUSED:
 		printk("bluetooth pairing refused\n");
 		core_log(HISTORY_BT_REFUSED, HISTORY_REFUSED_BY_KEYBOARD, 0, 0, 0);
 		break;
 	case BTPOLICY_BOND_LOST:
-		printk("bluetooth keyboard lost its bond\n");
-		log_keyboard(HISTORY_BT_BOND_LOST, btpolicy_peer(&policy), 0);
+		printk("bluetooth device lost its bond\n");
+		log_keyboard(HISTORY_BT_BOND_LOST, btpolicy_peer(&policy, ev->kind), 0);
 		break;
 	case BTPOLICY_REFUSED_BEFORE:
 	case BTPOLICY_SECURITY_FAILED:
@@ -196,39 +209,57 @@ static void on_failed(const struct ble_event *ev)
 	}
 }
 
-static void on_map_read(void)
+static void device_ready(enum btpolicy_kind kind)
 {
-	size_t len = ble_copy_map(map_bytes, sizeof(map_bytes));
-	enum hidmap_result result = hidmap_parse(map_bytes, len, &map);
+	btpolicy_ready(&policy, kind);
+	log_keyboard(HISTORY_BT_CONNECTED, btpolicy_peer(&policy, kind), 0);
+	save_list(btlist_connected(&list, btpolicy_peer(&policy, kind), names[kind]));
+}
+
+static void on_map_read(enum btpolicy_kind kind)
+{
+	char *name = names[kind];
+	size_t len;
+	enum hidmap_result result;
 	uint8_t leds;
 
-	ble_copy_name(name);
+	ble_copy_name(kind, name);
+	if (kind == BTPOLICY_MOUSE) {
+		printk("bluetooth mouse \"%s\" ready\n", name);
+		device_ready(kind);
+		return;
+	}
+	len = ble_copy_map(kind, map_bytes, sizeof(map_bytes));
+	result = hidmap_parse(map_bytes, len, &map);
 	if (result != HIDMAP_OK) {
 		printk("bluetooth keyboard \"%s\" refused: report map %s\n", name,
 		       map_fault(result));
 		if (result == HIDMAP_NO_KEYBOARD) {
-			forget(btpolicy_peer(&policy));
+			forget(btpolicy_peer(&policy, kind));
 		}
-		ble_disconnect();
+		ble_disconnect(kind);
 		return;
 	}
 	printk("bluetooth keyboard \"%s\" ready\n", name);
-	btpolicy_ready(&policy);
-	log_keyboard(HISTORY_BT_CONNECTED, btpolicy_peer(&policy), 0);
-	save_list(btlist_connected(&list, btpolicy_peer(&policy), name));
+	device_ready(kind);
 	core_take_leds(&leds);
 	send_leds(leds);
 }
 
-static void on_disconnected(uint8_t reason)
+static void on_disconnected(enum btpolicy_kind kind, uint8_t reason)
 {
-	if (btpolicy_is_ready(&policy)) {
+	if (btpolicy_is_ready(&policy, kind)) {
 		core_log(HISTORY_BT_DISCONNECTED, reason, core_minutes_since_key(), 0, 0);
-		core_release_keys();
 	}
-	btpolicy_disconnected(&policy, k_uptime_get_32(), reason == BLE_REASON_NOT_ESTABLISHED);
-	hidkeys_reset(&keys);
-	rssi_read = false;
+	if (kind == BTPOLICY_KEYBOARD) {
+		if (btpolicy_is_ready(&policy, kind)) {
+			core_release_keys();
+		}
+		hidkeys_reset(&keys);
+		rssi_read = false;
+	}
+	btpolicy_disconnected(&policy, kind, k_uptime_get_32(),
+			      reason == BLE_REASON_NOT_ESTABLISHED);
 }
 
 static void on_report(const struct ble_event *ev)
@@ -236,7 +267,7 @@ static void on_report(const struct ble_event *ev)
 	struct report out[REPORT_KINDS];
 	size_t n;
 
-	if (!btpolicy_is_ready(&policy)) {
+	if (ev->kind != BTPOLICY_KEYBOARD || !btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
 		return;
 	}
 	core_count(CORE_PACKETS);
@@ -256,30 +287,32 @@ static void on_event(const struct ble_event *ev)
 		break;
 	case BLE_CONNECTED:
 		printk("bluetooth connected: %s\n", ev->address);
-		btpolicy_connected(&policy);
+		btpolicy_connected(&policy, ev->kind);
 		break;
 	case BLE_DISCONNECTED:
 		printk("bluetooth disconnected: reason 0x%02x\n", ev->reason);
-		on_disconnected(ev->reason);
+		on_disconnected(ev->kind, ev->reason);
 		break;
 	case BLE_FAILED:
 		on_failed(ev);
 		break;
 	case BLE_PAIRED:
-		if (btpolicy_paired(&policy, ev->passkey_used) == BTPOLICY_PAIRING_FORGOTTEN) {
+		if (btpolicy_paired(&policy, ev->kind, ev->passkey_used) ==
+		    BTPOLICY_PAIRING_FORGOTTEN) {
 			printk("bluetooth pairing refused: no passkey typed\n");
 			core_log(HISTORY_BT_REFUSED, HISTORY_REFUSED_NO_PASSKEY, 0, 0, 0);
-			forget(btpolicy_peer(&policy));
-			ble_disconnect();
+			forget(btpolicy_peer(&policy, ev->kind));
+			ble_disconnect(ev->kind);
 			break;
 		}
 		printk("bluetooth paired\n");
-		log_keyboard(HISTORY_BT_PAIRED, btpolicy_peer(&policy), ev->passkey_used);
-		save_list(btlist_paired(&list, btpolicy_peer(&policy), !ev->passkey_used));
+		log_keyboard(HISTORY_BT_PAIRED, btpolicy_peer(&policy, ev->kind), ev->passkey_used);
+		save_list(btlist_paired(&list, btpolicy_peer(&policy, ev->kind), ev->kind,
+					!ev->passkey_used));
 		pairwin_paired(&window);
 		break;
 	case BLE_MAP_READ:
-		on_map_read();
+		on_map_read(ev->kind);
 		break;
 	case BLE_REPORT:
 		on_report(ev);
@@ -318,7 +351,6 @@ static void open_pairing(const struct diag_request *req)
 	pairwin_open(&window, PAIRWIN_REQUEST, true, k_uptime_get_32());
 	core_log_pairing_opened(&window);
 	printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
-	ble_disconnect();
 	sys_put_le32(passkey, &reply[1]);
 	diag_reply(req, reply, sizeof(reply), DIAG_AFTER_NONE);
 }
@@ -326,7 +358,11 @@ static void open_pairing(const struct diag_request *req)
 static void send_keyboards(const struct diag_request *req)
 {
 	uint8_t payload[DIAG_KEYBOARDS_MAX];
-	const uint8_t *connected = btpolicy_is_ready(&policy) ? btpolicy_peer(&policy) : NULL;
+	const uint8_t *connected[BTPOLICY_KINDS];
+
+	for (int k = 0; k < BTPOLICY_KINDS; k++) {
+		connected[k] = btpolicy_is_ready(&policy, k) ? btpolicy_peer(&policy, k) : NULL;
+	}
 
 	diag_reply(req, payload, diag_encode_keyboards(payload, &list, connected),
 		   DIAG_AFTER_NONE);
@@ -367,11 +403,11 @@ static void read_rssi(uint32_t now)
 {
 	int8_t dbm;
 
-	if (!btpolicy_is_ready(&policy) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
+	if (!btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD) || now - rssi_tried_ms < RSSI_PERIOD_MS) {
 		return;
 	}
 	rssi_tried_ms = now;
-	if (ble_rssi(&dbm) == 0) {
+	if (ble_rssi(BTPOLICY_KEYBOARD, &dbm) == 0) {
 		rssi = dbm;
 		rssi_read = true;
 		core_rssi(dbm);
@@ -383,7 +419,7 @@ static enum indicator_mode indicator(uint32_t now)
 	if (start_err) {
 		return IND_ERROR;
 	}
-	if (btpolicy_is_ready(&policy)) {
+	if (btpolicy_is_ready(&policy, BTPOLICY_KEYBOARD)) {
 		return IND_CONNECTED;
 	}
 	return pairwin_is_open(&window, now) ? IND_PAIRING : IND_IDLE;
@@ -434,7 +470,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 		read_rssi(now);
 		btpolicy_window(&policy, pairwin_is_open(&window, now), passkey_asked);
 		if (start_err == 0) {
-			int err = ble_scan(btpolicy_scanning(&policy));
+			int err = ble_scan(btpolicy_scan(&policy));
 
 			if (err) {
 				printk("bluetooth scan not switched: %d\n", err);

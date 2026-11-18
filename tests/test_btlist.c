@@ -52,13 +52,13 @@ static void pairing_records_whether_a_passkey_was_typed(void)
 {
 	struct btlist l = {0};
 
-	CHECK(btlist_paired(&l, air, true));
-	CHECK(btlist_paired(&l, mx, false));
+	CHECK(btlist_paired(&l, air, BTPOLICY_KEYBOARD, true));
+	CHECK(btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
 	CHECK_EQ(l.count, 2);
 	CHECK(is(&l.entries[0], mx, ""));
 	CHECK(!l.entries[0].no_passkey);
 	CHECK(l.entries[1].no_passkey);
-	CHECK(!btlist_paired(&l, mx, false));
+	CHECK(!btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
 	btlist_connected(&l, air, "NuPhy Air75 V2-1");
 	CHECK(l.entries[0].no_passkey);
 }
@@ -94,7 +94,7 @@ static void reconciling_drops_entries_without_a_bond_and_adds_bonds_without_an_e
 	CHECK(!btlist_reconcile(&l, bonded, 2));
 }
 
-static void a_full_list_takes_no_fifth_keyboard(void)
+static void a_full_list_takes_no_more_devices(void)
 {
 	struct btlist l = {0};
 	uint8_t addr[BTPOLICY_ADDR_LEN] = {1};
@@ -105,7 +105,7 @@ static void a_full_list_takes_no_fifth_keyboard(void)
 	}
 	addr[1] = 99;
 	CHECK(!btlist_connected(&l, addr, "k"));
-	CHECK(!btlist_paired(&l, addr, false));
+	CHECK(!btlist_paired(&l, addr, BTPOLICY_KEYBOARD, false));
 	CHECK_EQ(l.count, BTPOLICY_STORED_MAX);
 }
 
@@ -122,6 +122,43 @@ static void only_a_listed_keyboard_is_in_the_list(void)
 	CHECK(!btlist_has(&l, mx));
 }
 
+static const uint8_t mouse[BTPOLICY_ADDR_LEN] = {1, 0x17, 0x3e, 0xff, 0x26, 0x33, 0xd4};
+
+static void pairing_records_the_kind(void)
+{
+	struct btlist l = {0};
+
+	CHECK(btlist_paired(&l, mouse, BTPOLICY_MOUSE, true));
+	CHECK(btlist_paired(&l, mx, BTPOLICY_KEYBOARD, false));
+	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_MOUSE);
+	CHECK_EQ(btlist_kind(&l, mx), BTPOLICY_KEYBOARD);
+	CHECK_EQ(btlist_kind(&l, air), BTPOLICY_NO_KIND);
+	CHECK(btlist_connected(&l, mouse, "MX Master 3S"));
+	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_MOUSE);
+}
+
+static void a_bond_without_an_entry_is_listed_as_a_keyboard(void)
+{
+	const uint8_t bonded[][BTPOLICY_ADDR_LEN] = {{1, 0x17, 0x3e, 0xff, 0x26, 0x33, 0xd4}};
+	struct btlist l = {0};
+
+	CHECK(btlist_reconcile(&l, bonded, 1));
+	CHECK_EQ(btlist_kind(&l, mouse), BTPOLICY_KEYBOARD);
+}
+
+static void eight_devices_are_stored(void)
+{
+	struct btlist l = {0};
+	uint8_t addr[BTPOLICY_ADDR_LEN] = {1};
+
+	for (uint8_t i = 0; i < 8; i++) {
+		addr[1] = i;
+		btlist_connected(&l, addr, "d");
+	}
+	CHECK_EQ(l.count, 8);
+	CHECK(btlist_has(&l, (const uint8_t[BTPOLICY_ADDR_LEN]){1, 0}));
+}
+
 int main(void)
 {
 	RUN(a_connecting_keyboard_moves_to_the_front_with_its_name);
@@ -130,7 +167,10 @@ int main(void)
 	RUN(pairing_records_whether_a_passkey_was_typed);
 	RUN(removing_closes_the_gap);
 	RUN(reconciling_drops_entries_without_a_bond_and_adds_bonds_without_an_entry);
-	RUN(a_full_list_takes_no_fifth_keyboard);
+	RUN(a_full_list_takes_no_more_devices);
 	RUN(only_a_listed_keyboard_is_in_the_list);
+	RUN(eight_devices_are_stored);
+	RUN(pairing_records_the_kind);
+	RUN(a_bond_without_an_entry_is_listed_as_a_keyboard);
 	return TEST_EXIT();
 }

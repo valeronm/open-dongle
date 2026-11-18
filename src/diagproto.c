@@ -218,7 +218,8 @@ size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 
 _Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored keyboard's name is sent whole");
 
-size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l, const uint8_t *connected)
+size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
+			     const uint8_t *const connected[BTPOLICY_KINDS])
 {
 	uint8_t *p = out;
 
@@ -227,8 +228,13 @@ size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l, const uint8_t
 		const struct btlist_entry *e = &l->entries[i];
 		uint8_t flags = e->no_passkey ? DIAG_KEYBOARD_NO_PASSKEY : 0;
 
-		if (connected && memcmp(e->addr, connected, sizeof(e->addr)) == 0) {
-			flags |= DIAG_KEYBOARD_CONNECTED;
+		if (e->kind == BTPOLICY_MOUSE) {
+			flags |= DIAG_KEYBOARD_MOUSE;
+		}
+		for (int k = 0; k < BTPOLICY_KINDS; k++) {
+			if (connected[k] && memcmp(e->addr, connected[k], sizeof(e->addr)) == 0) {
+				flags |= DIAG_KEYBOARD_CONNECTED;
+			}
 		}
 		memcpy(p, e->addr, sizeof(e->addr));
 		p += sizeof(e->addr);

@@ -21,7 +21,7 @@ static void remove_at(struct btlist *l, uint8_t at)
 	l->count--;
 }
 
-/* Puts the keyboard's entry first, creating it if there is room; NULL when there is not. */
+/* Puts the device's entry first, creating it if there is room; NULL when there is not. */
 static struct btlist_entry *to_front(struct btlist *l, const uint8_t *addr, bool *changed)
 {
 	struct btlist_entry e = {0};
@@ -85,7 +85,8 @@ bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name)
 	return changed;
 }
 
-bool btlist_paired(struct btlist *l, const uint8_t *addr, bool no_passkey)
+bool btlist_paired(struct btlist *l, const uint8_t *addr, enum btpolicy_kind kind,
+		   bool no_passkey)
 {
 	bool changed = false;
 	struct btlist_entry *e = to_front(l, addr, &changed);
@@ -93,8 +94,9 @@ bool btlist_paired(struct btlist *l, const uint8_t *addr, bool no_passkey)
 	if (!e) {
 		return false;
 	}
-	if (e->no_passkey != no_passkey) {
+	if (e->no_passkey != no_passkey || e->kind != kind) {
 		e->no_passkey = no_passkey;
+		e->kind = kind;
 		changed = true;
 	}
 	return changed;
@@ -114,4 +116,11 @@ bool btlist_remove(struct btlist *l, const uint8_t *addr)
 bool btlist_has(const struct btlist *l, const uint8_t *addr)
 {
 	return find(l, addr) != NOT_LISTED;
+}
+
+enum btpolicy_kind btlist_kind(const struct btlist *l, const uint8_t *addr)
+{
+	uint8_t at = find(l, addr);
+
+	return at == NOT_LISTED ? BTPOLICY_NO_KIND : l->entries[at].kind;
 }

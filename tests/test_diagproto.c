@@ -365,10 +365,27 @@ static void test_keyboards_match_fixture(void)
 	memcpy(list.entries[1].addr, (uint8_t[]){1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6}, 7);
 	memcpy(list.entries[1].name, "NuPhy Air75 V2-1", 16);
 	list.entries[1].no_passkey = true;
-	CHECK_EQ(diag_encode_keyboards(got, &list, list.entries[0].addr), want_len);
+	CHECK_EQ(diag_encode_keyboards(got, &list, (const uint8_t *const[]){list.entries[0].addr, NULL}),
+		 want_len);
 	CHECK_MEM(got, want, want_len);
-	CHECK_EQ(diag_encode_keyboards(got, &list, NULL), want_len);
+	CHECK_EQ(diag_encode_keyboards(got, &list, (const uint8_t *const[]){NULL, NULL}), want_len);
 	CHECK_EQ(got[8], 0);
+}
+
+static void test_a_listed_mouse_is_flagged_and_both_slots_connect(void)
+{
+	struct btlist list = {0};
+	const uint8_t keyboard[BTPOLICY_ADDR_LEN] = {1, 1};
+	const uint8_t mouse[BTPOLICY_ADDR_LEN] = {1, 2};
+	uint8_t got[DIAG_KEYBOARDS_MAX];
+
+	btlist_paired(&list, keyboard, BTPOLICY_KEYBOARD, false);
+	btlist_paired(&list, mouse, BTPOLICY_MOUSE, true);
+	diag_encode_keyboards(got, &list, (const uint8_t *const[]){keyboard, mouse});
+	CHECK_EQ(got[0], 2);
+	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN],
+		 DIAG_KEYBOARD_MOUSE | DIAG_KEYBOARD_NO_PASSKEY | DIAG_KEYBOARD_CONNECTED);
+	CHECK_EQ(got[1 + DIAG_KEYBOARD_LEN + BTPOLICY_ADDR_LEN], DIAG_KEYBOARD_CONNECTED);
 }
 
 static void test_a_protocol_answers_only_its_commands(void)
@@ -423,6 +440,7 @@ int main(void)
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);
 	RUN(test_keyboards_match_fixture);
+	RUN(test_a_listed_mouse_is_flagged_and_both_slots_connect);
 	RUN(test_a_protocol_answers_only_its_commands);
 	return TEST_EXIT();
 }

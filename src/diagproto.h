@@ -27,6 +27,7 @@
 #define DIAG_NO_RSSI INT8_MIN
 #define DIAG_KEYBOARD_CONNECTED 0x01
 #define DIAG_KEYBOARD_NO_PASSKEY 0x02
+#define DIAG_KEYBOARD_MOUSE 0x04
 /* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */
 #define DIAG_PAIR_NO_PASSKEY 1
 /* The reply under Bluetooth: 1 if a passkey is to be typed, then the passkey. */
@@ -50,9 +51,9 @@ enum diag_command {
 	/* arg is the channel; the reply is the channel the link was on. */
 	DIAG_MOVE,
 	DIAG_WATCH,
-	/* The stored Bluetooth keyboards, the most recently connected first. */
+	/* The stored Bluetooth devices, the most recently connected first. */
 	DIAG_KEYBOARDS,
-	/* data is the keyboard's address as DIAG_KEYBOARDS gives it. */
+	/* data is the device's address as DIAG_KEYBOARDS gives it. */
 	DIAG_FORGET,
 };
 
@@ -122,8 +123,9 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
 			 size_t n);
 size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
-/* connected is the connected keyboard's address, or NULL. */
-size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l, const uint8_t *connected);
+/* connected[k] is the ready device of kind k, or NULL. */
+size_t diag_encode_keyboards(uint8_t *out, const struct btlist *l,
+			     const uint8_t *const connected[BTPOLICY_KINDS]);
 /* No home is sent as 0, no threshold as CHANWATCH_NO_THRESHOLD. */
 size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 			 uint8_t threshold_bucket, bool paused, uint64_t now_ms);
