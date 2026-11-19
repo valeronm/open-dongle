@@ -32,7 +32,14 @@ curl -fsSL https://raw.githubusercontent.com/valeronm/spare-dongle/main/tools/ge
 
 On Linux, a udev rule lets the tool reach the board without root in every state
 [`spare-dongle flash`](#flashing-the-firmware) handles. The installer leaves the rule in
-`~/.local/share/spare-dongle` and prints the commands that install it.
+`~/.local/share/spare-dongle`, and a source checkout has it in `tools/udev`. To install it and
+apply it to a board that is already plugged in:
+
+```
+sudo cp ~/.local/share/spare-dongle/70-spare-dongle.rules /etc/udev/rules.d/
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=tty
+```
 
 ## Flashing the firmware
 
@@ -116,13 +123,15 @@ requires, about 8 GB, into `~/ncs`, or into `NCS_ROOT` when it is set. It skips 
 place, so it is safe to rerun. The ESB library and the USB device stack change their APIs between
 SDK releases, so other versions are untested.
 
+On Linux, install the [udev rule](#installing-the-tool) from `tools/udev` before flashing.
+
 ```
 mise run build
 mise run flash [serial]
 cargo install --locked --path tool
 ```
 
-`mise run flash` flashes the image `mise run build` wrote. The udev rule is in `tools/udev`.
+`mise run flash` flashes the image `mise run build` wrote.
 
 ## Development
 

@@ -67,8 +67,9 @@ if [ -f "$tmp/$dir/$rules" ]; then
   mkdir -p "$share"
   install -m 0644 "$tmp/$dir/$rules" "$share/$rules"
   if ! cmp -s "$share/$rules" "/etc/udev/rules.d/$rules"; then
-    echo "To let $name reach the board without root, install its udev rule and replug the board:"
+    echo "To let $name reach the board without root, install its udev rule:"
     printf '  sudo cp "%s" /etc/udev/rules.d/\n' "$share/$rules"
     echo "  sudo udevadm control --reload"
+    echo "  sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=tty"
   fi
 fi
