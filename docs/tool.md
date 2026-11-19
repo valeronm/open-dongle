@@ -52,9 +52,10 @@ Unifying keyboard's channels are fixed by its firmware, so the command exists on
 The dongle reports each device it holds in a numbered slot: NuPhy and Unifying have one, the
 keyboard, and Bluetooth has two, a keyboard and a mouse. `status`, `history` and the live view
 show every slot that has a device paired or connected, each with its own name, signal, last packet
-and counters; the channel, noise, USB and the other link-wide counters are shared. In the live
-view the slots stand side by side when the terminal is wide enough, and otherwise `o` steps
-through them. Event lines name the device they are about.
+and counters; the channel, noise, USB and the other link-wide counters are shared. The live view
+shows the shared state in one dongle box, and below it each slot's box and chart, side by side
+when the terminal is wide enough, and otherwise `o` steps through them. Event lines name the
+device they are about.
 
 Each device's latency is the delay from a report's arrival at the dongle to the PC fetching it over
 USB, as its average and maximum since the last `clear`. It leaves out the time on air and in the

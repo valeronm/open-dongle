@@ -571,6 +571,11 @@ impl Status {
         self.slots.get(usize::from(slot))
     }
 
+    /// The kind of device the slot holds, "device" for a slot the status does not list.
+    pub fn kind_name(&self, slot: u8) -> &'static str {
+        self.slot(slot).map_or("device", |s| s.kind.name())
+    }
+
     /// The channels a move can send the link to, ascending.
     pub fn keyboard_channels(&self) -> Vec<u8> {
         let mut channels: Vec<u8> = match &self.link {

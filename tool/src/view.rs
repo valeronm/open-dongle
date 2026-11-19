@@ -35,7 +35,7 @@ const EVENTS_KEPT: usize = 200;
 const EVENT_ROWS: usize = 8;
 const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
-const STATUS_ROWS: u16 = 4;
+const DEVICE_ROWS: u16 = 2;
 /// The narrowest a slot's status box and chart draw uncut.
 const PANEL_MIN_WIDTH: u16 = 59;
 const SEPARATOR: &str = "   ";
@@ -138,6 +138,14 @@ fn history_min_rows(protocol: Option<Protocol>) -> u16 {
         })
         .sum();
     2 + rows
+}
+
+/// A frame's title or caption, spaced off the border on both sides.
+fn padded<'a>(title: impl Into<Line<'a>>) -> Line<'a> {
+    let mut line = title.into();
+    line.spans.insert(0, Span::raw(" "));
+    line.spans.push(Span::raw(" "));
+    line
 }
 
 fn status_row(label: &str, spans: impl IntoIterator<Item = Span<'static>>) -> Line<'static> {
@@ -938,9 +946,12 @@ impl<T: Transport> App<T> {
         let (session, help) = self.connection.view(usize::from(width));
         let history = session.map(|s| &s.history);
         let status = history.map(|h| &h.status);
-        let [top, middle, bottom, footer] = Layout::vertical([
-            Constraint::Length(STATUS_ROWS + 2),
-            Constraint::Min(history_min_rows(status.map(Status::protocol))),
+        let protocol = status.map(Status::protocol);
+        let dongle_rows = dongle_lines(status);
+        let [dongle, top, middle, bottom, footer] = Layout::vertical([
+            Constraint::Length(dongle_rows.len() as u16 + 2),
+            Constraint::Length(DEVICE_ROWS + 2),
+            Constraint::Min(history_min_rows(protocol)),
             Constraint::Max(EVENT_ROWS as u16 + 2),
             Constraint::Length(help.len() as u16),
         ])
@@ -953,13 +964,21 @@ impl<T: Transport> App<T> {
         if panels.is_empty() {
             panels.push(None);
         }
-        let named = session.is_some_and(|s| s.cycling(width));
+        let cycling = session.is_some_and(|s| s.cycling(width));
+        f.render_widget(
+            Paragraph::new(dongle_rows)
+                .block(Block::bordered().title(padded(dongle_title(status)))),
+            dongle,
+        );
         let columns = Layout::horizontal(vec![Constraint::Fill(1); panels.len()]);
         for (area, slot) in columns.split(top).iter().zip(&panels) {
             let device = slot.map(|h| &h.device);
+            let mut block = Block::bordered();
+            if let Some((s, d)) = status.zip(device) {
+                block = block.title(padded(device_title(s, d)));
+            }
             f.render_widget(
-                Paragraph::new(status_lines(status, device))
-                    .block(Block::bordered().title(panel_title(status, device))),
+                Paragraph::new(slot_lines(status, device)).block(block),
                 *area,
             );
         }
@@ -980,7 +999,7 @@ impl<T: Transport> App<T> {
                 .split(middle)
                 .iter()
                 .zip(&panels)
-                .map(|(area, slot)| draw_history(f, *area, history, *slot, named))
+                .map(|(area, slot)| draw_history(f, *area, history, *slot))
                 .min(),
         };
         let event_rows = draw_events(f, bottom, history);
@@ -988,15 +1007,21 @@ impl<T: Transport> App<T> {
         self.drawn = Drawn {
             event_rows,
             plot_width,
-            cycling: named,
+            cycling,
         };
     }
 }
 
-fn panel_title(status: Option<&Status>, device: Option<&SlotStatus>) -> String {
+fn dongle_title(status: Option<&Status>) -> String {
     std::iter::once(crate::PRODUCT)
         .chain(status.map(|s| s.protocol().name()))
-        .chain(device.and_then(|d| d.name.as_deref()))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn device_title(s: &Status, d: &SlotStatus) -> String {
+    std::iter::once(s.kind_name(d.slot))
+        .chain(d.name.as_deref())
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -1018,11 +1043,33 @@ fn panels_fitting(width: u16) -> usize {
     usize::from(width / PANEL_MIN_WIDTH).max(1)
 }
 
-fn status_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<'static>> {
+fn dongle_lines(status: Option<&Status>) -> Vec<Line<'static>> {
     let Some(s) = status else {
         return vec![Line::from("disconnected")];
     };
-    let channels = s.protocol().has_channels();
+    let mut dongle = vec![Span::raw(format!(
+        "usb {}{SEPARATOR}up {}",
+        usb_state(s.usb_live, s.usb_suspended),
+        uptime(s.uptime_ms)
+    ))];
+    if s.pairing_open {
+        dongle.push(Span::raw(SEPARATOR));
+        dongle.push(Span::styled(
+            "pairing open",
+            Style::new().fg(link_color(LinkHealth::Pairing)),
+        ));
+    }
+    let mut rows = vec![status_row("dongle", dongle)];
+    if s.protocol().has_channels() {
+        rows.push(status_row("channels", channel_spans(s)));
+    }
+    rows
+}
+
+fn slot_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<'static>> {
+    let Some(s) = status else {
+        return Vec::new();
+    };
     let (state, health) = match device.and_then(|d| s.slot(d.slot)) {
         Some(slot) => (slot_state(s, slot), slot_health(s, slot)),
         None => (state_name(s), link_health(s)),
@@ -1042,38 +1089,20 @@ fn status_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Lin
             last_packet(d.last_packet_ms)
         )));
     }
-    let mut dongle = vec![Span::raw(format!(
-        "usb {}{SEPARATOR}up {}",
-        usb_state(s.usb_live, s.usb_suspended),
-        uptime(s.uptime_ms)
-    ))];
-    if s.pairing_open {
-        dongle.push(Span::raw(SEPARATOR));
-        dongle.push(Span::styled(
-            "pairing open",
-            Style::new().fg(link_color(LinkHealth::Pairing)),
-        ));
-    }
     let mut rows = vec![status_row("link", link)];
-    if channels {
-        rows.push(status_row("channels", channel_spans(s)));
-    }
-    rows.push(status_row("dongle", dongle));
     if let Some(l) = device.and_then(|d| d.latency) {
         rows.push(status_row("latency", vec![Span::raw(latency(l))]));
     }
     rows
 }
 
-/// `named` puts the slot's device in the title.
 fn draw_history(
     f: &mut Frame,
     area: Rect,
     history: Option<&History>,
     slot: Option<&SlotHistory>,
-    named: bool,
 ) -> usize {
-    let mut title = legend(
+    let title = legend(
         "signal dBm",
         "━ ",
         SIGNAL_LINES
@@ -1081,21 +1110,11 @@ fn draw_history(
             .rev()
             .map(|&(name, color, _)| (name, color)),
     );
-    if named && let Some((history, slot)) = history.zip(slot) {
-        let d = &slot.device;
-        let kind = history
-            .status
-            .slot(d.slot)
-            .map_or("device", |k| k.kind.name());
-        let device = d
-            .name
-            .as_ref()
-            .map_or(kind.to_string(), |name| format!("{kind} {name}"));
-        title.spans.insert(0, Span::raw(format!("{device} · ")));
-    }
     let block = Block::bordered()
-        .title(title)
-        .title_bottom(format!("busy: readings at {BUSY_DBM} dBm or louder"));
+        .title(padded(title))
+        .title_bottom(padded(format!(
+            "busy: readings at {BUSY_DBM} dBm or louder"
+        )));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let [gutter, axis_line, plot] = Layout::horizontal([
@@ -1191,20 +1210,20 @@ fn draw_noise(f: &mut Frame, area: Rect, noise: &[NoiseChannel], s: &Status) {
         .collect();
     let [chart, ruler] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
     let block = Block::bordered()
-        .title(legend(
+        .title(padded(legend(
             "loudest per channel",
             "━ ",
             [ChannelRole::Current, ChannelRole::Paired]
                 .into_iter()
                 .filter_map(|role| role.label().map(|name| (name, role_color(role)))),
-        ))
-        .title_bottom(Line::from_iter([
+        )))
+        .title_bottom(padded(Line::from_iter([
             Span::raw("▲ BLE advertising  ├─┤ Wi-Fi 1/6/11  "),
             Span::styled(
                 "dim: no move reaches",
                 Style::new().add_modifier(Modifier::DIM),
             ),
-        ]));
+        ])));
     let bars_area = block.inner(chart);
     f.render_widget(
         BarChart::default()
@@ -1271,8 +1290,8 @@ fn band_legend() -> Line<'static> {
 
 fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
     let block = Block::bordered()
-        .title(band_legend())
-        .title_bottom(watch_summary(w));
+        .title(padded(band_legend()))
+        .title_bottom(padded(watch_summary(w)));
     let width = usize::from(block.inner(area).width);
     let lines: Vec<Line> = w
         .channels
@@ -1299,7 +1318,7 @@ fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
 }
 
 fn draw_devices(f: &mut Frame, area: Rect, history: &History) {
-    let block = Block::bordered().title("stored devices; a device's number forgets it");
+    let block = Block::bordered().title(padded("stored devices; a device's number forgets it"));
     let lines = device_lines(&history.devices, history.status.protocol());
     f.render_widget(Paragraph::new(lines.join("\n")).block(block), area);
 }
@@ -1307,7 +1326,7 @@ fn draw_devices(f: &mut Frame, area: Rect, history: &History) {
 fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
     let rows = usize::from(area.height.saturating_sub(2));
     let Some(history) = history else {
-        f.render_widget(Block::bordered().title("events"), area);
+        f.render_widget(Block::bordered().title(padded("events")), area);
         return rows;
     };
     let events = &history.events;
@@ -1334,7 +1353,10 @@ fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
             ))
         })
         .collect();
-    f.render_widget(List::new(items).block(Block::bordered().title(title)), area);
+    f.render_widget(
+        List::new(items).block(Block::bordered().title(padded(title))),
+        area,
+    );
     rows
 }
 
@@ -1527,13 +1549,7 @@ mod tests {
         terminal
             .draw(|f| {
                 let history = app.session_mut().map(|s| &s.history);
-                draw_history(
-                    f,
-                    f.area(),
-                    history,
-                    history.and_then(|h| h.slots.first()),
-                    false,
-                );
+                draw_history(f, f.area(), history, history.and_then(|h| h.slots.first()));
             })
             .unwrap();
         screen(&terminal)
@@ -1828,9 +1844,11 @@ mod tests {
         app
     }
 
-    const KEYBOARD_TITLE: &str = "SpareDongle · Bluetooth · MX Keys";
-    const MOUSE_TITLE: &str = "SpareDongle · Bluetooth · MX Master 3S";
-    const CHART_ROW: usize = STATUS_ROWS as usize + 2;
+    const KEYBOARD_TITLE: &str = "┌ keyboard · MX Keys ─";
+    const MOUSE_TITLE: &str = "┌ mouse · MX Master 3S ─";
+    /// In Bluetooth mode, under the dongle box's one row.
+    const DEVICE_TITLE_ROW: usize = 3;
+    const CHART_ROW: usize = DEVICE_TITLE_ROW + 4;
 
     fn signal_legend() -> String {
         legend(
@@ -1844,24 +1862,39 @@ mod tests {
         .to_string()
     }
 
-    /// The narrowest view that draws its one slot's status box and chart titles uncut.
+    /// The narrowest view that draws its dongle box, its one slot's device box and the chart
+    /// titles uncut.
     fn narrowest_whole(mut app: App<Fake>) -> u16 {
         let h = history(&mut app);
         let device = &h.slots[0].device;
-        let title = panel_title(Some(&h.status), Some(device));
-        let lines: Vec<String> = status_lines(Some(&h.status), Some(device))
-            .iter()
-            .map(Line::to_string)
-            .collect();
+        let text = |lines: Vec<Line>| lines.iter().map(Line::to_string).collect::<Vec<_>>();
+        let boxes = [
+            (
+                dongle_title(Some(&h.status)),
+                text(dongle_lines(Some(&h.status))),
+            ),
+            (
+                device_title(&h.status, device),
+                text(slot_lines(Some(&h.status), Some(device))),
+            ),
+        ];
+        let device_top = boxes[0].1.len() + 2;
+        let chart_row = device_top + usize::from(DEVICE_ROWS) + 2;
+        let chart_legend = signal_legend();
         (20..=200)
             .find(|&width| {
                 let rows = drawn_at(&mut app, width, 24);
-                rows[0].contains(&title)
-                    && lines
-                        .iter()
-                        .enumerate()
-                        .all(|(i, line)| inside_box(&rows[1 + i]) == line)
-                    && rows[CHART_ROW].contains(&signal_legend())
+                boxes
+                    .iter()
+                    .zip([0, device_top])
+                    .all(|((title, lines), top)| {
+                        rows[top].contains(title.as_str())
+                            && lines
+                                .iter()
+                                .enumerate()
+                                .all(|(i, line)| inside_box(&rows[top + 1 + i]) == line)
+                    })
+                    && rows[chart_row].contains(&chart_legend)
             })
             .unwrap()
     }
@@ -1886,15 +1919,20 @@ mod tests {
         let mut app = keyboard_and_mouse();
         let width = 2 * PANEL_MIN_WIDTH;
         let rows = drawn_at(&mut app, width, 30);
-        let keyboard = rows[0].find(KEYBOARD_TITLE);
-        let mouse = rows[0].find(MOUSE_TITLE);
+        assert!(
+            rows[0].starts_with("┌ SpareDongle · Bluetooth ─"),
+            "{rows:#?}"
+        );
+        assert_eq!(rows.iter().filter(|r| r.contains("│dongle ")).count(), 1);
+        let keyboard = rows[DEVICE_TITLE_ROW].find(KEYBOARD_TITLE);
+        let mouse = rows[DEVICE_TITLE_ROW].find(MOUSE_TITLE);
         assert!(keyboard.zip(mouse).is_some_and(|(k, m)| k < m), "{rows:#?}");
         assert_eq!(
-            rows[CHART_ROW].matches("┌signal dBm").count(),
+            rows[CHART_ROW].matches("┌ signal dBm").count(),
             2,
             "{rows:#?}"
         );
-        assert_eq!(rows.iter().filter(|r| r.contains("┌events")).count(), 1);
+        assert_eq!(rows.iter().filter(|r| r.contains("┌ events")).count(), 1);
         assert!(!footer_at(&app, width).contains("o device"));
     }
 
@@ -1902,7 +1940,8 @@ mod tests {
     fn each_slot_panel_shows_its_own_device_state_and_signal() {
         let mut app = keyboard_and_mouse();
         let rows = drawn_at(&mut app, 2 * PANEL_MIN_WIDTH, 30);
-        let (keyboard, mouse) = rows[1].split_at(rows[1].find("││").unwrap() + 3);
+        let link = &rows[DEVICE_TITLE_ROW + 1];
+        let (keyboard, mouse) = link.split_at(link.find("││").unwrap() + 3);
         assert_eq!(inside_box(keyboard), "link      not connected");
         assert_eq!(
             inside_box(mouse),
@@ -1915,23 +1954,17 @@ mod tests {
         let mut app = keyboard_and_mouse();
         let width = 2 * PANEL_MIN_WIDTH - 1;
         let rows = drawn_at(&mut app, width, 30);
-        assert!(rows[0].contains(KEYBOARD_TITLE), "{rows:#?}");
-        assert!(!rows[0].contains(MOUSE_TITLE), "{rows:#?}");
-        assert!(
-            rows[CHART_ROW].contains("keyboard MX Keys · signal dBm"),
-            "{rows:#?}"
-        );
+        assert!(rows[DEVICE_TITLE_ROW].contains(KEYBOARD_TITLE), "{rows:#?}");
+        assert!(!rows[DEVICE_TITLE_ROW].contains(MOUSE_TITLE), "{rows:#?}");
+        assert!(rows[CHART_ROW].starts_with("┌ signal dBm"), "{rows:#?}");
         assert!(footer_at(&app, width).contains("o device"));
         press(&mut app, 'o');
         let rows = drawn_at(&mut app, width, 30);
-        assert!(rows[0].contains(MOUSE_TITLE), "{rows:#?}");
-        assert!(
-            rows[CHART_ROW].contains("mouse MX Master 3S · signal dBm"),
-            "{rows:#?}"
-        );
+        assert!(rows[DEVICE_TITLE_ROW].contains(MOUSE_TITLE), "{rows:#?}");
+        assert!(rows[CHART_ROW].starts_with("┌ signal dBm"), "{rows:#?}");
         press(&mut app, 'o');
         let rows = drawn_at(&mut app, width, 30);
-        assert!(rows[0].contains(KEYBOARD_TITLE), "{rows:#?}");
+        assert!(rows[DEVICE_TITLE_ROW].contains(KEYBOARD_TITLE), "{rows:#?}");
     }
 
     #[test]
@@ -1939,7 +1972,7 @@ mod tests {
         let mut app = app_with(status_of(Protocol::Bluetooth));
         let rows = drawn_at(&mut app, 80, 24);
         assert!(!footer_at(&app, 80).contains("o device"));
-        assert!(rows[CHART_ROW].starts_with("┌signal dBm"), "{rows:#?}");
+        assert!(rows[CHART_ROW].starts_with("┌ signal dBm"), "{rows:#?}");
         press(&mut app, 'o');
         assert_eq!(drawn_at(&mut app, 80, 24), rows);
     }
@@ -2186,7 +2219,7 @@ mod tests {
 
     #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
-        let dongle_row = |s: &Status| status_lines(Some(s), Some(&s.device))[2].to_string();
+        let dongle_row = |s: &Status| dongle_lines(Some(s))[0].to_string();
         assert!(dongle_row(&status_of(Protocol::Unifying)).ends_with("   pairing open"));
         let mut s = status_of(Protocol::Nuphy);
         assert!(dongle_row(&s).ends_with("   pairing open"));
@@ -2756,32 +2789,34 @@ mod tests {
     }
 
     #[test]
-    fn the_status_box_holds_a_row_each_for_link_channels_dongle_and_latency() {
+    fn the_dongle_box_holds_the_dongle_and_channels_and_the_device_box_the_link_and_latency() {
         let s = status_of(Protocol::Nuphy);
         let terminal = status_box(&s);
         let rows = screen(&terminal);
         assert!(
-            rows[0].starts_with("┌SpareDongle · NuPhy · MX Keys"),
+            rows[0].starts_with("┌ SpareDongle · NuPhy ─"),
             "{}",
             rows[0]
         );
         assert_eq!(
             inside_box(&rows[1]),
-            "link      connected   -71 dBm   last packet 12 ms ago"
-        );
-        assert_eq!(
-            inside_box(&rows[2]),
-            "channels  16 22 26 30 34 44 48 58 72 78"
-        );
-        assert_eq!(
-            inside_box(&rows[3]),
             format!(
                 "dongle    usb live   up {}   pairing open",
                 uptime(s.uptime_ms)
             )
         );
-        assert_eq!(inside_box(&rows[4]), "latency   0.9 ms average, 4.2 ms max");
-        assert!(rows[5].starts_with('└'), "{}", rows[5]);
+        assert_eq!(
+            inside_box(&rows[2]),
+            "channels  16 22 26 30 34 44 48 58 72 78"
+        );
+        assert!(rows[3].starts_with('└'), "{}", rows[3]);
+        assert!(rows[4].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[4]);
+        assert_eq!(
+            inside_box(&rows[5]),
+            "link      connected   -71 dBm   last packet 12 ms ago"
+        );
+        assert_eq!(inside_box(&rows[6]), "latency   0.9 ms average, 4.2 ms max");
+        assert!(rows[7].starts_with('└'), "{}", rows[7]);
     }
 
     #[test]
@@ -2789,7 +2824,7 @@ mod tests {
         let mut s = status_of(Protocol::Bluetooth);
         s.device.signal = None;
         let rows = screen(&status_box(&s));
-        let rows = &rows[..usize::from(STATUS_ROWS) + 2];
+        let rows = &rows[..CHART_ROW];
         assert!(rows.iter().any(|r| r.contains("not connected")));
         assert!(!rows.iter().any(|r| r.contains("dBm")));
         assert!(!rows.iter().any(|r| r.contains("channels")));
@@ -2803,11 +2838,11 @@ mod tests {
         s.device.signal = Some(-58);
         s.device.last_packet_ms = Some(400);
         let rows = screen(&status_box(&s));
+        assert!(rows[1].starts_with("│dongle"), "{}", rows[1]);
         assert_eq!(
-            inside_box(&rows[1]),
+            inside_box(&rows[DEVICE_TITLE_ROW + 1]),
             "link      connected   -58 dBm   last packet 400 ms ago"
         );
-        assert!(rows[2].starts_with("│dongle"), "{}", rows[2]);
     }
 
     #[test]
@@ -2817,17 +2852,17 @@ mod tests {
         s.device.last_packet_ms = None;
         let rows = screen(&status_box(&s));
         assert_eq!(
-            inside_box(&rows[1]),
+            inside_box(&rows[5]),
             "link      connected   no packet since boot"
         );
     }
 
     #[test]
-    fn a_unifying_status_box_names_the_keyboard_in_its_title() {
+    fn a_unifying_device_box_names_the_keyboard_in_its_title() {
         let terminal = status_box(&status_of(Protocol::Unifying));
         let rows = screen(&terminal);
         assert!(
-            rows[0].starts_with("┌SpareDongle · Unifying · MX Keys"),
+            rows[0].starts_with("┌ SpareDongle · Unifying ─"),
             "{}",
             rows[0]
         );
@@ -2835,14 +2870,15 @@ mod tests {
             inside_box(&rows[2]),
             "channels  5 8 17 32 35 41 44 62 65 71 74"
         );
+        assert!(rows[4].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[4]);
     }
 
     #[test]
-    fn the_title_ends_at_the_protocol_before_the_keyboard_sent_its_name() {
+    fn the_device_title_ends_at_the_kind_before_the_keyboard_sent_its_name() {
         let mut unnamed = status_of(Protocol::Nuphy);
         unnamed.device.name = None;
         let rows = screen(&status_box(&unnamed));
-        assert!(rows[0].starts_with("┌SpareDongle · NuPhy─"), "{}", rows[0]);
+        assert!(rows[4].starts_with("┌ keyboard ─"), "{}", rows[4]);
     }
 
     #[test]
@@ -2889,16 +2925,16 @@ mod tests {
     #[test]
     fn the_link_state_and_signal_are_colored_by_how_good_they_are() {
         let terminal = status_box(&status_of(Protocol::Nuphy));
-        assert_eq!(cell_at(&terminal, 1, "connected").fg, Color::Green);
-        assert_eq!(cell_at(&terminal, 1, "-71 dBm").fg, Color::Yellow);
+        assert_eq!(cell_at(&terminal, 5, "connected").fg, Color::Green);
+        assert_eq!(cell_at(&terminal, 5, "-71 dBm").fg, Color::Yellow);
         let mut weak = status_of(Protocol::Nuphy);
         weak.device.signal = Some(-80);
-        assert_eq!(cell_at(&status_box(&weak), 1, "-80 dBm").fg, Color::Red);
-        assert_eq!(cell_at(&terminal, 3, "pairing open").fg, Color::Cyan);
+        assert_eq!(cell_at(&status_box(&weak), 5, "-80 dBm").fg, Color::Red);
+        assert_eq!(cell_at(&terminal, 1, "pairing open").fg, Color::Cyan);
         let mut s = status_of(Protocol::Unifying);
         s.link = Link::Unifying(None);
         let terminal = status_box(&s);
-        assert_eq!(cell_at(&terminal, 1, "not paired").fg, Color::Red);
+        assert_eq!(cell_at(&terminal, 5, "not paired").fg, Color::Red);
     }
 
     fn strip_names(protocol: Option<Protocol>) -> String {

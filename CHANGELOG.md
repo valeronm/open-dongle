@@ -21,6 +21,7 @@
   motion stutter.
 - `spare-dongle status` and the live view show each device's latency through the dongle, its
   average and maximum since the last `clear`.
+- The live view shows the dongle's own state in a box of its own, above a box for each device.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
 
 ## [0.3.0] - 2026-11-18

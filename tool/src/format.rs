@@ -521,9 +521,7 @@ fn event_device(e: &Event, stored: &[StoredDevice]) -> String {
 }
 
 fn event_kind(e: &Event, s: &Status) -> &'static str {
-    e.slot
-        .and_then(|slot| s.slot(slot))
-        .map_or("device", |slot| slot.kind.name())
+    e.slot.map_or("device", |slot| s.kind_name(slot))
 }
 
 /// `s` is the status the event's slot is looked up in.
