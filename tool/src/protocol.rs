@@ -549,10 +549,45 @@ impl Link {
     }
 }
 
+/// The SoftDevice the bootloader keeps in flash below the firmware.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SoftDevice {
+    Absent,
+    /// Its information structure is too short to hold the ID.
+    Unnamed {
+        fwid: u16,
+    },
+    /// `id` is the number in its name, 140 for S140.
+    Named {
+        id: u32,
+        version: Option<[u32; 3]>,
+    },
+}
+
+fn read_softdevice(r: &mut Reader) -> Result<SoftDevice> {
+    let (fwid, id, version) = (r.u16()?, r.u32()?, r.u32()?);
+    Ok(match (fwid, id) {
+        (0, _) => SoftDevice::Absent,
+        (fwid, 0) => SoftDevice::Unnamed { fwid },
+        (_, id) => SoftDevice::Named {
+            id,
+            // Nordic packs a SoftDevice version as major * 1000000 + minor * 1000 + bugfix.
+            version: (version != 0).then_some([
+                version / 1_000_000,
+                version / 1000 % 1000,
+                version % 1000,
+            ]),
+        },
+    })
+}
+
 /// One status reply: the link-wide fields, the slot table and the asked slot's status.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Status {
     pub firmware_version: [u8; 3],
+    /// `None` when no bootloader left its version for the firmware.
+    pub bootloader_version: Option<[u8; 3]>,
+    pub softdevice: SoftDevice,
     pub uptime_ms: u64,
     pub reset_cause: u32,
     pub channel: u8,
@@ -648,6 +683,8 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         return Ok(Err(VersionMismatch { dongle: version }));
     }
     let firmware_version = r.bytes::<3>()?;
+    let bootloader_version = Some(r.bytes::<3>()?).filter(|v| *v != [0; 3]);
+    let softdevice = read_softdevice(&mut r)?;
     let uptime_ms = r.u64()?;
     let reset_cause = r.u32()?;
     let link_state = r.u8()?;
@@ -691,6 +728,8 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let device = read_slot_status(&mut r, protocol)?;
     Ok(Ok(Status {
         firmware_version,
+        bootloader_version,
+        softdevice,
         uptime_ms,
         reset_cause,
         channel,
@@ -1165,11 +1204,14 @@ pub(crate) mod tests {
             .collect()
     }
 
-    const LINK_STATE_AT: usize = 16;
+    const SOFTDEVICE_ID_AT: usize = 4 + 3 + 2;
+    const SOFTDEVICE_VERSION_AT: usize = SOFTDEVICE_ID_AT + 4;
+    pub(crate) const UPTIME_AT: usize = SOFTDEVICE_VERSION_AT + 4;
+    const LINK_STATE_AT: usize = UPTIME_AT + 8 + 4;
     const CHANNEL_AT: usize = LINK_STATE_AT + 1;
     const OWN_AT: usize = CHANNEL_AT + 1;
     const KEYBOARD_ID_AT: usize = OWN_AT + 6;
-    pub(crate) const PROTOCOL_AT: usize = 69;
+    pub(crate) const PROTOCOL_AT: usize = KEYBOARD_ID_AT + 4 + 1 + 10 * 4;
     const PAIRING_AT: usize = PROTOCOL_AT + 1;
     const KEYBOARD_AT: usize = PAIRING_AT + 1;
     const SLOTS_AT: usize = KEYBOARD_AT + 5;
@@ -1398,6 +1440,11 @@ pub(crate) mod tests {
             decoded(&fixture("status.hex")),
             Some(Status {
                 firmware_version: [1, 2, 3],
+                bootloader_version: Some([0, 6, 0]),
+                softdevice: SoftDevice::Named {
+                    id: 140,
+                    version: Some([6, 1, 1]),
+                },
                 uptime_ms: 0x01_0203_0405,
                 reset_cause: 1,
                 channel: 26,
@@ -1460,6 +1507,8 @@ pub(crate) mod tests {
             decoded(&fixture("status-slot1.hex")),
             Some(Status {
                 firmware_version: [1, 2, 3],
+                bootloader_version: None,
+                softdevice: SoftDevice::Absent,
                 uptime_ms: 0x01_0203_0405,
                 reset_cause: 1,
                 channel: 0,
@@ -1505,6 +1554,43 @@ pub(crate) mod tests {
                         passkey: false,
                     }),
                 },
+            })
+        );
+    }
+
+    fn softdevice_with(id: u32, version: u32) -> Option<SoftDevice> {
+        let mut payload = fixture("status.hex");
+        payload[SOFTDEVICE_ID_AT..][..4].copy_from_slice(&id.to_le_bytes());
+        payload[SOFTDEVICE_VERSION_AT..][..4].copy_from_slice(&version.to_le_bytes());
+        decoded(&payload).map(|s| s.softdevice)
+    }
+
+    #[test]
+    fn a_softdevice_without_an_id_is_known_by_its_firmware_id() {
+        assert_eq!(
+            softdevice_with(0, 0),
+            Some(SoftDevice::Unnamed { fwid: 0x00b6 })
+        );
+    }
+
+    #[test]
+    fn a_softdevice_without_a_version_keeps_its_id() {
+        assert_eq!(
+            softdevice_with(140, 0),
+            Some(SoftDevice::Named {
+                id: 140,
+                version: None
+            })
+        );
+    }
+
+    #[test]
+    fn a_softdevice_version_splits_into_major_minor_and_bugfix() {
+        assert_eq!(
+            softdevice_with(132, 7_003_012),
+            Some(SoftDevice::Named {
+                id: 132,
+                version: Some([7, 3, 12])
             })
         );
     }

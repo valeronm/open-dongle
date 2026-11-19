@@ -28,6 +28,8 @@
   LE Secure Connections or legacy pairing, and with a passkey or without.
 - A link loss or disconnect gives the time since the last key to the second, up to 18 h, instead
   of in whole minutes.
+- `spare-dongle status` and the live view show the bootloader's and the SoftDevice's versions
+  beside the firmware's.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
 
 ## [0.3.0] - 2026-11-18

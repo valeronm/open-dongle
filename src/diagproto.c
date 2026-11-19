@@ -86,8 +86,13 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	*p++ = DIAG_VERSION;
 	memcpy(p, s->firmware_version, sizeof(s->firmware_version));
 	p += sizeof(s->firmware_version);
+	memcpy(p, s->boot.bootloader, sizeof(s->boot.bootloader));
+	p += sizeof(s->boot.bootloader);
+	p = put_le(p, s->boot.softdevice_fwid, 2);
+	p = put_le(p, s->boot.softdevice_id, 4);
+	p = put_le(p, s->boot.softdevice_version, 4);
 	p = put_le(p, s->uptime_ms, 8);
-	p = put_le(p, s->reset_cause, 4);
+	p = put_le(p, s->boot.reset_cause, 4);
 	*p++ = s->link_state;
 	*p++ = s->channel;
 	memcpy(p, s->own, sizeof(s->own));

@@ -4,8 +4,8 @@ use chrono::{DateTime, Duration, Local};
 use crate::board::State;
 use crate::protocol::{
     Action, BUSY_DBM, BluetoothLink, DeviceKind, Event, EventKind, Latency, Link, Noise,
-    NuphyState, Pairing, Protocol, STRONG_DBM, Slot, Status, StoredDevice, UnifyingState,
-    VersionMismatch, Watch, bucket_floor,
+    NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice, Status, StoredDevice,
+    UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -444,8 +444,26 @@ pub fn reset_causes(bits: u32) -> String {
     }
 }
 
-pub fn version(v: [u8; 3]) -> String {
-    format!("{}.{}.{}", v[0], v[1], v[2])
+pub fn version<T: std::fmt::Display>([major, minor, patch]: [T; 3]) -> String {
+    format!("{major}.{minor}.{patch}")
+}
+
+/// The firmware's version, then the bootloader's and the SoftDevice's, each with its name.
+pub fn firmware(s: &Status) -> [String; 3] {
+    let bootloader = s.bootloader_version.map_or("unknown".into(), version);
+    let softdevice = match s.softdevice {
+        SoftDevice::Absent => "no SoftDevice".into(),
+        SoftDevice::Unnamed { fwid } => format!("SoftDevice FWID {fwid:#06x}"),
+        SoftDevice::Named { id, version } => {
+            let version = version.map_or(String::new(), |v| format!(" {}", self::version(v)));
+            format!("SoftDevice S{id}{version}")
+        }
+    };
+    [
+        version(s.firmware_version),
+        format!("bootloader {bootloader}"),
+        softdevice,
+    ]
 }
 
 pub fn uptime(ms: u64) -> String {
@@ -1399,6 +1417,32 @@ mod tests {
     fn names_each_reset_cause_bit() {
         assert_eq!(reset_causes(0x11), "pin, watchdog");
         assert_eq!(reset_causes(0), "none");
+    }
+
+    #[test]
+    fn the_firmware_names_the_bootloader_and_softdevice_under_it() {
+        assert_eq!(
+            firmware(&nuphy()),
+            ["1.2.3", "bootloader 0.6.0", "SoftDevice S140 6.1.1"]
+        );
+    }
+
+    #[test]
+    fn a_missing_bootloader_or_softdevice_is_named_as_such() {
+        let mut s = nuphy();
+        s.bootloader_version = None;
+        s.softdevice = SoftDevice::Absent;
+        assert_eq!(
+            firmware(&s),
+            ["1.2.3", "bootloader unknown", "no SoftDevice"]
+        );
+        s.softdevice = SoftDevice::Unnamed { fwid: 0x00b6 };
+        assert_eq!(firmware(&s)[2], "SoftDevice FWID 0x00b6");
+        s.softdevice = SoftDevice::Named {
+            id: 140,
+            version: None,
+        };
+        assert_eq!(firmware(&s)[2], "SoftDevice S140");
     }
 
     #[test]

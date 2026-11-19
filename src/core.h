@@ -57,7 +57,7 @@ struct rx_item {
 extern const uint8_t core_firmware_version[3];
 
 /* Starts USB, the report senders and the watchdog for the protocol this boot runs. */
-void core_start(enum protocol active, uint32_t reset_cause);
+void core_start(enum protocol active, const struct bootinfo *boot);
 uint32_t core_reset_cause(void);
 void core_on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi);
 /* Blocks until the radio starts, retrying each second. */

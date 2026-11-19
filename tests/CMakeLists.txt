@@ -36,3 +36,4 @@ target_compile_definitions(test_hidkeys PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 suite(btpolicy ../src/btpolicy.c)
 suite(btlist ../src/btlist.c)
+suite(bootinfo ../src/bootinfo.c)

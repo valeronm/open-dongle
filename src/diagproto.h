@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bootinfo.h"
 #include "btlist.h"
 #include "chanpick.h"
 #include "chanwatch.h"
@@ -91,8 +92,8 @@ struct diag_slot {
 
 struct diag_status {
 	uint8_t firmware_version[3];
+	struct bootinfo boot;
 	uint64_t uptime_ms;
-	uint32_t reset_cause;
 	uint8_t link_state;
 	uint8_t channel;
 	uint8_t own[3];

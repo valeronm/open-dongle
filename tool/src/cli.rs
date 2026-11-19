@@ -9,9 +9,9 @@ use chrono::Local;
 use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
-    NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    hex, last_packet, latency, noise_level, paired, pairing, pairing_offer, reset_causes,
-    state_name, status_label, unifying_kind, uptime, usb_state, version, wall_clock,
+    NOISE_QUESTION, action_question, channel_description, describe_event, firmware, flash_question,
+    flashed, hex, last_packet, latency, noise_level, paired, pairing, pairing_offer, reset_causes,
+    state_name, status_label, unifying_kind, uptime, usb_state, wall_clock,
 };
 use crate::protocol::{
     Action, Counter, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol,
@@ -48,7 +48,7 @@ fn status_lines(s: &Status, devices: &[SlotStatus]) -> Vec<String> {
         state_name(s).to_string()
     };
     let rows = vec![
-        ("firmware", version(s.firmware_version)),
+        ("firmware", firmware(s).join(", ")),
         ("protocol", s.protocol().name().to_string()),
         ("link", link),
         (
@@ -680,7 +680,7 @@ mod tests {
         assert_eq!(
             status_lines(&s, &[keyboard, s.device.clone()]),
             [
-                "firmware  1.2.3",
+                "firmware  1.2.3, bootloader unknown, no SoftDevice",
                 "protocol  Bluetooth",
                 "link      connected",
                 "pairing   closed",
@@ -994,7 +994,7 @@ mod tests {
         assert_eq!(
             lines(&s),
             [
-                "firmware  1.2.3",
+                "firmware  1.2.3, bootloader 0.6.0, SoftDevice S140 6.1.1",
                 "protocol  NuPhy",
                 "link      connected on channel 26 (paired 26 30 34)",
                 "pairing   open, offers channels 62 52 44, set by hand",
@@ -1027,7 +1027,7 @@ mod tests {
         assert_eq!(
             lines(&s),
             [
-                "firmware  1.2.3",
+                "firmware  1.2.3, bootloader 0.6.0, SoftDevice S140 6.1.1",
                 "protocol  Unifying",
                 "link      connected on channel 62",
                 "pairing   open",

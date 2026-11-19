@@ -20,9 +20,9 @@ use ratatui::{
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
-    channel_role, counted_share, describe_event, device_at, device_lines, forget_question,
-    last_packet, latency, link_health, noise_level, noise_ruler, paired, pairing, share,
-    slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
+    channel_role, counted_share, describe_event, device_at, device_lines, firmware,
+    forget_question, last_packet, latency, link_health, noise_level, noise_ruler, paired, pairing,
+    share, slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
     wall_clock, watch_role, watch_summary,
 };
 use crate::protocol::{
@@ -1091,6 +1091,10 @@ fn dongle_lines(status: Option<&Status>) -> Vec<Line<'static>> {
     if s.protocol().has_channels() {
         rows.push(status_row("channels", channel_spans(s)));
     }
+    rows.push(status_row(
+        "firmware",
+        [Span::raw(firmware(s).join(SEPARATOR))],
+    ));
     rows
 }
 
@@ -1904,8 +1908,11 @@ mod tests {
 
     const KEYBOARD_TITLE: &str = "┌ keyboard · MX Keys ─";
     const MOUSE_TITLE: &str = "┌ mouse · MX Master 3S ─";
-    /// In Bluetooth mode, under the dongle box's one row.
-    const DEVICE_TITLE_ROW: usize = 3;
+    /// In Bluetooth mode, under the dongle box's dongle and firmware rows.
+    const DEVICE_TITLE_ROW: usize = 4;
+    /// In NuPhy and Unifying mode, where the dongle box adds a channels row.
+    const CHANNELS_DEVICE_TITLE_ROW: usize = DEVICE_TITLE_ROW + 1;
+    const CHANNELS_LINK_ROW: usize = CHANNELS_DEVICE_TITLE_ROW + 1;
     /// Under the device box's three rows.
     const CHART_ROW: usize = DEVICE_TITLE_ROW + 5;
 
@@ -1921,28 +1928,29 @@ mod tests {
         .to_string()
     }
 
-    /// The narrowest view that draws its dongle box, its one slot's device box and the chart
-    /// titles uncut.
+    /// The firmware row spans the view.
+    const FIRMWARE_LABEL: &str = "firmware ";
+
+    /// The narrowest view that draws its one slot's device box, the chart titles and the dongle
+    /// box uncut, all but the dongle box's firmware row.
     fn narrowest_whole(mut app: App<Fake>) -> u16 {
         let h = history(&mut app);
         let device = &h.slots[0].device;
         let text = |lines: Vec<Line>| lines.iter().map(Line::to_string).collect::<Vec<_>>();
+        let dongle = text(dongle_lines(Some(&h.status)));
+        let device_top = dongle.len() + 2;
         let boxes = [
-            (
-                dongle_title(Some(&h.status)),
-                text(dongle_lines(Some(&h.status))),
-            ),
+            (dongle_title(Some(&h.status)), dongle),
             (
                 device_title(&h.status, device),
                 text(slot_lines(Some(&h.status), Some(device))),
             ),
         ];
-        let device_top = boxes[0].1.len() + 2;
         let chart_row = device_top + usize::from(device_rows(Some(h.status.protocol()))) + 2;
         let chart_legend = signal_legend(h.status.protocol());
         (20..=200)
             .find(|&width| {
-                let rows = drawn_at(&mut app, width, 24);
+                let rows = drawn_at(&mut app, width, 25);
                 boxes
                     .iter()
                     .zip([0, device_top])
@@ -1951,6 +1959,7 @@ mod tests {
                             && lines
                                 .iter()
                                 .enumerate()
+                                .filter(|(_, line)| !line.starts_with(FIRMWARE_LABEL))
                                 .all(|(i, line)| inside_box(&rows[top + 1 + i]) == line)
                     })
                     && rows[chart_row].contains(&chart_legend)
@@ -2295,6 +2304,15 @@ mod tests {
     }
 
     #[test]
+    fn the_dongle_box_ends_with_the_firmware_bootloader_and_softdevice() {
+        let rows = dongle_lines(Some(&status_of(Protocol::Bluetooth)));
+        assert_eq!(
+            rows.last().map(|l| l.to_string()).as_deref(),
+            Some("firmware  1.2.3   bootloader 0.6.0   SoftDevice S140 6.1.1")
+        );
+    }
+
+    #[test]
     fn the_status_shows_pairing_open_in_either_mode() {
         let dongle_row = |s: &Status| dongle_lines(Some(s))[0].to_string();
         assert!(dongle_row(&status_of(Protocol::Unifying)).ends_with("   pairing open"));
@@ -2543,7 +2561,8 @@ mod tests {
         minute_oldest: u32,
     ) -> Vec<u8> {
         let mut p = status_running(protocol as u8);
-        p[4..12].copy_from_slice(&uptime_ms.to_le_bytes());
+        let u = crate::protocol::tests::UPTIME_AT;
+        p[u..u + 8].copy_from_slice(&uptime_ms.to_le_bytes());
         let n = crate::protocol::tests::PROTOCOL_AT;
         p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
         p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
@@ -2886,14 +2905,15 @@ mod tests {
             inside_box(&rows[2]),
             "channels  16 22 26 30 34 44 48 58 72 78"
         );
-        assert!(rows[3].starts_with('└'), "{}", rows[3]);
-        assert!(rows[4].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[4]);
+        assert!(rows[3].starts_with("│firmware "), "{}", rows[3]);
+        assert!(rows[4].starts_with('└'), "{}", rows[4]);
+        assert!(rows[5].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[5]);
         assert_eq!(
-            inside_box(&rows[5]),
+            inside_box(&rows[6]),
             "link      connected   -71 dBm   last packet 12 ms ago"
         );
-        assert_eq!(inside_box(&rows[6]), "latency   0.9 ms average, 4.2 ms max");
-        assert!(rows[7].starts_with('└'), "{}", rows[7]);
+        assert_eq!(inside_box(&rows[7]), "latency   0.9 ms average, 4.2 ms max");
+        assert!(rows[8].starts_with('└'), "{}", rows[8]);
     }
 
     #[test]
@@ -2934,7 +2954,7 @@ mod tests {
         s.device.last_packet_ms = None;
         let rows = screen(&status_box(&s));
         assert_eq!(
-            inside_box(&rows[5]),
+            inside_box(&rows[CHANNELS_LINK_ROW]),
             "link      connected   no packet since boot"
         );
     }
@@ -2952,7 +2972,8 @@ mod tests {
             inside_box(&rows[2]),
             "channels  5 8 17 32 35 41 44 62 65 71 74"
         );
-        assert!(rows[4].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[4]);
+        let title = &rows[CHANNELS_DEVICE_TITLE_ROW];
+        assert!(title.starts_with("┌ keyboard · MX Keys ─"), "{title}");
     }
 
     #[test]
@@ -2960,7 +2981,8 @@ mod tests {
         let mut unnamed = status_of(Protocol::Nuphy);
         unnamed.device.name = None;
         let rows = screen(&status_box(&unnamed));
-        assert!(rows[4].starts_with("┌ keyboard ─"), "{}", rows[4]);
+        let title = &rows[CHANNELS_DEVICE_TITLE_ROW];
+        assert!(title.starts_with("┌ keyboard ─"), "{title}");
     }
 
     #[test]
@@ -3006,17 +3028,18 @@ mod tests {
 
     #[test]
     fn the_link_state_and_signal_are_colored_by_how_good_they_are() {
+        const LINK: u16 = CHANNELS_LINK_ROW as u16;
         let terminal = status_box(&status_of(Protocol::Nuphy));
-        assert_eq!(cell_at(&terminal, 5, "connected").fg, Color::Green);
-        assert_eq!(cell_at(&terminal, 5, "-71 dBm").fg, Color::Yellow);
+        assert_eq!(cell_at(&terminal, LINK, "connected").fg, Color::Green);
+        assert_eq!(cell_at(&terminal, LINK, "-71 dBm").fg, Color::Yellow);
         let mut weak = status_of(Protocol::Nuphy);
         weak.device.signal = Some(-80);
-        assert_eq!(cell_at(&status_box(&weak), 5, "-80 dBm").fg, Color::Red);
+        assert_eq!(cell_at(&status_box(&weak), LINK, "-80 dBm").fg, Color::Red);
         assert_eq!(cell_at(&terminal, 1, "pairing open").fg, Color::Cyan);
         let mut s = status_of(Protocol::Unifying);
         s.link = Link::Unifying(None);
         let terminal = status_box(&s);
-        assert_eq!(cell_at(&terminal, 5, "not paired").fg, Color::Red);
+        assert_eq!(cell_at(&terminal, LINK, "not paired").fg, Color::Red);
     }
 
     fn strip_names(protocol: Option<Protocol>) -> String {

@@ -63,8 +63,12 @@ static void test_status_matches_fixture(void)
 {
 	const struct diag_status s = {
 		.firmware_version = {1, 2, 3},
+		.boot = {.reset_cause = 1,
+			 .bootloader = {0, 6, 0},
+			 .softdevice_fwid = 0x00b6,
+			 .softdevice_id = 140,
+			 .softdevice_version = 6001001},
 		.uptime_ms = 0x0102030405ull,
-		.reset_cause = 1,
 		.link_state = 4,
 		.channel = 26,
 		.own = {26, 30, 34},
@@ -105,8 +109,8 @@ static void test_a_mouse_slot_status_matches_fixture(void)
 {
 	const struct diag_status s = {
 		.firmware_version = {1, 2, 3},
+		.boot = {.reset_cause = 1},
 		.uptime_ms = 0x0102030405ull,
-		.reset_cause = 1,
 		.link_state = 1,
 		.usb_live = true,
 		.dropped = 2,

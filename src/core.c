@@ -23,7 +23,7 @@ static K_MUTEX_DEFINE(reports_lock);
 static struct k_sem reports_ready[REPORT_IFACES];
 
 static enum protocol active;
-static uint32_t boot_reset_cause;
+static struct bootinfo boot_info;
 static struct reports reports;
 static atomic_t host_leds;
 static atomic_t leds_changed;
@@ -204,7 +204,7 @@ void core_start_history(const struct core_loop *l)
 		last_input_ms[s] = -1;
 	}
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_BOOT, DEVICE_NO_SLOT, 0, 0, 0, boot_reset_cause);
+	log_event(HISTORY_BOOT, DEVICE_NO_SLOT, 0, 0, 0, boot_info.reset_cause);
 }
 
 void core_count(enum core_counter c)
@@ -553,7 +553,7 @@ static void on_usb_leds(uint8_t leds)
 	atomic_set(&leds_changed, 1);
 }
 
-void core_start(enum protocol protocol, uint32_t reset_cause)
+void core_start(enum protocol protocol, const struct bootinfo *boot)
 {
 	static const struct usb_callbacks usb_cb = {
 		.on_live = on_usb_live,
@@ -563,7 +563,7 @@ void core_start(enum protocol protocol, uint32_t reset_cause)
 	int err;
 
 	active = protocol;
-	boot_reset_cause = reset_cause;
+	boot_info = *boot;
 	reports_init(&reports);
 	for (int iface = 0; iface < REPORT_IFACES; iface++) {
 		k_sem_init(&reports_ready[iface], 0, 1);
@@ -580,7 +580,7 @@ void core_start(enum protocol protocol, uint32_t reset_cause)
 
 uint32_t core_reset_cause(void)
 {
-	return boot_reset_cause;
+	return boot_info.reset_cause;
 }
 
 void core_fill_status(struct diag_status *st, uint8_t slot)
@@ -595,7 +595,7 @@ void core_fill_status(struct diag_status *st, uint8_t slot)
 	unlock_reports(false);
 	*st = (struct diag_status){
 		.uptime_ms = (uint64_t)k_uptime_get(),
-		.reset_cause = boot_reset_cause,
+		.boot = boot_info,
 		.protocol = active,
 		.usb_live = usb_live(),
 		.usb_suspended = usb_suspended(),
