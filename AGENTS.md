@@ -1,4 +1,6 @@
-# AGENTS.md
+# Working on SpareDongle
+
+## Module boundaries
 
 - `src/nuphy.*`, `src/reports.*`, `src/chanpick.*`, `src/noise.*`, `src/link.*`,
   `src/diagproto.*`, `src/history.*`, `src/protocol.*`, `src/pairwin.*`, `src/unifying.*`,
@@ -15,3 +17,14 @@
   `src/bluetooth_main.c` starts Bluetooth and never starts ESB, and `src/nuphy_main.c` and
   `src/unifying_main.c` start ESB through `src/radio.c`, which first shuts down the Bluetooth
   controller's radio layer.
+
+## CHANGELOG.md
+
+- An entry is a change a user can observe: in what the dongle does, in what the tool shows or
+  accepts, or in what installing and flashing need. A change nothing observable shows gets none.
+- Each entry is one plain sentence saying what changed for the user, not how: no timings, queues,
+  thresholds or internal names the user never sees.
+- A renamed or removed command, key or option names the old and the new, and a diagnostic protocol
+  bump names the tool versions it leaves behind.
+- Unreleased describes the state the next release ships: an entry a later change reverses or
+  extends is rewritten, not followed by a second one.

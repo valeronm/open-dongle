@@ -2,40 +2,26 @@
 
 ## Unreleased
 
-- In Bluetooth mode the dongle connects a mouse beside the keyboard, or either alone, and presents
-  it to the PC as a USB mouse.
+- In Bluetooth mode the dongle connects a mouse beside the keyboard, or either alone, and stores up
+  to eight devices.
 - A mouse pairs in any pairing window without a passkey, and a device that pairs replaces the
   connected one of its kind.
-- The dongle stores up to eight Bluetooth devices.
-- `spare-dongle status`, `history` and the live view report each device separately; the live view
-  shows them side by side when the terminal is wide enough, and otherwise `o` steps through them.
-- Events name the device they are about.
-- The events record each Bluetooth device the dongle forgets, on request or for a report map it
-  cannot use.
-- `spare-dongle keyboards` is now `spare-dongle devices` and lists each device's kind, and the live
-  view's `k` is now `d`.
-- While a Bluetooth slot is free the dongle scans slowly, so the connected device keeps its full
-  report rate; a keyboard may need a key press to reconnect after the dongle restarts.
+- The tool shows each device separately, with its own signal, latency and pairing security; the
+  live view puts the device boxes side by side below the dongle's own, or steps through them with
+  `o` in a narrow terminal.
+- In Bluetooth mode the live view leaves out the channel noise and busy readings, since Bluetooth
+  hops across every channel, and its dropped count counts Bluetooth events lost to a full queue.
+- A link loss or disconnect gives the time since the last key to the second, up to 18 h.
+- Events name the device they are about, and record each Bluetooth device the dongle forgets.
 - The LED shows connected while a keyboard or a mouse is connected.
-- Bluetooth reports go to the PC as they arrive instead of on a 10 ms beat, which made a mouse's
-  motion stutter.
-- `spare-dongle status` and the live view show each connected device's latency through the
-  dongle, its average and maximum since the last `clear`.
-- The live view shows the dongle's own state in a box of its own, above a box for each device.
-- In Bluetooth mode the live view leaves out the busy strip and the noise line, which have no
-  channel to measure, and the dropped count records Bluetooth events lost to a full queue.
-- `spare-dongle status`, `devices` and the live view show whether a Bluetooth device paired with
-  LE Secure Connections or legacy pairing, and with a passkey or without.
-- A link loss or disconnect gives the time since the last key to the second, up to 18 h, instead
-  of in whole minutes.
-- `spare-dongle status` and the live view show the bootloader's and the SoftDevice's versions
-  beside the firmware's.
+- `spare-dongle keyboards` is now `spare-dongle devices`, and the live view's `k` is now `d`.
+- Bluetooth keyboards' reports reach the PC sooner.
+- A Bluetooth keyboard may need a key press to reconnect after the dongle restarts.
+- The tool shows the bootloader's and the SoftDevice's versions.
+- On Linux, a dongle the tool cannot access gets an error naming the udev rule and the commands
+  that install it.
+- The installer's udev commands apply the rule to a board already plugged in, with no replug.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
-- On Linux, a dongle the tool has no access to gets an error naming the udev rule and the commands
-  that install it, after the tool waits up to 2 s for udev to grant access, as it already did for
-  a serial port.
-- The installer's udev commands apply the rule to a board that is already plugged in, so it needs
-  no replug.
 
 ## [0.3.0] - 2026-11-18
 
