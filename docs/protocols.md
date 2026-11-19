@@ -1,13 +1,13 @@
 # Supported protocols and how they compare
 
-SpareDongle speaks three keyboard radio protocols, one at a time: NuPhy's 2.4G link, tested with
-the Air75 V2; Logitech Unifying, tested with an original MX Keys; and Bluetooth LE, tested with
-both. This page compares NuPhy and Unifying with each keyboard's own receiver and Bluetooth with
-the PC's own Bluetooth, then lists what SpareDongle adds. How the 2.4G links work on air is in
-[nuphy-v2-2.4ghz.md](nuphy-v2-2.4ghz.md) and [unifying.md](unifying.md).
+SpareDongle speaks three keyboard radio protocols, one at a time; the
+[README](../README.md#protocols) lists what was tested. This page compares NuPhy and Unifying with
+each keyboard's own receiver and Bluetooth with the PC's own Bluetooth, then lists what SpareDongle
+adds. How the 2.4G links work on air is in [nuphy-v2-2.4ghz.md](nuphy-v2-2.4ghz.md) and
+[unifying.md](unifying.md).
 
-In the tables, 🟢 marks a row where SpareDongle does better, ⚪ one where both do the same, and 🔴
-one where the official receiver does better.
+In the comparison tables, 🟢 marks a row where SpareDongle does better, ⚪ one where both do the
+same, and 🔴 one where the official receiver or the PC's Bluetooth does better.
 
 ## NuPhy 2.4G
 
@@ -49,7 +49,7 @@ Both lose a packet that fails NuPhy's checksum, because the radio acknowledges i
 firmware checks it. [Channels and delivery](nuphy-v2-2.4ghz.md#channels-and-delivery) has the
 details.
 
-### Security
+### NuPhy security
 
 | | NuPhy dongle | SpareDongle |  |
 |---|---|---|---|
@@ -104,7 +104,7 @@ none.
 No public source reports how often a Unifying receiver drops reports. SpareDongle lost none of
 49,832 packets from an MX Keys at close range.
 
-### Security
+### Unifying security
 
 The receiver comes in two hardware versions with separate firmware lines: RQR12 on the C-U0007 and
 RQR24 on the C-U0008.[^bastille-11] Logitech's release notes list some fixes for only one of them.
@@ -141,8 +141,7 @@ tells them apart by the kind the device advertises.
 | Vendor reports, such as keys set up by Logitech Options | yes | ignored | 🔴 |
 | Mice | yes | one, beside the keyboard | ⚪ |
 | Mouse wheel | high resolution where the PC's driver turns it on | in notches | 🔴 |
-| Devices | as many as the PC pairs | eight stored, a keyboard and a mouse connected | 🔴 |
-| Bluetooth Classic keyboards | yes | no | 🔴 |
+| Devices | as many as the PC pairs | several stored, a keyboard and a mouse connected | 🔴 |
 | Boot menus and PCs without Bluetooth | no | yes | 🟢 |
 | Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
 | Keyboard name and signal | in the PC's settings | shown by the tool | ⚪ |
@@ -161,14 +160,27 @@ reconnects within about a second. The MX Keys reconnects with a short burst of a
 dongle alone, which the slow scan can miss after the dongle restarts; it then reconnects at its
 next key press, which reaches the PC a second or two late.
 
-### Security
+### Bluetooth security
 
-Both keyboards tested pair only with LE legacy pairing, so the dongle allows it. Anyone who
-records a legacy pairing can derive its key and read the keyboard afterwards, with or without a
-passkey.[^crackle] The passkey makes the dongle pair the keyboard it was typed on; without one, any
-keyboard in pairing mode nearby can pair while the window is open. A mouse pairs without a
-passkey in either window, so any mouse in pairing mode nearby can pair while it is open. After
-pairing the link is encrypted, and only a stored device connects.
+A Bluetooth link is as secure as the way its device paired, and the device decides that way. The
+dongle accepts all four, and `spare-dongle devices`, `status` and the live view show each device's
+way, and the live view colors it as in the table.
+
+| Pairing | Encrypted | Encryption key safe from a recorded pairing | Safe from a man in the middle | Tool shows |
+|---|---|---|---|---|
+| LE Secure Connections, passkey | yes | yes | yes | 🟢 secure, passkey |
+| LE Secure Connections, no passkey | yes | yes | no | 🟡 secure, no passkey |
+| Legacy, passkey | yes | no, found by trying every passkey[^crackle] | only against one who cannot find the passkey during the pairing | 🟡 legacy, passkey |
+| Legacy, no passkey | yes | no[^crackle] | no | 🔴 legacy, no passkey |
+
+An encrypted link is readable by anyone who has its encryption key, and a legacy pairing gives
+that key to anyone who recorded it. A passkey also keeps another device in pairing mode nearby
+from pairing in the device's place while the window is open. Only a stored device connects.
+
+The MX Master 3S pairs with LE Secure Connections and no passkey, since it has no keys to type one
+on; the Air75 V2 pairs legacy with no passkey step, and the MX Keys legacy with the passkey typed.
+No device tested pairs with LE Secure Connections and a passkey. Pairing again does not change a
+device's way.
 
 ## Added by SpareDongle
 
@@ -176,7 +188,8 @@ pairing the link is encrypted, and only a stored device connects.
   on the keyboard's channels between packets and moves to a clearly quieter one. Only noise strong
   enough to matter at the keyboard's signal counts, so a keyboard close to the dongle rarely causes
   a move.
-- **One firmware for every protocol**, [switched by the tool](../README.md#keyboard-protocols).
+- **A keyboard and a mouse from different makers on one dongle**, in Bluetooth mode.
+- **One firmware for every protocol**, [switched by the tool](../README.md#protocols).
 - **Diagnostics** through the [spare-dongle tool](tool.md).
 - **An [LED](../README.md#led) that shows the link state.**
 - **Open firmware**, [flashed by the tool](../README.md#flashing-the-firmware).
@@ -193,8 +206,8 @@ Unifying link key.
 [^unifying]: Logitech, [What is Unifying](https://www.logitech.com/en-hk/resource-center/what-is-unifying.html):
     "Connect up to six Logitech Unifying wireless mice or keyboards".
 [^newlin]: Marc Newlin, [MouseJack white paper](https://github.com/BastilleResearch/mousejack/blob/master/doc/pdf/DEFCON-24-Marc-Newlin-MouseJack-Injecting-Keystrokes-Into-Wireless-Mice.whitepaper.pdf):
-    Unifying keyboards encrypt keyboard packets with 128-bit AES but not multimedia key packets, and a
-    dongle and its device stay on a channel until a keepalive is missed (section 5.2.2).
+    Unifying keyboards encrypt keyboard packets with 128-bit AES but not multimedia key packets, and
+    a dongle and its device stay on a channel until a keepalive is missed (section 5.2.2).
 [^dj]: Linux [`hid-logitech-dj.c`](https://github.com/torvalds/linux/blob/master/drivers/hid/hid-logitech-dj.c):
     the receiver's system control reports (System Sleep, System Power Down) and LED output reports.
 [^solaar]: [Solaar](https://github.com/pwr-Solaar/Solaar) manages devices connected to a Unifying

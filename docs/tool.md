@@ -73,17 +73,17 @@ disconnects with their reason, pairings and refused pairings, each device forgot
 for a report map it cannot use, and a device that lost its pairing, which has to be forgotten and
 paired again.
 
-- `pair` prints the passkey to type on the keyboard; `pair --no-passkey` pairs a keyboard that has
-  no passkey step. A mouse pairs in either window without one. In the live view `a` asks which of
-  the two.
+- `pair` prints the passkey to type on the keyboard, and `pair --no-passkey` opens pairing without
+  one. In the live view `a` asks which of the two.
 - `devices` lists the stored keyboards and mice, the most recently connected first, and
   `forget <n>` removes the one at that place in the list. In the live view `d` shows the list in
-  place of the chart, and a device's number asks to forget it.
+  place of the chart, and a device's number asks to forget it. The dongle stores up to eight, and a
+  full list refuses a new pairing until one is forgotten. The MX Keys and the MX Master 3S pair
+  under a new address each time, so pairing one again leaves its old entry to forget.
 - `devices` and the live view's list give each stored device's pairing, and `status` and the live
   view's device box the connected one's: secure for LE Secure Connections or legacy, and whether a
-  passkey was typed. A legacy pairing's key can be worked out by anyone who recorded the pairing
-  over the air, passkey or not; a passkey keeps another device from pairing in the device's place.
-  The live view colors it green when both hold, red when neither does.
+  passkey was typed. [Bluetooth security](protocols.md#bluetooth-security) says what each way protects
+  against and how the live view colors it.
 
 Event lines name a stored device and give a forgotten one's address.
 

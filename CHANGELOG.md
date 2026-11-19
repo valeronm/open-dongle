@@ -94,4 +94,5 @@ First release.
 - It runs on a Pro Micro nRF52840 and queues reports while USB is busy.
 - Pairing measures the radio noise and gives the keyboard the three quietest channels.
 - `open-dongle` shows a live view, status, a day of per-minute history, events and a noise map.
-- `open-dongle flash` writes firmware to a running dongle, a board in its bootloader, or a new board.
+- `open-dongle flash` writes firmware to a running dongle, a board in its bootloader, or a new
+  board.

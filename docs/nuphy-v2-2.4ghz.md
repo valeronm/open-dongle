@@ -22,7 +22,8 @@ code does not show:
   report.
 - A hello follows any recovery from failed sends, a wake included, so it does not mark a wake.
 - A pair request carries the ID of the dongle the keyboard was last paired with.
-- The radio module passes a USB suspend message on to the keyboard's main controller, which runs QMK.
+- The radio module passes a USB suspend message on to the keyboard's main controller, which runs
+  QMK.
 - Mouse reports and the NKRO bitmap are valid frames this firmware ignores.
 
 ## Pairing
