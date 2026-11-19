@@ -12,6 +12,7 @@
 #include <bluetooth/services/hogp.h>
 #include "ble.h"
 #include "clock.h"
+#include "core.h"
 
 K_MSGQ_DEFINE(ble_events, sizeof(struct ble_event), 16, 4);
 
@@ -54,12 +55,18 @@ static struct link *link_of_conn(const struct bt_conn *conn)
 	return NULL;
 }
 
+static void put_event(const struct ble_event *ev)
+{
+	if (k_msgq_put(&ble_events, ev, K_NO_WAIT) != 0) {
+		core_count_dropped();
+		printk("bluetooth event dropped\n");
+	}
+}
+
 static void emit(struct link *l, struct ble_event ev)
 {
 	ev.kind = kind_of(l);
-	if (k_msgq_put(&ble_events, &ev, K_NO_WAIT) != 0) {
-		printk("bluetooth event dropped\n");
-	}
+	put_event(&ev);
 }
 
 static enum btpolicy_failure failure_of(enum ble_stage stage, int error)
@@ -407,7 +414,7 @@ static void on_advert(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
 		}
 		return;
 	}
-	k_msgq_put(&ble_events, &ev, K_NO_WAIT);
+	put_event(&ev);
 }
 
 int ble_scan(enum btpolicy_scan mode)

@@ -79,7 +79,7 @@ void core_on_radio_rx(const uint8_t *data, size_t len, uint8_t pipe, int8_t rssi
 
 	memcpy(item.data, data, MIN(len, sizeof(item.data)));
 	if (k_msgq_put(&rx_queue, &item, K_NO_WAIT) != 0) {
-		atomic_inc(&rx_dropped);
+		core_count_dropped();
 	}
 }
 
@@ -103,6 +103,11 @@ bool core_take_rx(struct rx_item *out, k_timeout_t wait)
 uint32_t core_rx_dropped(void)
 {
 	return (uint32_t)atomic_get(&rx_dropped);
+}
+
+void core_count_dropped(void)
+{
+	atomic_inc(&rx_dropped);
 }
 
 static void lock_reports(void)
