@@ -330,6 +330,9 @@ pub fn open_unchecked(serial: Option<&str>) -> Result<Device<HidTransport>> {
             );
         }
     };
+    if let Ok(path) = info.path().to_str() {
+        crate::board::wait_for_access(path)?;
+    }
     let device = info.open_device(&api).context("opening the dongle")?;
     // A reply left over from an earlier run must not match this run's first sequence number.
     let seq = SystemTime::now()

@@ -31,6 +31,9 @@
 - `spare-dongle status` and the live view show the bootloader's and the SoftDevice's versions
   beside the firmware's.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.
+- On Linux, a dongle the tool has no access to gets an error naming the udev rule and the commands
+  that install it, after the tool waits up to 2 s for udev to grant access, as it already did for
+  a serial port.
 - The installer's udev commands apply the rule to a board that is already plugged in, so it needs
   no replug.
 

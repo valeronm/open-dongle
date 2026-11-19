@@ -208,31 +208,39 @@ fn bootloader_port(serial: &str, failure: &'static str) -> Result<String> {
     }
 }
 
-pub fn open_port(path: &str, baud: u32) -> Result<Box<dyn serialport::SerialPort>> {
-    let deadline = Instant::now() + ACCESS_WAIT;
-    loop {
-        match serialport::new(path, baud)
-            .timeout(Duration::from_millis(100))
-            .open()
-        {
-            Ok(port) => return Ok(port),
-            // udev grants access to a new port a moment after the port appears.
-            Err(e)
-                if e.kind() == serialport::ErrorKind::Io(std::io::ErrorKind::PermissionDenied) =>
-            {
-                if Instant::now() > deadline {
-                    bail!(
-                        "no access to {path}: install ~/.local/share/{tool}/70-{tool}.rules \
-                         into /etc/udev/rules.d, or run \
-                         sudo setfacl -m u:$USER:rw {path}",
-                        tool = crate::TOOL
-                    );
-                }
-                std::thread::sleep(ACCESS_RETRY);
-            }
-            Err(e) => return Err(anyhow::Error::new(e).context(format!("opening {path}"))),
+/// Waits until the device node at `path` can be opened for reading and writing, since udev grants
+/// access a moment after the node appears. Other failures are left for the open to report.
+pub fn wait_for_access(path: &str) -> Result<()> {
+    wait_for_access_within(path, ACCESS_WAIT)
+}
+
+fn wait_for_access_within(path: &str, wait: Duration) -> Result<()> {
+    let c_path = std::ffi::CString::new(path).with_context(|| format!("device path {path:?}"))?;
+    let deadline = Instant::now() + wait;
+    // Checked with access(2) because opening a serial port can restart the board.
+    while unsafe { libc::access(c_path.as_ptr(), libc::R_OK | libc::W_OK) } != 0
+        && std::io::Error::last_os_error().kind() == std::io::ErrorKind::PermissionDenied
+    {
+        if Instant::now() >= deadline {
+            bail!(
+                "no access to {path}: install 70-{tool}.rules from ~/.local/share/{tool} \
+                 (tools/udev in a source checkout) into /etc/udev/rules.d, then run \
+                 sudo udevadm control --reload and \
+                 sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=tty",
+                tool = crate::TOOL
+            );
         }
+        std::thread::sleep(ACCESS_RETRY);
     }
+    Ok(())
+}
+
+pub fn open_port(path: &str, baud: u32) -> Result<Box<dyn serialport::SerialPort>> {
+    wait_for_access(path)?;
+    serialport::new(path, baud)
+        .timeout(Duration::from_millis(100))
+        .open()
+        .with_context(|| format!("opening {path}"))
 }
 
 #[cfg(test)]
@@ -316,5 +324,22 @@ mod tests {
             "{err}"
         );
         assert_eq!(pick(list, Some("BB")).unwrap().kind.state(), State::Factory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_node_without_access_names_the_udev_rule() {
+        use std::os::unix::fs::PermissionsExt;
+        let path =
+            std::env::temp_dir().join(format!("spare-dongle-no-access-{}", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let path = path.to_str().unwrap();
+        let err = wait_for_access_within(path, Duration::ZERO);
+        std::fs::remove_file(path).unwrap();
+        let err = err.unwrap_err().to_string();
+        assert!(err.contains(path), "{err}");
+        assert!(err.contains("70-spare-dongle.rules"), "{err}");
+        assert!(err.contains("udevadm trigger"), "{err}");
     }
 }
