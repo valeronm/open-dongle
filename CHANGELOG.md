@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.4.0] - 2026-11-19
 
 - In Bluetooth mode the dongle connects a mouse beside the keyboard, or either alone, and stores up
   to eight devices.
