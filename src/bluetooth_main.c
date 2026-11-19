@@ -83,12 +83,27 @@ static void slots(struct diag_slot *out)
 	}
 }
 
+static uint8_t pairing_of(enum device_kind kind)
+{
+	const struct btlist_entry *e;
+
+	if (!btpolicy_is_ready(&policy, kind)) {
+		return 0;
+	}
+	e = btlist_entry(&list, btpolicy_peer(&policy, kind));
+	if (!e) {
+		return 0;
+	}
+	return diag_pairing(e, ble_bond_secure(e->addr));
+}
+
 static void fill_status(struct diag_status *st, uint8_t slot)
 {
 	enum device_kind kind = kind_in(slot);
 
 	st->link_state = start_err ? LINK_START_FAILED : any_ready() ? LINK_READY : LINK_NONE_READY;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
+	st->pairing = pairing_of(kind);
 	if (rssi_read[slot]) {
 		st->last_rssi = rssi[slot];
 	}
@@ -441,7 +456,8 @@ static void send_devices(const struct diag_request *req)
 
 		connected[s] = ready ? btpolicy_peer(&policy, kind) : NULL;
 	}
-	diag_reply(req, payload, diag_encode_devices(payload, &list, connected), DIAG_AFTER_NONE);
+	diag_reply(req, payload, diag_encode_devices(payload, &list, connected, ble_bond_secure),
+		   DIAG_AFTER_NONE);
 }
 
 static void forget_listed(const struct diag_request *req)

@@ -4,8 +4,8 @@ use chrono::{DateTime, Duration, Local};
 use crate::board::State;
 use crate::protocol::{
     Action, BUSY_DBM, BluetoothLink, DeviceKind, Event, EventKind, Latency, Link, Noise,
-    NuphyState, Protocol, STRONG_DBM, Slot, Status, StoredDevice, UnifyingState, VersionMismatch,
-    Watch, bucket_floor,
+    NuphyState, Pairing, Protocol, STRONG_DBM, Slot, Status, StoredDevice, UnifyingState,
+    VersionMismatch, Watch, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -45,33 +45,60 @@ pub fn device_at(list: &[StoredDevice], place: usize) -> Option<&StoredDevice> {
     list.get(place.checked_sub(1)?)
 }
 
+#[derive(Debug)]
+pub struct DeviceLine {
+    columns: String,
+    slot: Option<u8>,
+    pairing: Option<Pairing>,
+}
+
+impl DeviceLine {
+    /// The line's text in pieces, the pairing's words carrying their pairing.
+    pub fn parts(&self) -> Vec<(String, Option<Pairing>)> {
+        let mut parts = vec![(self.columns.clone(), None)];
+        if let Some(slot) = self.slot {
+            parts.push((format!("  slot {slot}"), None));
+        }
+        if let Some(p) = self.pairing {
+            let separator = if self.slot.is_some() { ", " } else { "  " };
+            parts.extend([(separator.into(), None), (pairing(p), Some(p))]);
+        }
+        parts
+    }
+}
+
+impl std::fmt::Display for DeviceLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.parts()
+            .iter()
+            .try_for_each(|(text, _)| f.write_str(text))
+    }
+}
+
 /// One numbered line per stored device, in the order `forget` counts them.
-pub fn device_lines(list: &[StoredDevice], protocol: Protocol) -> Vec<String> {
+pub fn device_lines(list: &[StoredDevice], protocol: Protocol) -> Vec<DeviceLine> {
     if list.is_empty() {
-        return vec!["no device is stored".into()];
+        return vec![DeviceLine {
+            columns: "no device is stored".into(),
+            slot: None,
+            pairing: None,
+        }];
     }
     let widest =
         |column: fn(&StoredDevice) -> &str| list.iter().map(|d| column(d).len()).max().unwrap_or(0);
     let (kinds, names) = (widest(|d| d.kind.name()), widest(device_name));
     list.iter()
         .enumerate()
-        .map(|(i, d)| {
-            let marks: Vec<String> = [
-                d.slot.map(|slot| format!("connected in slot {slot}")),
-                d.no_passkey.then(|| "paired without a passkey".into()),
-            ]
-            .into_iter()
-            .flatten()
-            .collect();
-            let line = format!(
-                "{}  {:kinds$}  {:names$}  {}  {}",
+        .map(|(i, d)| DeviceLine {
+            columns: format!(
+                "{}  {:kinds$}  {:names$}  {}",
                 i + 1,
                 d.kind.name(),
                 device_name(d),
                 device_address(d, protocol),
-                marks.join(", ")
-            );
-            line.trim_end().to_string()
+            ),
+            slot: d.slot,
+            pairing: d.pairing,
         })
         .collect()
 }
@@ -366,6 +393,12 @@ pub fn last_packet(age_ms: Option<u32>) -> String {
     age_ms.map_or("no packet since boot".into(), |ms| {
         format!("last packet {} ago", duration(ms))
     })
+}
+
+pub fn pairing(p: Pairing) -> String {
+    let method = if p.secure { "secure" } else { "legacy" };
+    let passkey = if p.passkey { "passkey" } else { "no passkey" };
+    format!("{method}, {passkey}")
 }
 
 /// In milliseconds to a tenth, rounded half up.
@@ -992,27 +1025,58 @@ mod tests {
     fn stored_devices_are_numbered_with_their_kinds_and_slots() {
         let list = crate::protocol::read_devices(&fixture("devices.hex")).unwrap();
         assert_eq!(
-            device_lines(&list, Protocol::Bluetooth),
+            texts(device_lines(&list, Protocol::Bluetooth)),
             [
-                "1  keyboard  MX Keys       EB:BB:49:A6:9A:D9  connected in slot 0",
-                "2  mouse     MX Master 3S  C8:F2:E0:11:3C:5A  connected in slot 1, paired without a passkey",
+                "1  keyboard  MX Keys       EB:BB:49:A6:9A:D9  slot 0, legacy, passkey",
+                "2  mouse     MX Master 3S  C8:F2:E0:11:3C:5A  slot 1, secure, no passkey",
             ]
+        );
+        assert_eq!(
+            device_lines(&list, Protocol::Bluetooth)[1].pairing,
+            Some(Pairing {
+                secure: true,
+                passkey: false
+            })
+        );
+        let stored = StoredDevice {
+            slot: None,
+            ..list[1].clone()
+        };
+        assert_eq!(
+            texts(device_lines(&[stored], Protocol::Bluetooth)),
+            ["1  mouse  MX Master 3S  C8:F2:E0:11:3C:5A  secure, no passkey"]
         );
         let unnamed = StoredDevice {
             addr: [1, 0x24, 0xa8, 0x4b, 0x3c, 0x7d, 0xd6],
             kind: DeviceKind::Keyboard,
             name: None,
             slot: None,
-            no_passkey: false,
+            pairing: Some(Pairing {
+                secure: false,
+                passkey: true,
+            }),
         };
         assert_eq!(
-            device_lines(&[unnamed], Protocol::Bluetooth),
-            ["1  keyboard  unnamed  D6:7D:3C:4B:A8:24"]
+            texts(device_lines(&[unnamed], Protocol::Bluetooth)),
+            ["1  keyboard  unnamed  D6:7D:3C:4B:A8:24  legacy, passkey"]
         );
         assert_eq!(
-            device_lines(&[], Protocol::Bluetooth),
+            texts(device_lines(&[], Protocol::Bluetooth)),
             ["no device is stored"]
         );
+    }
+
+    fn texts(lines: Vec<DeviceLine>) -> Vec<String> {
+        lines.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn a_pairing_reads_as_its_method_and_whether_a_passkey_was_typed() {
+        let words = |secure, passkey| pairing(Pairing { secure, passkey });
+        assert_eq!(words(true, true), "secure, passkey");
+        assert_eq!(words(true, false), "secure, no passkey");
+        assert_eq!(words(false, true), "legacy, passkey");
+        assert_eq!(words(false, false), "legacy, no passkey");
     }
 
     #[test]
@@ -1022,21 +1086,21 @@ mod tests {
             kind: DeviceKind::Keyboard,
             name: Some("MX Keys".into()),
             slot: Some(0),
-            no_passkey: false,
+            pairing: None,
         };
         assert_eq!(
-            device_lines(
+            texts(device_lines(
                 &[keyboard([0x70, 0x15, 0xa3, 0x29, 0, 0, 0])],
                 Protocol::Nuphy
-            ),
-            ["1  keyboard  MX Keys  ID 7015a329  connected in slot 0"]
+            )),
+            ["1  keyboard  MX Keys  ID 7015a329  slot 0"]
         );
         assert_eq!(
-            device_lines(
+            texts(device_lines(
                 &[keyboard([0x70, 0x15, 0xb8, 0xbc, 0xd5, 0xb3, 0])],
                 Protocol::Unifying
-            ),
-            ["1  keyboard  MX Keys  serial b8bcd5b3, WPID 7015  connected in slot 0"]
+            )),
+            ["1  keyboard  MX Keys  serial b8bcd5b3, WPID 7015  slot 0"]
         );
     }
 
@@ -1093,7 +1157,7 @@ mod tests {
             kind: DeviceKind::Keyboard,
             name: Some("MX Keys".into()),
             slot: None,
-            no_passkey: false,
+            pairing: None,
         };
         assert_eq!(
             forget_question(&k),

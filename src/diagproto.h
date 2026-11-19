@@ -27,7 +27,11 @@
 #define DIAG_NO_RSSI INT8_MIN
 #define DIAG_SLOT_STORED 0x01
 #define DIAG_SLOT_READY 0x02
-#define DIAG_DEVICE_NO_PASSKEY 0x02
+/* The other pairing bits are unset without it. */
+#define DIAG_PAIRING_KNOWN 0x01
+/* LE Secure Connections, not legacy pairing. */
+#define DIAG_PAIRING_SECURE 0x02
+#define DIAG_PAIRING_PASSKEY 0x04
 /* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */
 #define DIAG_PAIR_NO_PASSKEY 1
 /* The reply under Bluetooth: 1 if a passkey is to be typed, then the passkey. */
@@ -124,6 +128,7 @@ struct diag_status {
 	 * maximum is 0 then. */
 	uint32_t latency_average_us;
 	uint32_t latency_max_us;
+	uint8_t pairing;
 	/* Padded with zeros. */
 	uint8_t name[DIAG_NAME_MAX];
 };
@@ -146,9 +151,13 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 size_t diag_encode_events(uint8_t *out, uint32_t first, const struct history_event *e,
 			 size_t n);
 size_t diag_encode_noise(uint8_t *out, const struct chan_survey *s);
-/* connected[s] is the address of the device ready in slot s, or NULL. */
+uint8_t diag_pairing(const struct btlist_entry *e, bool secure);
+/* connected[s] is the address of the device ready in slot s, or NULL; secure tells whether the
+ * device at an address paired with LE Secure Connections, and NULL leaves every device's pairing
+ * unknown. */
 size_t diag_encode_devices(uint8_t *out, const struct btlist *l,
-			   const uint8_t *const connected[DEVICE_SLOTS]);
+			   const uint8_t *const connected[DEVICE_SLOTS],
+			   bool (*secure)(const uint8_t addr[BTPOLICY_ADDR_LEN]));
 /* No home is sent as 0, no threshold as CHANWATCH_NO_THRESHOLD. */
 size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 			 uint8_t threshold_bucket, bool paused, uint64_t now_ms);

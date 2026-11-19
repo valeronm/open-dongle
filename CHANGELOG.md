@@ -24,6 +24,8 @@
 - The live view shows the dongle's own state in a box of its own, above a box for each device.
 - In Bluetooth mode the live view leaves out the busy strip and the noise line, which have no
   channel to measure, and the dropped count records Bluetooth events lost to a full queue.
+- `spare-dongle status`, `devices` and the live view show whether a Bluetooth device paired with
+  LE Secure Connections or legacy pairing, and with a passkey or without.
 - A link loss or disconnect gives the time since the last key to the second, up to 18 h, instead
   of in whole minutes.
 - The diagnostic protocol is now 4, so the 0.3.0 tool can only `flash` new firmware.

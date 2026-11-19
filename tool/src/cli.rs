@@ -10,8 +10,8 @@ use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
     NOISE_QUESTION, action_question, channel_description, describe_event, flash_question, flashed,
-    hex, last_packet, latency, noise_level, paired, pairing_offer, reset_causes, state_name,
-    status_label, unifying_kind, uptime, usb_state, version, wall_clock,
+    hex, last_packet, latency, noise_level, paired, pairing, pairing_offer, reset_causes,
+    state_name, status_label, unifying_kind, uptime, usb_state, version, wall_clock,
 };
 use crate::protocol::{
     Action, Counter, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol,
@@ -126,6 +126,9 @@ fn slot_rows(s: &Status, slot: &Slot, d: &SlotStatus) -> Vec<(&'static str, Stri
             "signal",
             format!("{level}{}", last_packet(d.last_packet_ms)),
         ));
+    }
+    if let Some(p) = d.pairing {
+        rows.push(("security", pairing(p)));
     }
     let counters: Vec<String> = s
         .protocol()
@@ -672,6 +675,7 @@ mod tests {
             gaps: None,
             link_losses: None,
             latency: None,
+            pairing: None,
         };
         assert_eq!(
             status_lines(&s, &[keyboard, s.device.clone()]),
@@ -690,6 +694,7 @@ mod tests {
                 "",
                 "mouse     MX Master 3S, connected",
                 "signal    -60 dBm, last packet 250 ms ago",
+                "security  secure, no passkey",
                 "counters  packets 2000",
             ]
         );

@@ -135,6 +135,11 @@ impl Protocol {
         }
     }
 
+    /// Whether the dongle reports how each device paired.
+    pub fn reports_pairing(self) -> bool {
+        self == Self::Bluetooth
+    }
+
     pub fn has_channels(self) -> bool {
         self != Self::Bluetooth
     }
@@ -400,7 +405,10 @@ const SLOT_STORED: u8 = 0x01;
 const SLOT_READY: u8 = 0x02;
 /// Equals `DEVICE_NO_SLOT` in the firmware's `device.h`.
 const NO_SLOT: u8 = u8::MAX;
-const DEVICE_NO_PASSKEY: u8 = 0x02;
+/// Equal `DIAG_PAIRING_*` in the firmware's `diagproto.h`.
+const PAIRING_KNOWN: u8 = 0x01;
+const PAIRING_SECURE: u8 = 0x02;
+const PAIRING_PASSKEY: u8 = 0x04;
 
 /// The slots the tool shows, in slot order: those stored or connected, or slot 0, the one pairing
 /// fills first, when there are none.
@@ -426,6 +434,15 @@ pub struct SlotStatus {
     pub link_losses: Option<u32>,
     /// `None` before a report from the slot reached the PC since the last clear.
     pub latency: Option<Latency>,
+    /// `None` until the slot's connection is encrypted, and under NuPhy and Unifying.
+    pub pairing: Option<Pairing>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pairing {
+    /// LE Secure Connections, not legacy pairing.
+    pub secure: bool,
+    pub passkey: bool,
 }
 
 /// The delay from a report's arrival at the dongle to the PC fetching it over USB.
@@ -697,6 +714,7 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
     let age = r.u32()?;
     let [packets, gaps, link_losses] = [r.u32()?, r.u32()?, r.u32()?];
     let [average_us, max_us] = [r.u32()?, r.u32()?];
+    let pairing = read_pairing(r)?;
     let name = read_name(r)?;
     Ok(SlotStatus {
         slot,
@@ -713,7 +731,16 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
         gaps: protocol.counted(Counter::Gaps, gaps),
         link_losses: protocol.counted(Counter::LinkLosses, link_losses),
         latency: (average_us != u32::MAX).then_some(Latency { average_us, max_us }),
+        pairing,
     })
+}
+
+fn read_pairing(r: &mut Reader) -> Result<Option<Pairing>> {
+    let flags = r.u8()?;
+    Ok((flags & PAIRING_KNOWN != 0).then_some(Pairing {
+        secure: flags & PAIRING_SECURE != 0,
+        passkey: flags & PAIRING_PASSKEY != 0,
+    }))
 }
 
 fn unknown(what: &str) -> anyhow::Error {
@@ -748,7 +775,8 @@ pub struct StoredDevice {
     pub name: Option<String>,
     /// The slot it is connected in.
     pub slot: Option<u8>,
-    pub no_passkey: bool,
+    /// `None` under NuPhy and Unifying.
+    pub pairing: Option<Pairing>,
 }
 
 /// The stored devices; under Bluetooth the most recently connected first.
@@ -758,14 +786,14 @@ pub fn read_devices(payload: &[u8]) -> Result<Vec<StoredDevice>> {
         .map(|_| {
             let addr = r.bytes::<7>()?;
             let kind = DeviceKind::read(&mut r)?;
-            let flags = r.u8()?;
+            let pairing = read_pairing(&mut r)?;
             let slot = r.u8()?;
             Ok(StoredDevice {
                 addr,
                 kind,
                 name: read_name(&mut r)?,
                 slot: (slot != NO_SLOT).then_some(slot),
-                no_passkey: flags & DEVICE_NO_PASSKEY != 0,
+                pairing,
             })
         })
         .collect()
@@ -1148,7 +1176,7 @@ pub(crate) mod tests {
     /// Where status.hex, with its one-slot table, holds the asked slot.
     const SLOT_AT: usize = SLOTS_AT + 3;
     /// The asked slot's fields before its name, the slot's number first.
-    const SLOT_FIELDS_LEN: usize = 26;
+    const SLOT_FIELDS_LEN: usize = 27;
     const NAME_AT: usize = SLOT_AT + SLOT_FIELDS_LEN;
     /// How far before a status reply's end the asked slot's number sits.
     pub(crate) const SLOT_FROM_END: usize = SLOT_FIELDS_LEN + NAME_MAX;
@@ -1221,14 +1249,20 @@ pub(crate) mod tests {
                     kind: DeviceKind::Keyboard,
                     name: Some("MX Keys".into()),
                     slot: Some(0),
-                    no_passkey: false,
+                    pairing: Some(Pairing {
+                        secure: false,
+                        passkey: true,
+                    }),
                 },
                 StoredDevice {
                     addr: [1, 0x5a, 0x3c, 0x11, 0xe0, 0xf2, 0xc8],
                     kind: DeviceKind::Mouse,
                     name: Some("MX Master 3S".into()),
                     slot: Some(1),
-                    no_passkey: true,
+                    pairing: Some(Pairing {
+                        secure: true,
+                        passkey: false,
+                    }),
                 },
             ])
         );
@@ -1405,6 +1439,7 @@ pub(crate) mod tests {
                         average_us: 850,
                         max_us: 4200,
                     }),
+                    pairing: None,
                 },
             })
         );
@@ -1465,6 +1500,10 @@ pub(crate) mod tests {
                     gaps: None,
                     link_losses: None,
                     latency: None,
+                    pairing: Some(Pairing {
+                        secure: true,
+                        passkey: false,
+                    }),
                 },
             })
         );

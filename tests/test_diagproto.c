@@ -125,6 +125,7 @@ static void test_a_mouse_slot_status_matches_fixture(void)
 		.last_rx_age_ms = 250,
 		.packets = 2000,
 		.latency_average_us = UINT32_MAX,
+		.pairing = DIAG_PAIRING_KNOWN | DIAG_PAIRING_SECURE,
 		.name = "MX Master 3S",
 	};
 
@@ -407,6 +408,13 @@ static void test_force_channels_arg_carries_three_channels_or_none(void)
 	CHECK(!diag_channels_arg(0, channels));
 }
 
+static const uint8_t *secure_addr;
+
+static bool is_secure(const uint8_t addr[BTPOLICY_ADDR_LEN])
+{
+	return memcmp(addr, secure_addr, BTPOLICY_ADDR_LEN) == 0;
+}
+
 static void test_devices_match_fixture(void)
 {
 	struct btlist list = {.count = 2};
@@ -420,9 +428,11 @@ static void test_devices_match_fixture(void)
 	memcpy(list.entries[1].name, "MX Master 3S", 12);
 	list.entries[1].kind = DEVICE_MOUSE;
 	list.entries[1].no_passkey = true;
+	secure_addr = list.entries[1].addr;
 	CHECK_EQ(diag_encode_devices(got, &list,
 				     (const uint8_t *const[]){list.entries[0].addr,
-							      list.entries[1].addr}),
+							      list.entries[1].addr},
+				     is_secure),
 		 want_len);
 	CHECK_MEM(got, want, want_len);
 }
@@ -436,10 +446,17 @@ static void test_a_device_ready_in_no_slot_is_sent_with_none(void)
 
 	btlist_paired(&list, keyboard, DEVICE_KEYBOARD, false);
 	btlist_paired(&list, mouse, DEVICE_MOUSE, true);
-	CHECK_EQ(diag_encode_devices(got, &list, (const uint8_t *const[]){keyboard, NULL}),
+	secure_addr = mouse;
+	CHECK_EQ(diag_encode_devices(got, &list, (const uint8_t *const[]){keyboard, NULL}, is_secure),
 		 1 + 2 * DIAG_DEVICE_LEN);
 	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN + 2], DEVICE_NO_SLOT);
 	CHECK_EQ(got[1 + DIAG_DEVICE_LEN + BTPOLICY_ADDR_LEN + 2], 0);
+	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN + 1], DIAG_PAIRING_KNOWN | DIAG_PAIRING_SECURE);
+	CHECK_EQ(got[1 + DIAG_DEVICE_LEN + BTPOLICY_ADDR_LEN + 1],
+		 DIAG_PAIRING_KNOWN | DIAG_PAIRING_PASSKEY);
+	diag_encode_devices(got, &list, (const uint8_t *const[]){keyboard, NULL}, NULL);
+	CHECK_EQ(got[1 + BTPOLICY_ADDR_LEN + 1], 0);
+	CHECK_EQ(got[1 + DIAG_DEVICE_LEN + BTPOLICY_ADDR_LEN + 1], 0);
 }
 
 static void test_a_protocol_answers_only_its_commands(void)

@@ -10,6 +10,8 @@
 #include <zephyr/sys/printk.h>
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/services/hogp.h>
+/* Host-internal: the public API gives a bond's address but not how it paired. */
+#include <host/keys.h>
 #include "ble.h"
 #include "clock.h"
 #include "core.h"
@@ -615,6 +617,16 @@ int ble_set_leds(uint8_t report_id, uint8_t leds)
 	}
 	/* The library refuses a write without a completion callback. */
 	return bt_hogp_rep_write_wo_rsp(hogp, rep, &leds, sizeof(leds), on_leds_written);
+}
+
+bool ble_bond_secure(const uint8_t addr[BTPOLICY_ADDR_LEN])
+{
+	bt_addr_le_t peer;
+	const struct bt_keys *keys;
+
+	memcpy(&peer, addr, sizeof(peer));
+	keys = bt_keys_find_addr(BT_ID_DEFAULT, &peer);
+	return keys && (keys->flags & BT_KEYS_SC);
 }
 
 int ble_rssi(enum device_kind kind, int8_t *dbm)

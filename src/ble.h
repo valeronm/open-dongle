@@ -92,6 +92,9 @@ int ble_set_leds(uint8_t report_id, uint8_t leds);
 /* Reads the slot's signal from the controller; fails with -ENOTCONN without a device and -ENODATA
  * when the controller has no reading yet. */
 int ble_rssi(enum device_kind kind, int8_t *dbm);
+/* Whether the bond with the device was made by LE Secure Connections, not legacy pairing; false
+ * for an address without a bond. */
+bool ble_bond_secure(const uint8_t addr[BTPOLICY_ADDR_LEN]);
 const char *ble_stage_name(enum ble_stage stage);
 
 #endif

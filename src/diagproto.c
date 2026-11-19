@@ -126,6 +126,7 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->link_losses, 4);
 	p = put_le(p, s->latency_average_us, 4);
 	p = put_le(p, s->latency_max_us, 4);
+	*p++ = s->pairing;
 	memcpy(p, s->name, sizeof(s->name));
 	p += sizeof(s->name);
 	return p - out;
@@ -230,8 +231,15 @@ size_t diag_encode_watch(uint8_t *out, const struct chanwatch *w, uint8_t home,
 
 _Static_assert(BTLIST_NAME_LEN == DIAG_NAME_MAX, "a stored device's name is sent whole");
 
+uint8_t diag_pairing(const struct btlist_entry *e, bool secure)
+{
+	return DIAG_PAIRING_KNOWN | (secure ? DIAG_PAIRING_SECURE : 0) |
+	       (e->no_passkey ? 0 : DIAG_PAIRING_PASSKEY);
+}
+
 size_t diag_encode_devices(uint8_t *out, const struct btlist *l,
-			   const uint8_t *const connected[DEVICE_SLOTS])
+			   const uint8_t *const connected[DEVICE_SLOTS],
+			   bool (*secure)(const uint8_t addr[BTPOLICY_ADDR_LEN]))
 {
 	uint8_t *p = out;
 
@@ -239,6 +247,7 @@ size_t diag_encode_devices(uint8_t *out, const struct btlist *l,
 	for (uint8_t i = 0; i < l->count; i++) {
 		const struct btlist_entry *e = &l->entries[i];
 		uint8_t slot = DEVICE_NO_SLOT;
+		uint8_t pairing = secure ? diag_pairing(e, secure(e->addr)) : 0;
 
 		for (uint8_t s = 0; s < DEVICE_SLOTS; s++) {
 			if (connected[s] && memcmp(e->addr, connected[s], sizeof(e->addr)) == 0) {
@@ -248,7 +257,7 @@ size_t diag_encode_devices(uint8_t *out, const struct btlist *l,
 		memcpy(p, e->addr, sizeof(e->addr));
 		p += sizeof(e->addr);
 		*p++ = e->kind;
-		*p++ = e->no_passkey ? DIAG_DEVICE_NO_PASSKEY : 0;
+		*p++ = pairing;
 		*p++ = slot;
 		memcpy(p, e->name, sizeof(e->name));
 		p += sizeof(e->name);

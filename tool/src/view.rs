@@ -21,13 +21,13 @@ use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
     ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
     channel_role, counted_share, describe_event, device_at, device_lines, forget_question,
-    last_packet, latency, link_health, noise_level, noise_ruler, paired, share, slot_health,
-    slot_state, state_name, status_label, switch_question, uptime, usb_state, wall_clock,
-    watch_role, watch_summary,
+    last_packet, latency, link_health, noise_level, noise_ruler, paired, pairing, share,
+    slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
+    wall_clock, watch_role, watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
-    Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots, step_channel,
+    Pairing, Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots, step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -35,7 +35,6 @@ const EVENTS_KEPT: usize = 200;
 const EVENT_ROWS: usize = 8;
 const CHART_MIN_ROWS: u16 = 5;
 const TIME_AXIS_ROWS: u16 = 1;
-const DEVICE_ROWS: u16 = 2;
 /// The narrowest a slot's status box and chart draw uncut.
 const PANEL_MIN_WIDTH: u16 = 59;
 const SEPARATOR: &str = "   ";
@@ -187,6 +186,14 @@ fn signal_color(dbm: i8) -> Color {
         SIGNAL_GOOD_DBM.. => Color::Green,
         SIGNAL_WEAK_DBM.. => Color::Yellow,
         _ => Color::Red,
+    }
+}
+
+fn pairing_color(p: Pairing) -> Color {
+    match (p.secure, p.passkey) {
+        (true, true) => Color::Green,
+        (false, false) => Color::Red,
+        _ => Color::Yellow,
     }
 }
 
@@ -971,7 +978,7 @@ impl<T: Transport> App<T> {
         let dongle_rows = dongle_lines(status);
         let [dongle, top, middle, bottom, footer] = Layout::vertical([
             Constraint::Length(dongle_rows.len() as u16 + 2),
-            Constraint::Length(DEVICE_ROWS + 2),
+            Constraint::Length(device_rows(protocol) + 2),
             Constraint::Min(history_min_rows(protocol)),
             Constraint::Max(EVENT_ROWS as u16 + 2),
             Constraint::Length(help.len() as u16),
@@ -1087,6 +1094,10 @@ fn dongle_lines(status: Option<&Status>) -> Vec<Line<'static>> {
     rows
 }
 
+fn device_rows(protocol: Option<Protocol>) -> u16 {
+    2 + u16::from(protocol.is_some_and(Protocol::reports_pairing))
+}
+
 fn slot_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<'static>> {
     let Some(s) = status else {
         return Vec::new();
@@ -1111,6 +1122,12 @@ fn slot_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<
         )));
     }
     let mut rows = vec![status_row("link", link)];
+    if let Some(p) = device.and_then(|d| d.pairing) {
+        rows.push(status_row(
+            "security",
+            [Span::styled(pairing(p), Style::new().fg(pairing_color(p)))],
+        ));
+    }
     if let Some(l) = device.and_then(|d| s.shown_latency(d)) {
         rows.push(status_row("latency", vec![Span::raw(latency(l))]));
     }
@@ -1340,8 +1357,16 @@ fn draw_moves(f: &mut Frame, area: Rect, w: &Watch, s: &Status) {
 
 fn draw_devices(f: &mut Frame, area: Rect, history: &History) {
     let block = Block::bordered().title(padded("stored devices; a device's number forgets it"));
-    let lines = device_lines(&history.devices, history.status.protocol());
-    f.render_widget(Paragraph::new(lines.join("\n")).block(block), area);
+    let lines: Vec<Line> = device_lines(&history.devices, history.status.protocol())
+        .into_iter()
+        .map(|l| {
+            Line::from_iter(l.parts().into_iter().map(|(text, p)| match p {
+                Some(p) => Span::styled(text, Style::new().fg(pairing_color(p))),
+                None => Span::raw(text),
+            }))
+        })
+        .collect();
+    f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_events(f: &mut Frame, area: Rect, history: Option<&History>) -> usize {
@@ -1389,7 +1414,8 @@ mod tests {
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::{mouse_status, nuphy, status_of, status_running};
     use crate::protocol::{
-        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Protocol, Rssi, SlotMinute,
+        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Pairing, Protocol, Rssi,
+        SlotMinute,
     };
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
@@ -1816,9 +1842,19 @@ mod tests {
         press(&mut app, 'k');
         assert!(matches!(session(&mut app).pane, Pane::History));
         press(&mut app, 'd');
-        let text = screen(&drawn(&mut app)).join("\n");
+        let terminal = drawn(&mut app);
+        let text = screen(&terminal).join("\n");
         assert!(text.contains("1  keyboard  MX Keys"), "{text}");
         assert!(text.contains("2  mouse     MX Master 3S"), "{text}");
+        let mouse_row = screen(&terminal)
+            .iter()
+            .position(|r| r.contains("2  mouse"))
+            .unwrap() as u16;
+        assert_eq!(
+            cell_at(&terminal, mouse_row, "secure, no passkey").fg,
+            Color::Yellow
+        );
+        assert_eq!(cell_at(&terminal, mouse_row, "C8:F2").fg, Color::Reset);
         press(&mut app, '2');
         assert!(
             footer(&mut app).starts_with("Forget MX Master 3S (C8:F2:E0:11:3C:5A)?"),
@@ -1856,6 +1892,7 @@ mod tests {
             gaps: None,
             link_losses: None,
             latency: None,
+            pairing: None,
         };
         let mut app = app_with(s);
         history(&mut app).slots.push(SlotHistory {
@@ -1869,7 +1906,8 @@ mod tests {
     const MOUSE_TITLE: &str = "┌ mouse · MX Master 3S ─";
     /// In Bluetooth mode, under the dongle box's one row.
     const DEVICE_TITLE_ROW: usize = 3;
-    const CHART_ROW: usize = DEVICE_TITLE_ROW + 4;
+    /// Under the device box's three rows.
+    const CHART_ROW: usize = DEVICE_TITLE_ROW + 5;
 
     fn signal_legend(protocol: Protocol) -> String {
         legend(
@@ -1900,7 +1938,7 @@ mod tests {
             ),
         ];
         let device_top = boxes[0].1.len() + 2;
-        let chart_row = device_top + usize::from(DEVICE_ROWS) + 2;
+        let chart_row = device_top + usize::from(device_rows(Some(h.status.protocol()))) + 2;
         let chart_legend = signal_legend(h.status.protocol());
         (20..=200)
             .find(|&width| {
@@ -1968,6 +2006,24 @@ mod tests {
             inside_box(mouse),
             "link      connected   -60 dBm   last packet 250 ms ago"
         );
+        let security = &rows[DEVICE_TITLE_ROW + 2];
+        let (keyboard, mouse) = security.split_at(security.find("││").unwrap() + 3);
+        assert_eq!(inside_box(keyboard), "");
+        assert_eq!(inside_box(mouse), "security  secure, no passkey");
+    }
+
+    #[test]
+    fn the_pairing_is_colored_by_how_well_it_protects_the_link() {
+        let colored = |secure, passkey| {
+            let mut s = mouse_status();
+            s.device.pairing = Some(Pairing { secure, passkey });
+            let words = pairing(Pairing { secure, passkey });
+            cell_at(&status_box(&s), DEVICE_TITLE_ROW as u16 + 2, &words).fg
+        };
+        assert_eq!(colored(true, true), Color::Green);
+        assert_eq!(colored(true, false), Color::Yellow);
+        assert_eq!(colored(false, true), Color::Yellow);
+        assert_eq!(colored(false, false), Color::Red);
     }
 
     #[test]

@@ -79,6 +79,11 @@ paired again.
 - `devices` lists the stored keyboards and mice, the most recently connected first, and
   `forget <n>` removes the one at that place in the list. In the live view `d` shows the list in
   place of the chart, and a device's number asks to forget it.
+- `devices` and the live view's list give each stored device's pairing, and `status` and the live
+  view's device box the connected one's: secure for LE Secure Connections or legacy, and whether a
+  passkey was typed. A legacy pairing's key can be worked out by anyone who recorded the pairing
+  over the air, passkey or not; a passkey keeps another device from pairing in the device's place.
+  The live view colors it green when both hold, red when neither does.
 
 Event lines name a stored device and give a forgotten one's address.
 

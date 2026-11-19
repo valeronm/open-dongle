@@ -259,7 +259,9 @@ static void send_devices(const struct diag_request *req)
 			connected[0] = e->addr;
 		}
 	}
-	diag_reply(req, payload, diag_encode_devices(payload, &list, connected), DIAG_AFTER_NONE);
+	diag_reply(req, payload,
+		   diag_encode_devices(payload, &list, connected, NULL),
+		   DIAG_AFTER_NONE);
 }
 
 static void serve_diag(const struct diag_request *req)

@@ -198,6 +198,20 @@ static void eight_devices_are_stored(void)
 	CHECK(btlist_has(&l, (const uint8_t[BTPOLICY_ADDR_LEN]){1, 0}));
 }
 
+static void an_entry_is_found_by_its_address(void)
+{
+	struct btlist l = {0};
+
+	btlist_connected(&l, mx, "MX Keys");
+	btlist_paired(&l, air, DEVICE_KEYBOARD, true);
+	const struct btlist_entry *keys = btlist_entry(&l, mx);
+	const struct btlist_entry *air75 = btlist_entry(&l, air);
+
+	CHECK(keys && is(keys, mx, "MX Keys"));
+	CHECK(air75 && air75->no_passkey);
+	CHECK(btlist_entry(&l, old) == NULL);
+}
+
 int main(void)
 {
 	RUN(a_connecting_keyboard_moves_to_the_front_with_its_name);
@@ -213,5 +227,6 @@ int main(void)
 	RUN(pairing_records_the_kind);
 	RUN(a_bond_without_an_entry_is_listed_as_a_keyboard);
 	RUN(a_kind_is_stored_once_a_device_of_it_is_listed);
+	RUN(an_entry_is_found_by_its_address);
 	return TEST_EXIT();
 }
