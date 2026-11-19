@@ -134,6 +134,11 @@ void history_noise(struct history *h, const struct noise_tally *t, bool home);
 struct history_event history_keyboard_event(uint8_t type, uint8_t slot,
 					    const uint8_t addr[HISTORY_ADDR_LEN], uint8_t c);
 
+/* For bytes b and c of an event logged when input stopped: the whole seconds since the last input,
+ * low byte first, UINT16_MAX for none since boot (a negative elapsed_ms) or for that many seconds
+ * or more. */
+void history_since_input(int64_t elapsed_ms, uint8_t *low, uint8_t *high);
+
 /* Copies up to max held records from index from, or from the oldest held if that is later. */
 size_t history_minutes(const struct history *h, uint32_t from, uint32_t *first,
 		       struct history_minute *out, size_t max);

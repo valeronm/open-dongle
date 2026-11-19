@@ -244,15 +244,13 @@ void core_rssi(uint8_t slot, int8_t dbm)
 	history_rssi(&history, slot, dbm);
 }
 
-uint8_t core_minutes_since_input(uint8_t slot)
+void core_log_input_lost(uint8_t type, uint8_t slot, uint8_t a, uint32_t value)
 {
-	int64_t minutes;
+	int64_t last = last_input_ms[slot];
+	uint8_t low, high;
 
-	if (last_input_ms[slot] < 0) {
-		return UINT8_MAX;
-	}
-	minutes = (k_uptime_get() - last_input_ms[slot]) / HISTORY_MINUTE_MS;
-	return minutes > UINT8_MAX ? UINT8_MAX : (uint8_t)minutes;
+	history_since_input(last < 0 ? -1 : k_uptime_get() - last, &low, &high);
+	core_log(type, slot, a, low, high, value);
 }
 
 /* The noise watch runs only under ESB, whose protocols have one slot. */

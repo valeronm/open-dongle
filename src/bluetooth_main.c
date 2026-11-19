@@ -301,8 +301,7 @@ static void on_map_read(enum device_kind kind)
 static void on_disconnected(enum device_kind kind, uint8_t reason)
 {
 	if (btpolicy_is_ready(&policy, kind)) {
-		core_log(HISTORY_BT_DISCONNECTED, slot_of(kind), reason,
-			 core_minutes_since_input(slot_of(kind)), 0, 0);
+		core_log_input_lost(HISTORY_BT_DISCONNECTED, slot_of(kind), reason, 0);
 		if (kind == DEVICE_MOUSE) {
 			const struct report released = {.kind = REPORT_MOUSE};
 

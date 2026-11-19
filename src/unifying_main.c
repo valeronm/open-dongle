@@ -162,8 +162,7 @@ static void apply_tick(const struct unifying_out *out)
 		queue_leds(out->leds);
 	}
 	if (out->went_silent) {
-		core_log(HISTORY_LINK_LOST, 0, (uint8_t)session.rssi,
-			 core_minutes_since_input(0), 0, out->silent_ms);
+		core_log_input_lost(HISTORY_LINK_LOST, 0, (uint8_t)session.rssi, out->silent_ms);
 	}
 	if (out->attempt_expired) {
 		printk("pairing timed out\n");

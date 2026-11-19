@@ -88,9 +88,9 @@ void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint3
 void core_log_pairing_opened(const struct pairwin *w);
 /* Takes the pending noise readings first. */
 void core_rssi(uint8_t slot, int8_t dbm);
-/* UINT8_MAX when no report from the slot has changed what the host sees since boot, or 255
- * minutes or more ago. */
-uint8_t core_minutes_since_input(uint8_t slot);
+/* Logs an event whose bytes b and c hold the time since the slot's last input, a report that
+ * changed what the host sees, as history_since_input gives it. */
+void core_log_input_lost(uint8_t type, uint8_t slot, uint8_t a, uint32_t value);
 /* Logs USB suspend changes and closes the minutes that ended. */
 void core_poll(void);
 /* Takes the pending noise readings, which a channel change drops, and counts a change that

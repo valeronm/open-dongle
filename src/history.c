@@ -179,3 +179,12 @@ struct history_event history_keyboard_event(uint8_t type, uint8_t slot,
 			 (uint32_t)addr[4] << 24,
 	};
 }
+
+void history_since_input(int64_t elapsed_ms, uint8_t *low, uint8_t *high)
+{
+	int64_t whole = elapsed_ms / 1000;
+	uint16_t seconds = elapsed_ms < 0 || whole > UINT16_MAX ? UINT16_MAX : (uint16_t)whole;
+
+	*low = (uint8_t)seconds;
+	*high = (uint8_t)(seconds >> 8);
+}

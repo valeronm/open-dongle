@@ -485,12 +485,12 @@ pub fn noise(n: Option<Noise>) -> String {
 }
 
 fn since_input(e: &Event, input: &str) -> String {
-    match e.b {
-        // The firmware reports 255 both for no input since boot and for a last input 255 or more
-        // minutes ago.
-        u8::MAX if e.time_ms < u8::MAX as u64 * 60_000 => format!("no {input} since boot"),
-        u8::MAX => format!("no {input} for over 4 h"),
-        m => format!("{m} min after the last {input}"),
+    match u16::from_le_bytes([e.b, e.c]) {
+        // The firmware reports u16::MAX both for no input since boot and for a last input that
+        // many seconds or more ago.
+        u16::MAX if e.time_ms < u64::from(u16::MAX) * 1000 => format!("no {input} since boot"),
+        u16::MAX => format!("no {input} for over 18 h"),
+        s => format!("{} after the last {input}", duration(u32::from(s) * 1000)),
     }
 }
 
@@ -801,6 +801,30 @@ mod tests {
     }
 
     #[test]
+    fn the_time_since_the_last_input_reads_as_a_duration() {
+        let bt = status_of(Protocol::Bluetooth);
+        let gone = |b, c| {
+            describe_event(
+                &event(EventKind::BluetoothDisconnected, 0x08, b, c, 0),
+                &bt,
+                &[],
+            )
+        };
+        assert_eq!(
+            gone(42, 0),
+            "keyboard disconnected: it went silent, 42 s after the last key"
+        );
+        assert_eq!(
+            gone(192, 0),
+            "keyboard disconnected: it went silent, 3 min 12 s after the last key"
+        );
+        assert_eq!(
+            gone(0x08, 0x47),
+            "keyboard disconnected: it went silent, 5 h 3 min after the last key"
+        );
+    }
+
+    #[test]
     fn describes_a_bluetooth_disconnect_by_its_reason() {
         let bt = status_of(Protocol::Bluetooth);
         let gone = |reason| {
@@ -812,19 +836,19 @@ mod tests {
         };
         assert_eq!(
             gone(0x08),
-            "keyboard disconnected: it went silent, 3 min after the last key"
+            "keyboard disconnected: it went silent, 3 s after the last key"
         );
         assert_eq!(
             gone(0x13),
-            "keyboard disconnected: it closed the link, 3 min after the last key"
+            "keyboard disconnected: it closed the link, 3 s after the last key"
         );
         assert_eq!(
             gone(0x16),
-            "keyboard disconnected: the dongle closed the link, 3 min after the last key"
+            "keyboard disconnected: the dongle closed the link, 3 s after the last key"
         );
         assert_eq!(
             gone(0x3d),
-            "keyboard disconnected: reason 0x3d, 3 min after the last key"
+            "keyboard disconnected: reason 0x3d, 3 s after the last key"
         );
     }
 
@@ -1047,7 +1071,7 @@ mod tests {
         };
         assert_eq!(
             d(gone),
-            "mouse disconnected: it went silent, 3 min after the last input"
+            "mouse disconnected: it went silent, 3 s after the last input"
         );
         assert_eq!(
             d(event(EventKind::PairingOpened, 1, 1, 0, 0)),
@@ -1105,7 +1129,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&lost, &nuphy(), &[]),
-            "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -"
+            "link lost after 1 s, last signal -71 dBm, 3 s after the last key, noise -"
         );
         let noisy = Event {
             noise: Some(Noise {
@@ -1117,7 +1141,7 @@ mod tests {
         };
         assert_eq!(
             describe_event(&noisy, &nuphy(), &[]),
-            "link lost after 1 s, last signal -71 dBm, 3 min after the last key, noise -50 dBm, 25.00% at -85, 3.00% at -60"
+            "link lost after 1 s, last signal -71 dBm, 3 s after the last key, noise -50 dBm, 25.00% at -85, 3.00% at -60"
         );
         let paired = Event {
             time_ms: 0,
@@ -1158,18 +1182,18 @@ mod tests {
 
     #[test]
     fn a_unifying_silence_is_not_called_a_loss() {
-        let silent = event(EventKind::LinkLost, 0xc4, 255, 0, 2300);
+        let silent = event(EventKind::LinkLost, 0xc4, 0xff, 0xff, 2300);
         assert_eq!(
             describe_event(&silent, &unpaired_unifying(), &[]),
             "keyboard silent after 2 s, last signal -60 dBm, no key since boot, noise -"
         );
         let later = Event {
-            time_ms: 300 * 60_000,
+            time_ms: 20 * 3_600_000,
             ..silent
         };
         assert_eq!(
             describe_event(&later, &unpaired_unifying(), &[]),
-            "keyboard silent after 2 s, last signal -60 dBm, no key for over 4 h, noise -"
+            "keyboard silent after 2 s, last signal -60 dBm, no key for over 18 h, noise -"
         );
     }
 

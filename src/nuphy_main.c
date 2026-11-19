@@ -87,8 +87,7 @@ static void apply(const struct link_out *out)
 
 		core_link_lost(0);
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		core_log(HISTORY_LINK_LOST, 0, (uint8_t)keyboard_rssi,
-			 core_minutes_since_input(0), 0, gap);
+		core_log_input_lost(HISTORY_LINK_LOST, 0, (uint8_t)keyboard_rssi, gap);
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();

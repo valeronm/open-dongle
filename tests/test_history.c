@@ -371,6 +371,24 @@ static void test_weakest_is_per_slot(void)
 	CHECK_EQ(weakest, -90);
 }
 
+static void test_time_since_input_is_seconds_low_byte_first(void)
+{
+	uint8_t low, high;
+
+	history_since_input(42999, &low, &high);
+	CHECK_EQ(low, 42);
+	CHECK_EQ(high, 0);
+	history_since_input(1000999, &low, &high);
+	CHECK_EQ(low, 0xe8);
+	CHECK_EQ(high, 0x03);
+	history_since_input(65535000ll, &low, &high);
+	CHECK_EQ(low, 0xff);
+	CHECK_EQ(high, 0xff);
+	history_since_input(-1, &low, &high);
+	CHECK_EQ(low, 0xff);
+	CHECK_EQ(high, 0xff);
+}
+
 int main(void)
 {
 	RUN(test_weakest_is_absent_without_packets);
@@ -393,5 +411,6 @@ int main(void)
 	RUN(test_each_slot_has_its_own_gaps_and_losses);
 	RUN(test_an_event_about_no_slot_leaves_the_readings);
 	RUN(test_weakest_is_per_slot);
+	RUN(test_time_since_input_is_seconds_low_byte_first);
 	return TEST_EXIT();
 }
