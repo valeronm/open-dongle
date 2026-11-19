@@ -57,10 +57,10 @@ shows the shared state in one dongle box, and below it each slot's box and chart
 when the terminal is wide enough, and otherwise `o` steps through them. Event lines name the
 device they are about.
 
-Each device's latency is the delay from a report's arrival at the dongle to the PC fetching it over
-USB, as its average and maximum since the last `clear`. It leaves out the time on air and in the
-Bluetooth controller, which the dongle cannot see. Reports the dongle makes up itself, such as the
-release when a device drops out, are not counted.
+Each connected device's latency is the delay from a report's arrival at the dongle to the PC
+fetching it over USB, as its average and maximum since the last `clear`. It leaves out the time on
+air and in the Bluetooth controller, which the dongle cannot see. Reports the dongle makes up
+itself, such as the release when a device drops out, are not counted.
 
 `devices` lists the paired devices with their kind and the slot each is connected in.
 

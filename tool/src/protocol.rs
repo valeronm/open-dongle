@@ -576,6 +576,13 @@ impl Status {
         self.slot(slot).map_or("device", |s| s.kind.name())
     }
 
+    /// The device's latency while its slot is connected.
+    pub fn shown_latency(&self, device: &SlotStatus) -> Option<Latency> {
+        device
+            .latency
+            .filter(|_| self.slot(device.slot).is_some_and(|slot| slot.connected))
+    }
+
     /// The channels a move can send the link to, ascending.
     pub fn keyboard_channels(&self) -> Vec<u8> {
         let mut channels: Vec<u8> = match &self.link {

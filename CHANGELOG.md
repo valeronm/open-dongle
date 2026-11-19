@@ -19,8 +19,8 @@
 - The LED shows connected while a keyboard or a mouse is connected.
 - Bluetooth reports go to the PC as they arrive instead of on a 10 ms beat, which made a mouse's
   motion stutter.
-- `spare-dongle status` and the live view show each device's latency through the dongle, its
-  average and maximum since the last `clear`.
+- `spare-dongle status` and the live view show each connected device's latency through the
+  dongle, its average and maximum since the last `clear`.
 - The live view shows the dongle's own state in a box of its own, above a box for each device.
 - In Bluetooth mode the live view leaves out the busy strip and the noise line, which have no
   channel to measure, and the dropped count records Bluetooth events lost to a full queue.

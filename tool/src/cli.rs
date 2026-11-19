@@ -134,7 +134,7 @@ fn slot_rows(s: &Status, slot: &Slot, d: &SlotStatus) -> Vec<(&'static str, Stri
         .filter_map(|&counter| Some(format!("{} {}", counter.name(), d.get(counter)?)))
         .collect();
     rows.push(("counters", counters.join(" ")));
-    if let Some(l) = d.latency {
+    if let Some(l) = s.shown_latency(d) {
         rows.push(("latency", latency(l)));
     }
     rows
@@ -643,6 +643,21 @@ mod tests {
         let lines = lines(&s);
         let link = lines.iter().find(|l| l.starts_with("link")).unwrap();
         assert!(link.ends_with("Bluetooth failed to start"), "{link}");
+    }
+
+    #[test]
+    fn a_device_not_connected_shows_no_latency() {
+        let s = status_of(Protocol::Bluetooth);
+        assert!(s.device.latency.is_some());
+        let lines = lines(&s);
+        assert!(
+            lines.iter().any(|l| l.contains("not connected")),
+            "{lines:#?}"
+        );
+        assert!(
+            !lines.iter().any(|l| l.starts_with("latency")),
+            "{lines:#?}"
+        );
     }
 
     #[test]

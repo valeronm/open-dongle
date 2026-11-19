@@ -1111,7 +1111,7 @@ fn slot_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<
         )));
     }
     let mut rows = vec![status_row("link", link)];
-    if let Some(l) = device.and_then(|d| d.latency) {
+    if let Some(l) = device.and_then(|d| s.shown_latency(d)) {
         rows.push(status_row("latency", vec![Span::raw(latency(l))]));
     }
     rows
@@ -2847,8 +2847,13 @@ mod tests {
         let rows = screen(&status_box(&s));
         let rows = &rows[..CHART_ROW];
         assert!(rows.iter().any(|r| r.contains("not connected")));
-        assert!(!rows.iter().any(|r| r.contains("dBm")));
-        assert!(!rows.iter().any(|r| r.contains("channels")));
+        assert!(s.device.latency.is_some());
+        for hidden in ["dBm", "channels", "latency"] {
+            assert!(
+                !rows.iter().any(|r| r.contains(hidden)),
+                "{hidden} in {rows:#?}"
+            );
+        }
     }
 
     #[test]
