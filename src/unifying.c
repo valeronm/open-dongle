@@ -560,9 +560,9 @@ static bool quiet_too_long(const struct unifying_session *s, uint64_t now_ms)
 	return now_ms - since >= 2 * (uint64_t)s->link.keepalive_ms;
 }
 
-static void take_divert_end(struct unifying_session *s, struct unifying_out *out)
+static void take_hidpp_event(struct unifying_session *s, struct unifying_out *out)
 {
-	hidpp_take_end(&s->hidpp, &out->divert);
+	hidpp_take_event(&s->hidpp, &out->hidpp_event);
 }
 
 void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
@@ -649,7 +649,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	if (!unifying_pairing_window_open(&s->pairing, now_ms) && s->deaf_until_ms > now_ms) {
 		s->deaf_until_ms = now_ms;
 	}
-	take_divert_end(s, out);
+	take_hidpp_event(s, out);
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
@@ -692,7 +692,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 							 now_ms, 2U * s->link.keepalive_ms,
 							 out->hidpp);
 	}
-	take_divert_end(s, out);
+	take_hidpp_event(s, out);
 	out->attempt_expired = unifying_pairing_expired(&s->pairing, now_ms);
 	if (out->attempt_expired) {
 		_Static_assert(UNIFYING_ANSWERED_1 == 1 && UNIFYING_ANSWERED_2 == 2,

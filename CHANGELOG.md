@@ -4,7 +4,8 @@
 
 - In Unifying and Bluetooth mode a Logitech keyboard's screen brightness keys, such as the MX
   Keys's F1 and F2, work without Logitech's software.
-- The events record each time the dongle diverts a Logitech keyboard's keys, or what stopped it.
+- The events record each time the dongle diverts a Logitech keyboard's keys or sets a Logitech
+  mouse's wheel resolution, or what stopped it.
 - In Bluetooth mode a Logitech mouse's wheel scrolls in high resolution where the PC turns it on,
   as Linux does, and in notches elsewhere.
 - The tool shows a device's battery level and whether it is charging, as far as the device

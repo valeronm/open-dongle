@@ -118,9 +118,22 @@ static void hidpp_advance(struct hidpp *x)
 
 static void divert_end(struct hidpp *x, enum history_divert outcome, uint16_t cid)
 {
-	x->end.ended = true;
-	x->end.outcome = outcome;
-	x->end.cid = cid;
+	x->event = (struct hidpp_event){.pending = true,
+					.type = HISTORY_KEYS_DIVERTED,
+					.a = outcome,
+					.b = x->diverted,
+					.c = x->refused,
+					.value = cid};
+}
+
+static void wheel_end(struct hidpp *x, enum history_wheel outcome)
+{
+	x->event = (struct hidpp_event){
+		.pending = true,
+		.type = HISTORY_WHEEL_SET,
+		.a = outcome,
+		.b = outcome == HISTORY_WHEEL_HIRES ? x->wheel_multiplier : 0,
+	};
 }
 
 void hidpp_init(struct hidpp *x, enum device_kind kind)
@@ -133,11 +146,16 @@ void hidpp_start(struct hidpp *x)
 	if (x->step == HIDPP_FIND_CONTROLS || (x->step == HIDPP_DIVERT && x->control_index == 0)) {
 		return;
 	}
-	x->end = (struct hidpp_divert_end){0};
+	x->event = (struct hidpp_event){0};
+	x->diverted = 0;
+	x->refused = 0;
 	x->wheel_mode = HIDPP_WHEEL_UNKNOWN;
 	x->step = HIDPP_IDLE;
 	if (x->controls_known && x->controls == 0) {
 		divert_end(x, HISTORY_DIVERT_NO_FEATURE, 0);
+	}
+	if (x->wheel_known && x->wheel == 0) {
+		wheel_end(x, HISTORY_WHEEL_NO_FEATURE);
 	}
 	hidpp_advance(x);
 }
@@ -163,6 +181,9 @@ static void hidpp_give_up(struct hidpp *x)
 		divert_end(x, HISTORY_DIVERT_UNANSWERED, 0);
 	} else if (x->step == HIDPP_DIVERT) {
 		divert_end(x, HISTORY_DIVERT_UNANSWERED, diverted[x->control_index].cid);
+	} else if (x->step == HIDPP_FIND_WHEEL || x->step == HIDPP_READ_WHEEL ||
+		   x->step == HIDPP_SET_WHEEL) {
+		wheel_end(x, HISTORY_WHEEL_UNANSWERED);
 	}
 	hidpp_advance(x);
 }
@@ -292,25 +313,33 @@ static bool hidpp_reply(struct hidpp *x, struct device_battery *b, const struct 
 	} else if (x->step == HIDPP_FIND_WHEEL && find) {
 		x->wheel = error ? 0 : m->params[0];
 		x->wheel_known = true;
+		if (x->wheel == 0) {
+			wheel_end(x, HISTORY_WHEEL_NO_FEATURE);
+		}
 	} else if (x->step == HIDPP_READ_WHEEL && feature == x->wheel &&
 		   function == HIDPP_GET_WHEEL_CAPABILITY) {
 		if (error || m->params[0] == 0) {
 			x->wheel = 0;
+			wheel_end(x, HISTORY_WHEEL_REFUSED);
 		} else {
 			x->wheel_multiplier = m->params[0];
 		}
 	} else if (x->step == HIDPP_SET_WHEEL && feature == x->wheel &&
 		   function == HIDPP_SET_WHEEL_MODE) {
-		x->wheel_mode = error		 ? HIDPP_WHEEL_UNKNOWN
-				: x->hires_sent ? HIDPP_WHEEL_HIRES
-						: HIDPP_WHEEL_NOTCHES;
+		if (error) {
+			x->wheel_mode = HIDPP_WHEEL_UNKNOWN;
+			wheel_end(x, HISTORY_WHEEL_REFUSED);
+		} else {
+			x->wheel_mode = x->hires_sent ? HIDPP_WHEEL_HIRES : HIDPP_WHEEL_NOTCHES;
+			wheel_end(x, x->hires_sent ? HISTORY_WHEEL_HIRES : HISTORY_WHEEL_NOTCHES);
+		}
 	} else if (x->step == HIDPP_DIVERT && feature == x->controls &&
 		   function == HIDPP_SET_CID_REPORTING &&
 		   (error || (m->params[0] << 8 | m->params[1]) == diverted[x->control_index].cid)) {
 		if (error) {
-			x->end.refused++;
+			x->refused++;
 		} else {
-			x->end.diverted++;
+			x->diverted++;
 		}
 	} else {
 		return false;
@@ -341,13 +370,13 @@ bool hidpp_rx(struct hidpp *x, struct device_battery *b, const struct hidpp_msg 
 	return true;
 }
 
-bool hidpp_take_end(struct hidpp *x, struct hidpp_divert_end *out)
+bool hidpp_take_event(struct hidpp *x, struct hidpp_event *out)
 {
-	if (!x->end.ended) {
+	if (!x->event.pending) {
 		return false;
 	}
-	*out = x->end;
-	x->end.ended = false;
+	*out = x->event;
+	x->event.pending = false;
 	return true;
 }
 

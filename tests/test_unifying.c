@@ -1933,11 +1933,12 @@ static void check_hidpp(const struct unifying_out *out, const uint8_t *want, siz
 static void check_end(const struct unifying_out *out, enum history_divert outcome,
 		      uint8_t diverted, uint8_t refused, uint16_t cid)
 {
-	CHECK(out->divert.ended);
-	CHECK_EQ(out->divert.outcome, outcome);
-	CHECK_EQ(out->divert.diverted, diverted);
-	CHECK_EQ(out->divert.refused, refused);
-	CHECK_EQ(out->divert.cid, cid);
+	CHECK(out->hidpp_event.pending);
+	CHECK_EQ(out->hidpp_event.type, HISTORY_KEYS_DIVERTED);
+	CHECK_EQ(out->hidpp_event.a, outcome);
+	CHECK_EQ(out->hidpp_event.b, diverted);
+	CHECK_EQ(out->hidpp_event.c, refused);
+	CHECK_EQ(out->hidpp_event.value, cid);
 }
 
 static void tick_queue(struct unifying_session *s, uint64_t now, uint32_t taken,
@@ -1961,7 +1962,7 @@ static uint64_t run_out_retries(struct unifying_session *s, uint64_t now, uint32
 	for (int i = 0; i < HIDPP_TRIES; i++) {
 		tick_queue(s, now, *taken, &out);
 		check_hidpp(&out, want, len);
-		CHECK(!out.divert.ended);
+		CHECK(!out.hidpp_event.pending);
 		tick_queue(s, now + 1, ++*taken, &out);
 		CHECK_EQ(out.hidpp_len, 0);
 		tick_queue(s, now + retry, *taken, &out);
@@ -1995,7 +1996,7 @@ static void test_the_brightness_keys_are_diverted_in_turn_and_reported_once(void
 	CHECK_EQ(want[UNIFYING_FRAME_MAX - 1], 0xe5);
 	divert_reply(f, 0xc7);
 	session_feed(&s, f, sizeof(f), 50, &out);
-	CHECK(!out.divert.ended);
+	CHECK(!out.hidpp_event.pending);
 	unifying_session_tick(&s, 60, false, 0, 0, &out);
 	divert_request(want, 0xc8);
 	check_hidpp(&out, want, sizeof(want));
@@ -2004,7 +2005,7 @@ static void test_the_brightness_keys_are_diverted_in_turn_and_reported_once(void
 	check_end(&out, HISTORY_DIVERT_FINISHED, 2, 0, 0);
 	unifying_session_tick(&s, 80, false, 0, 0, &out);
 	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
-	CHECK(!out.divert.ended);
+	CHECK(!out.hidpp_event.pending);
 }
 
 static void test_an_unanswered_lookup_is_sent_again_then_given_up(void)
@@ -2022,7 +2023,7 @@ static void test_an_unanswered_lookup_is_sent_again_then_given_up(void)
 	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0);
 	tick_queue(&s, now + 1, taken, &out);
 	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
-	CHECK(!out.divert.ended);
+	CHECK(!out.hidpp_event.pending);
 }
 
 static void test_an_unanswered_divert_reports_its_control(void)
@@ -2242,7 +2243,7 @@ static void test_a_request_the_sleeping_keyboard_never_takes_is_not_sent_again(v
 	check_hidpp(&out, find_request, sizeof(find_request));
 	tick_queue(&s, 20 + 100000, 0, &out);
 	CHECK_EQ(out.hidpp_len, 0);
-	CHECK(!out.divert.ended);
+	CHECK(!out.hidpp_event.pending);
 }
 
 static void test_a_dropped_request_is_sent_again_without_counting_a_try(void)
@@ -2455,7 +2456,7 @@ static void test_an_unanswered_battery_read_logs_no_divert_event(void)
 			      sizeof(read_battery_request));
 	tick_queue(&s, now, taken, &out);
 	CHECK_EQ(out.hidpp_len, 0);
-	CHECK(!out.divert.ended);
+	CHECK(!out.hidpp_event.pending);
 	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
 }
 

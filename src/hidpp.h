@@ -47,13 +47,12 @@ enum hidpp_wheel_mode {
 	HIDPP_WHEEL_HIRES,
 };
 
-struct hidpp_divert_end {
-	bool ended;
-	enum history_divert outcome;
-	uint8_t diverted;
-	uint8_t refused;
-	/* The control left unanswered; 0 when the feature lookup was. */
-	uint16_t cid;
+/* A run settles one feature: a keyboard's divert or a mouse's wheel. */
+struct hidpp_event {
+	bool pending;
+	enum history_event_type type;
+	uint8_t a, b, c;
+	uint32_t value;
 };
 
 /*
@@ -92,8 +91,10 @@ struct hidpp {
 	uint8_t tries;
 	bool awaiting;
 	uint64_t taken_ms;
-	/* Set once when the divert ends. */
-	struct hidpp_divert_end end;
+	/* The divert's controls so far this run. */
+	uint8_t diverted;
+	uint8_t refused;
+	struct hidpp_event event;
 };
 
 /* Reads a message from the len bytes after its report ID. */
@@ -121,7 +122,7 @@ bool hidpp_rx(struct hidpp *x, struct device_battery *b, const struct hidpp_msg 
 void hidpp_want_hires(struct hidpp *x, bool on);
 /* The mouse's wheel steps per notch: its multiplier once it confirms high resolution, else 1. */
 uint8_t hidpp_wheel_steps(const struct hidpp *x);
-/* Copies out the divert's end once, the first time it is asked for after the divert ended. */
-bool hidpp_take_end(struct hidpp *x, struct hidpp_divert_end *out);
+/* Copies out the event the run settled, once. */
+bool hidpp_take_event(struct hidpp *x, struct hidpp_event *out);
 
 #endif

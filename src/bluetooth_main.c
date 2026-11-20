@@ -621,7 +621,7 @@ static void read_rssi(uint32_t now)
 static void run_hidpp(enum device_kind kind, uint32_t now)
 {
 	struct hidpp *x = &runs[kind].hidpp;
-	struct hidpp_divert_end end;
+	struct hidpp_event event;
 	struct hidpp_msg m;
 
 	if (!btpolicy_is_ready(&policy, kind) || !maps[kind].has_hidpp) {
@@ -636,9 +636,8 @@ static void run_hidpp(enum device_kind kind, uint32_t now)
 		ble_write_report(kind, HIDPP_LONG_REPORT_ID, data, sizeof(data));
 		hidpp_taken(x, now);
 	}
-	if (hidpp_take_end(x, &end)) {
-		core_log(HISTORY_KEYS_DIVERTED, slot_of(kind), end.outcome, end.diverted, end.refused,
-			 end.cid);
+	if (hidpp_take_event(x, &event)) {
+		core_log(event.type, slot_of(kind), event.a, event.b, event.c, event.value);
 	}
 }
 

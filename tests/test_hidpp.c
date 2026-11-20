@@ -251,8 +251,85 @@ static void test_a_mouse_without_the_wheel_feature_stays_in_notches(void)
 	CHECK_EQ(hidpp_wheel_steps(&x), 1);
 }
 
+static void check_wheel_event(struct hidpp *x, enum history_wheel outcome, uint8_t steps)
+{
+	struct hidpp_event event;
+
+	CHECK(hidpp_take_event(x, &event));
+	CHECK_EQ(event.type, HISTORY_WHEEL_SET);
+	CHECK_EQ(event.a, outcome);
+	CHECK_EQ(event.b, steps);
+	CHECK(!hidpp_take_event(x, &event));
+}
+
+static void test_a_wheel_set_to_high_resolution_is_reported_with_its_steps(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+
+	mouse_with_wheel(&x, &b);
+	hidpp_want_hires(&x, true);
+	request(&x, 40);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x02, 0x00, 0x00);
+	check_wheel_event(&x, HISTORY_WHEEL_HIRES, 8);
+}
+
+static void test_a_wheel_set_to_notches_is_reported(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+
+	mouse_with_wheel(&x, &b);
+	request(&x, 40);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x00, 0x00, 0x00);
+	check_wheel_event(&x, HISTORY_WHEEL_NOTCHES, 0);
+}
+
+static void test_a_mouse_without_the_wheel_feature_reports_it_at_each_connect(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+
+	mouse_past_battery(&x, &b);
+	request(&x, 20);
+	reply(&x, &b, 0x00, 0x01, 0x00, 0x00, 0x00);
+	check_wheel_event(&x, HISTORY_WHEEL_NO_FEATURE, 0);
+	hidpp_start(&x);
+	check_wheel_event(&x, HISTORY_WHEEL_NO_FEATURE, 0);
+}
+
+static void test_an_unanswered_wheel_setting_is_reported(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_with_wheel(&x, &b);
+	for (int i = 0; i < HIDPP_TRIES; i++) {
+		request(&x, 40 + 2000 * (uint64_t)i);
+	}
+	CHECK(!hidpp_request(&x, DEVICE, 40 + 2000 * HIDPP_TRIES, 1000, &m));
+	check_wheel_event(&x, HISTORY_WHEEL_UNANSWERED, 0);
+}
+
+static void test_a_refused_wheel_setting_is_reported(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+
+	mouse_with_wheel(&x, &b);
+	request(&x, 40);
+	reply(&x, &b, 0xff, WHEEL_AT, 0x21, 0x02, 0x00);
+	check_wheel_event(&x, HISTORY_WHEEL_REFUSED, 0);
+}
+
 int main(void)
 {
+	RUN(test_a_wheel_set_to_high_resolution_is_reported_with_its_steps);
+	RUN(test_a_wheel_set_to_notches_is_reported);
+	RUN(test_a_mouse_without_the_wheel_feature_reports_it_at_each_connect);
+	RUN(test_an_unanswered_wheel_setting_is_reported);
+	RUN(test_a_refused_wheel_setting_is_reported);
 	RUN(test_a_mouse_is_asked_for_its_wheel_instead_of_a_divert);
 	RUN(test_the_wheel_capability_is_read_after_the_lookup);
 	RUN(test_a_wheel_the_host_wants_in_notches_is_set_to_notches);

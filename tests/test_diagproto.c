@@ -397,12 +397,28 @@ static void test_event_type_numbers_match_fixture(void)
 			       HISTORY_RECONNECT, HISTORY_ATTACK, HISTORY_BT_CONNECTED,
 			       HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
 			       HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST, HISTORY_BT_FORGOTTEN,
-			       HISTORY_KEYS_DIVERTED};
+			       HISTORY_KEYS_DIVERTED, HISTORY_WHEEL_SET};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 
 	CHECK_EQ(want_len, sizeof(got));
 	CHECK_MEM(got, want, sizeof(got));
+}
+
+static void test_divert_and_wheel_outcomes_match_fixtures(void)
+{
+	const uint8_t divert[] = {HISTORY_DIVERT_FINISHED, HISTORY_DIVERT_NO_FEATURE,
+				  HISTORY_DIVERT_UNANSWERED};
+	const uint8_t wheel[] = {HISTORY_WHEEL_HIRES, HISTORY_WHEEL_NOTCHES, HISTORY_WHEEL_NO_FEATURE,
+				 HISTORY_WHEEL_UNANSWERED, HISTORY_WHEEL_REFUSED};
+	uint8_t want[sizeof(wheel) + 1];
+	size_t want_len = load_fixture("divert-outcomes.hex", want, sizeof(want));
+
+	CHECK_EQ(want_len, sizeof(divert));
+	CHECK_MEM(divert, want, sizeof(divert));
+	want_len = load_fixture("wheel-outcomes.hex", want, sizeof(want));
+	CHECK_EQ(want_len, sizeof(wheel));
+	CHECK_MEM(wheel, want, sizeof(wheel));
 }
 
 static void test_error_codes_match_fixture(void)
@@ -540,6 +556,7 @@ int main(void)
 	RUN(test_bucket_floors_match_fixture);
 	RUN(test_command_numbers_match_fixture);
 	RUN(test_event_type_numbers_match_fixture);
+	RUN(test_divert_and_wheel_outcomes_match_fixtures);
 	RUN(test_a_full_page_fits_the_payload_buffer);
 	RUN(test_error_codes_match_fixture);
 	RUN(test_force_channels_arg_carries_three_channels_or_none);

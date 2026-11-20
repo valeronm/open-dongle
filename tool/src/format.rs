@@ -3,9 +3,9 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Battery, BluetoothLink, ChargeState, DeviceKind, Event, EventKind, Latency,
-    Link, Noise, NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice, Status, StoredDevice,
-    UnifyingState, VersionMismatch, Watch, bucket_floor,
+    Action, BUSY_DBM, Battery, BluetoothLink, ChargeState, DeviceKind, DivertOutcome, Event,
+    EventKind, Latency, Link, Noise, NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice,
+    Status, StoredDevice, UnifyingState, VersionMismatch, Watch, WheelOutcome, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -744,15 +744,35 @@ pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String 
                 event_device(e, stored)
             )
         }
-        EventKind::KeysDiverted => match (e.a, e.value) {
-            (1, _) => "keyboard has no keys to divert over HID++".into(),
-            (2, 0) => "keyboard did not answer the HID++ feature lookup".into(),
-            (2, cid) => format!("keyboard did not answer the HID++ divert of control {cid:#06x}"),
+        EventKind::KeysDiverted => match (DivertOutcome::from(e.a), e.value) {
+            (DivertOutcome::NoFeature, _) => "keyboard has no keys to divert over HID++".into(),
+            (DivertOutcome::Unanswered, 0) => {
+                "keyboard did not answer the HID++ feature lookup".into()
+            }
+            (DivertOutcome::Unanswered, cid) => {
+                format!("keyboard did not answer the HID++ divert of control {cid:#06x}")
+            }
             _ => format!(
                 "{} of {} keys diverted over HID++",
                 e.b,
                 u16::from(e.b) + u16::from(e.c)
             ),
+        },
+        EventKind::WheelSet => match WheelOutcome::from(e.a) {
+            WheelOutcome::HighResolution => {
+                format!("mouse wheel in high resolution, {} steps per notch", e.b)
+            }
+            WheelOutcome::Notches => "mouse wheel in notches".into(),
+            WheelOutcome::NoFeature => {
+                "mouse wheel left in notches: no high-resolution feature".into()
+            }
+            WheelOutcome::Unanswered => {
+                "mouse wheel left in notches: HID++ request unanswered".into()
+            }
+            WheelOutcome::Refused => "mouse wheel left in notches: HID++ request refused".into(),
+            WheelOutcome::Unknown(outcome) => {
+                format!("mouse wheel setting ended with outcome {outcome}")
+            }
         },
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
@@ -1431,6 +1451,32 @@ mod tests {
         assert_eq!(
             d(event(EventKind::KeysDiverted, 2, 1, 0, 0xc8)),
             "keyboard did not answer the HID++ divert of control 0x00c8"
+        );
+    }
+
+    #[test]
+    fn a_wheel_event_names_the_mode_or_why_it_stayed_in_notches() {
+        let s = read_status(&fixture("status.hex")).unwrap().unwrap();
+        let d = |e: Event| describe_event(&e, &s, &[]);
+        assert_eq!(
+            d(event(EventKind::WheelSet, 0, 8, 0, 0)),
+            "mouse wheel in high resolution, 8 steps per notch"
+        );
+        assert_eq!(
+            d(event(EventKind::WheelSet, 1, 0, 0, 0)),
+            "mouse wheel in notches"
+        );
+        assert_eq!(
+            d(event(EventKind::WheelSet, 2, 0, 0, 0)),
+            "mouse wheel left in notches: no high-resolution feature"
+        );
+        assert_eq!(
+            d(event(EventKind::WheelSet, 3, 0, 0, 0)),
+            "mouse wheel left in notches: HID++ request unanswered"
+        );
+        assert_eq!(
+            d(event(EventKind::WheelSet, 4, 0, 0, 0)),
+            "mouse wheel left in notches: HID++ request refused"
         );
     }
 

@@ -1013,6 +1013,7 @@ pub enum EventKind {
     BluetoothBondLost,
     BluetoothForgotten,
     KeysDiverted,
+    WheelSet,
     Unknown(u8),
 }
 
@@ -1043,6 +1044,51 @@ impl From<u8> for EventKind {
             22 => Self::BluetoothBondLost,
             23 => Self::BluetoothForgotten,
             24 => Self::KeysDiverted,
+            25 => Self::WheelSet,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// Byte `a` of a [`EventKind::KeysDiverted`] event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DivertOutcome {
+    Finished,
+    NoFeature,
+    Unanswered,
+    Unknown(u8),
+}
+
+impl From<u8> for DivertOutcome {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::Finished,
+            1 => Self::NoFeature,
+            2 => Self::Unanswered,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// Byte `a` of a [`EventKind::WheelSet`] event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WheelOutcome {
+    HighResolution,
+    Notches,
+    NoFeature,
+    Unanswered,
+    Refused,
+    Unknown(u8),
+}
+
+impl From<u8> for WheelOutcome {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::HighResolution,
+            1 => Self::Notches,
+            2 => Self::NoFeature,
+            3 => Self::Unanswered,
+            4 => Self::Refused,
             other => Self::Unknown(other),
         }
     }
@@ -2055,6 +2101,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn divert_and_wheel_outcome_numbers_match_fixtures() {
+        let divert: Vec<DivertOutcome> = fixture("divert-outcomes.hex")
+            .into_iter()
+            .map(DivertOutcome::from)
+            .collect();
+        assert_eq!(
+            divert,
+            [
+                DivertOutcome::Finished,
+                DivertOutcome::NoFeature,
+                DivertOutcome::Unanswered,
+            ]
+        );
+        let wheel: Vec<WheelOutcome> = fixture("wheel-outcomes.hex")
+            .into_iter()
+            .map(WheelOutcome::from)
+            .collect();
+        assert_eq!(
+            wheel,
+            [
+                WheelOutcome::HighResolution,
+                WheelOutcome::Notches,
+                WheelOutcome::NoFeature,
+                WheelOutcome::Unanswered,
+                WheelOutcome::Refused,
+            ]
+        );
+    }
+
+    #[test]
     fn event_type_numbers_match_fixture() {
         let kinds: Vec<EventKind> = fixture("event-types.hex")
             .into_iter()
@@ -2087,6 +2163,7 @@ pub(crate) mod tests {
                 EventKind::BluetoothBondLost,
                 EventKind::BluetoothForgotten,
                 EventKind::KeysDiverted,
+                EventKind::WheelSet,
             ]
         );
     }

@@ -108,11 +108,10 @@ static uint8_t link_up_kind(enum unifying_heard h)
 	}
 }
 
-static void log_divert(const struct hidpp_divert_end *end)
+static void log_hidpp_event(const struct hidpp_event *e)
 {
-	if (end->ended) {
-		core_log(HISTORY_KEYS_DIVERTED, 0, end->outcome, end->diverted, end->refused,
-			 end->cid);
+	if (e->pending) {
+		core_log(e->type, 0, e->a, e->b, e->c, e->value);
 	}
 }
 
@@ -159,7 +158,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 	if (out->release_all) {
 		core_release_keys();
 	}
-	log_divert(&out->divert);
+	log_hidpp_event(&out->hidpp_event);
 }
 
 static void apply_tick(const struct unifying_out *out)
@@ -193,7 +192,7 @@ static void apply_tick(const struct unifying_out *out)
 	if (out->set_channel) {
 		core_set_channel(out->channel);
 	}
-	log_divert(&out->divert);
+	log_hidpp_event(&out->hidpp_event);
 }
 
 static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_LEN],

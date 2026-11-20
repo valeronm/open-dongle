@@ -307,7 +307,7 @@ struct unifying_out {
 	uint8_t leds;
 	size_t hidpp_len;
 	uint8_t hidpp[UNIFYING_FRAME_MAX];
-	struct hidpp_divert_end divert;
+	struct hidpp_event hidpp_event;
 	bool attempt_expired;
 	bool set_channel;
 	uint8_t channel;
