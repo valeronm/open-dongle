@@ -16,6 +16,7 @@
 - In Bluetooth mode a failed passkey pairing closes pairing, and opening it again gives a new
   passkey.
 - The events record each time a keyboard waits for the passkey.
+- The tool shows a legacy Bluetooth pairing in red even when a passkey was typed.
 - The tool shows a device's battery level and whether it is charging, as far as the device
   reports them, in `status` and in the title of the live view's device box.
 - A connected device's latency reads "no report yet" until its first report reaches the PC.

@@ -172,8 +172,8 @@ fn signal_color(dbm: i8) -> Color {
 fn pairing_color(p: Pairing) -> Color {
     match (p.secure, p.passkey) {
         (true, true) => Color::Green,
-        (false, false) => Color::Red,
-        _ => Color::Yellow,
+        (true, false) => Color::Yellow,
+        (false, _) => Color::Red,
     }
 }
 
@@ -2046,7 +2046,7 @@ mod tests {
         };
         assert_eq!(colored(true, true), Color::Green);
         assert_eq!(colored(true, false), Color::Yellow);
-        assert_eq!(colored(false, true), Color::Yellow);
+        assert_eq!(colored(false, true), Color::Red);
         assert_eq!(colored(false, false), Color::Red);
     }
 

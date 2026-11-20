@@ -170,19 +170,25 @@ next key press, which reaches the PC a second or two late.
 
 A Bluetooth link is as secure as the way its device paired, and the device decides that way. The
 dongle accepts all four, and `spare-dongle devices`, `status` and the live view show each device's
-way, and the live view colors it as in the table.
+way, and the live view colors it as in the table. Every way encrypts the link, and whoever holds
+the link's key can read its keys and type keys of their own as the device.
 
-| Pairing | Encrypted | Encryption key safe from a recorded pairing | Safe from a man in the middle | Tool shows |
-|---|---|---|---|---|
-| LE Secure Connections, passkey | yes | yes | yes | 🟢 secure, passkey |
-| LE Secure Connections, no passkey | yes | yes | no | 🟡 secure, no passkey |
-| Legacy, passkey | yes | no, found by trying every passkey[^crackle] | only against one who cannot find the passkey during the pairing | 🟡 legacy, passkey |
-| Legacy, no passkey | yes | no[^crackle] | no | 🔴 legacy, no passkey |
+| Pairing | Who can read and type as the device | Tool shows |
+|---|---|---|
+| LE Secure Connections, passkey | no one | 🟢 secure, passkey |
+| LE Secure Connections, no passkey | one who stood in the middle of the pairing | 🟡 secure, no passkey |
+| Legacy, passkey | one who recorded the pairing, by trying every passkey[^crackle] | 🔴 legacy, passkey |
+| Legacy, no passkey | one who recorded the pairing[^crackle] | 🔴 legacy, no passkey |
 
-An encrypted link is readable by anyone who has its encryption key, and a legacy pairing gives
-that key to anyone who recorded it. A passkey also keeps another device in pairing mode nearby
-from pairing in the device's place while the window is open, and the dongle offers each passkey to
-one attempt only, since a failed attempt can reveal it. Only a stored device connects.
+Each attack needs someone in radio range during the pairing itself, and a recorded legacy pairing
+also opens the traffic recorded before the key was found. Later, an attacker can only make the
+link drop by jamming the radio, whatever the way, and the device reconnects once the jamming stops,
+at the latest when it is next used.
+
+Outside pairing, only a stored device connects. While pairing is open without a passkey, any device
+in range can pair and be stored. With a passkey, only a device the passkey is typed on can pair,
+and the dongle offers each passkey to one attempt only, since a failed attempt can reveal it. Each
+pairing shows in the events and in `spare-dongle devices`.
 
 The MX Master 3S pairs with LE Secure Connections and no passkey, since it has no keys to type one
 on; the Air75 V2 pairs legacy with no passkey step, and the MX Keys legacy with the passkey typed.
