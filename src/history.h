@@ -144,8 +144,8 @@ bool history_weakest(const struct history *h, uint8_t slot, int8_t *out);
  * noise. */
 void history_event(struct history *h, const struct history_event *e);
 
-/* Readings off the home channel count toward a gap or loss but not toward the minute. */
-void history_noise(struct history *h, const struct noise_tally *t, bool home);
+/* Readings that do not count toward the minute still count toward a gap or loss. */
+void history_noise(struct history *h, const struct noise_tally *t, bool counts);
 
 /* addr is the address type, then the six address bytes, least significant first; the event leaves
  * out the type and holds the bytes in a, b and value, most significant first. c is 1 for a

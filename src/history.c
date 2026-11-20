@@ -90,12 +90,12 @@ void history_rssi(struct history *h, uint8_t slot, int8_t dbm)
 	h->since_packet[slot] = (struct noise_tally){0};
 }
 
-void history_noise(struct history *h, const struct noise_tally *t, bool home)
+void history_noise(struct history *h, const struct noise_tally *t, bool counts)
 {
 	for (int d = 0; d < DEVICE_SLOTS; d++) {
 		noise_merge(&h->since_packet[d], t);
 	}
-	if (home) {
+	if (counts) {
 		noise_merge(&h->noise, t);
 	}
 }

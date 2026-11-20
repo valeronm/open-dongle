@@ -186,14 +186,21 @@ static void log_event(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t 
 static void take_noise(void)
 {
 	struct noise_tally t;
-	uint8_t channel = radio_noise_take(&t);
+	bool counts = loop->take_noise(&t);
 	int home = loop->home();
-	bool on_home = home != CHANMOVE_NO_HOME && channel == home;
 
-	history_noise(&history, &t, on_home);
-	if (on_home) {
-		chanwatch_home(&watch, channel, &t);
+	history_noise(&history, &t, counts);
+	if (counts && home != CHANMOVE_NO_HOME) {
+		chanwatch_home(&watch, (uint8_t)home, &t);
 	}
+}
+
+bool core_take_radio_noise(struct noise_tally *t)
+{
+	uint8_t channel = radio_noise_take(t);
+	int home = loop->home();
+
+	return home != CHANMOVE_NO_HOME && channel == home;
 }
 
 void core_start_history(const struct core_loop *l)

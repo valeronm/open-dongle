@@ -186,6 +186,7 @@ static enum chanmove_result no_move(uint8_t channel, uint8_t *from)
 
 static const struct core_loop loop = {
 	.home = no_home,
+	.take_noise = ble_take_noise,
 	.radio_resumed = nothing,
 	.slot_count = DEVICE_SLOTS,
 	.slots = slots,

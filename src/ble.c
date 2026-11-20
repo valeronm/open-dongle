@@ -9,6 +9,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include <bluetooth/gatt_dm.h>
+#include <bluetooth/hci_vs_sdc.h>
 #include <bluetooth/services/bas_client.h>
 #include <bluetooth/services/hogp.h>
 /* Host-internal: the public API gives a bond's address but not how it paired. */
@@ -704,6 +705,57 @@ int ble_forget(const uint8_t addr[BTPOLICY_ADDR_LEN])
 	return bt_unpair(BT_ID_DEFAULT, &peer);
 }
 
+/* The advertising channels hold the indexes above these, and nearby devices advertise there all the
+ * time. */
+#define DATA_CHANNELS 37
+#define ENERGY_NOT_MEASURED 127
+#define SURVEY_INTERVAL_US 10000
+
+/* The host's receive thread adds to the tally while the main loop takes it. */
+static struct k_spinlock noise_lock;
+static struct noise_tally data_noise;
+
+static bool on_vendor_event(struct net_buf_simple *buf)
+{
+	const sdc_hci_subevent_vs_qos_channel_survey_report_t *r;
+	k_spinlock_key_t key;
+
+	if (net_buf_simple_pull_u8(buf) != SDC_HCI_SUBEVENT_VS_QOS_CHANNEL_SURVEY_REPORT ||
+	    buf->len < sizeof(*r)) {
+		return false;
+	}
+	r = (const void *)buf->data;
+	key = k_spin_lock(&noise_lock);
+	for (int ch = 0; ch < DATA_CHANNELS; ch++) {
+		if (r->channel_energy[ch] != ENERGY_NOT_MEASURED) {
+			noise_add(&data_noise, r->channel_energy[ch]);
+		}
+	}
+	k_spin_unlock(&noise_lock, key);
+	return true;
+}
+
+static int start_survey(void)
+{
+	sdc_hci_cmd_vs_qos_channel_survey_enable_t survey = {
+		.enable = 1,
+		.interval_us = SURVEY_INTERVAL_US,
+	};
+	int err = bt_hci_register_vnd_evt_cb(on_vendor_event);
+
+	return err ? err : hci_vs_sdc_qos_channel_survey_enable(&survey);
+}
+
+bool ble_take_noise(struct noise_tally *t)
+{
+	k_spinlock_key_t key = k_spin_lock(&noise_lock);
+
+	*t = data_noise;
+	data_noise = (struct noise_tally){0};
+	k_spin_unlock(&noise_lock, key);
+	return true;
+}
+
 int ble_start(void)
 {
 	int err = bt_enable(NULL);
@@ -717,6 +769,13 @@ int ble_start(void)
 	for (int k = 0; !err && k < DEVICE_KINDS; k++) {
 		bt_hogp_init(&links[k].hogp, &hogp_params);
 		bt_bas_client_init(&links[k].bas);
+	}
+	if (!err) {
+		int survey_err = start_survey();
+
+		if (survey_err) {
+			printk("bluetooth noise survey not started: %d\n", survey_err);
+		}
 	}
 	return err;
 }

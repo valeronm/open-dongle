@@ -69,12 +69,13 @@ not counted.
 
 ## Bluetooth mode
 
-The devices hop across all channels, so the dongle has no channel, noise, gaps or moves to show,
-and refuses `noise`, `moves`, `move` and `channels`. Each device's signal is its connection's, read
-from the radio once a second while it is connected. The events record each device's connects,
-disconnects with their reason, pairings and refused pairings, each device forgotten, on request or
-for a report map it cannot use, and a device that lost its pairing, which has to be forgotten and
-paired again.
+The devices hop across all channels, so the dongle has no channel, gaps or moves to show, and
+refuses `noise`, `moves`, `move` and `channels`. Its noise is read across the data channels the
+devices hop over, leaving out the three advertising channels, where nearby devices advertise all the
+time. Each device's signal is its connection's, read from the radio once a second while it is
+connected. The events record each device's connects, disconnects with their reason, pairings and
+refused pairings, each device forgotten, on request or for a report map it cannot use, and a device
+that lost its pairing, which has to be forgotten and paired again.
 
 - `pair` prints the passkey to type on the keyboard, and `pair --no-passkey` opens pairing without
   one. In the live view `a` asks which of the two.

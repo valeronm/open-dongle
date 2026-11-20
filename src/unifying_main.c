@@ -328,6 +328,7 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 
 static const struct core_loop loop = {
 	.home = home,
+	.take_noise = core_take_radio_noise,
 	.radio_resumed = radio_resumed,
 	.slot_count = 1,
 	.slots = slots,

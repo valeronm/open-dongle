@@ -55,10 +55,9 @@ type MinuteDbm = fn(&Minute) -> Option<i8>;
 
 type SignalLine = (&'static str, Color, MinuteDbm);
 
-const NOISE_LINE: SignalLine = ("noise peak", Color::Gray, |m| m.noise.map(|n| n.peak));
-
-/// Each line lies over the ones before it, and all lie over the noise.
-const SIGNAL_LINES: [SignalLine; 3] = [
+/// Each line lies over the ones before it.
+const SIGNAL_LINES: [SignalLine; 4] = [
+    ("noise peak", Color::Gray, |m| m.noise.map(|n| n.peak)),
     ("min", Color::Red, |m| m.device.rssi.map(|r| r.min)),
     ("avg", Color::Yellow, |m| m.device.rssi.map(|r| r.avg)),
     ("max", Color::Green, |m| m.device.rssi.map(|r| r.max)),
@@ -110,31 +109,15 @@ const STRIPS: [Strip; 4] = [
     },
 ];
 
-/// With no protocol, the protocols the dongle might run.
-fn possible(protocol: Option<Protocol>) -> Vec<Protocol> {
-    protocol.map_or(Protocol::ALL.to_vec(), |protocol| vec![protocol])
-}
-
-/// The dongle reads noise only between packets on a channel.
-fn noise_read(protocol: Option<Protocol>) -> bool {
-    possible(protocol).iter().all(|p| p.has_channels())
-}
-
-/// With no protocol, only the strips every protocol's firmware counts.
+/// With no protocol, only the counters every protocol's firmware counts.
 fn strips(protocol: Option<Protocol>) -> impl Iterator<Item = &'static Strip> {
-    let counting = possible(protocol);
-    STRIPS.iter().filter(move |strip| match strip.source {
-        Source::Counter(counter) => counting.iter().all(|p| p.counts(counter)),
-        Source::Busy => noise_read(protocol),
+    let counting = protocol.map_or(Protocol::ALL.to_vec(), |protocol| vec![protocol]);
+    STRIPS.iter().filter(move |strip| {
+        let Source::Counter(counter) = strip.source else {
+            return true;
+        };
+        counting.iter().all(|p| p.counts(counter))
     })
-}
-
-fn signal_lines(protocol: Option<Protocol>) -> Vec<SignalLine> {
-    noise_read(protocol)
-        .then_some(NOISE_LINE)
-        .into_iter()
-        .chain(SIGNAL_LINES)
-        .collect()
 }
 
 fn panel_rows(strips: usize) -> [Constraint; 3] {
@@ -1142,19 +1125,20 @@ fn draw_history(
     slot: Option<&SlotHistory>,
 ) -> usize {
     let protocol = history.map(|h| h.status.protocol());
-    let lines = signal_lines(protocol);
     let title = legend(
         "signal dBm",
         "━ ",
-        lines.iter().rev().map(|&(name, color, _)| (name, color)),
+        SIGNAL_LINES
+            .iter()
+            .rev()
+            .map(|&(name, color, _)| (name, color)),
     );
     let kept: Vec<&Strip> = strips(protocol).collect();
-    let mut block = Block::bordered().title(padded(title));
-    if kept.iter().any(|s| matches!(s.source, Source::Busy)) {
-        block = block.title_bottom(padded(format!(
+    let block = Block::bordered()
+        .title(padded(title))
+        .title_bottom(padded(format!(
             "busy: readings at {BUSY_DBM} dBm or louder"
         )));
-    }
     let inner = block.inner(area);
     f.render_widget(block, area);
     let [gutter, axis_line, plot] = Layout::horizontal([
@@ -1178,7 +1162,7 @@ fn draw_history(
         _ => (&[], None),
     };
 
-    let runs: Vec<_> = lines
+    let runs: Vec<_> = SIGNAL_LINES
         .iter()
         .map(|(_, color, pick)| (*color, dbm_runs(shown, *pick)))
         .collect();
@@ -1913,11 +1897,11 @@ mod tests {
     /// Under the device box's three rows.
     const CHART_ROW: usize = DEVICE_TITLE_ROW + 5;
 
-    fn signal_legend(protocol: Protocol) -> String {
+    fn signal_legend() -> String {
         legend(
             "signal dBm",
             "━ ",
-            signal_lines(Some(protocol))
+            SIGNAL_LINES
                 .iter()
                 .rev()
                 .map(|&(name, color, _)| (name, color)),
@@ -1944,7 +1928,7 @@ mod tests {
             ),
         ];
         let chart_row = device_top + usize::from(device_rows(Some(h.status.protocol()))) + 2;
-        let chart_legend = signal_legend(h.status.protocol());
+        let chart_legend = signal_legend();
         (20..=200)
             .find(|&width| {
                 let rows = drawn_at(&mut app, width, 25);
@@ -3077,8 +3061,10 @@ mod tests {
             assert!(!unifying.contains(name), "{name} shown in {unifying}");
         }
         for shared in [strip_names(Some(Protocol::Bluetooth)), strip_names(None)] {
-            assert!(shared.contains("dropped"), "dropped missing from {shared}");
-            for name in ["losses", "gaps", "busy"] {
+            for name in ["dropped", "busy"] {
+                assert!(shared.contains(name), "{name} missing from {shared}");
+            }
+            for name in ["losses", "gaps"] {
                 assert!(!shared.contains(name), "{name} shown in {shared}");
             }
         }
@@ -3093,17 +3079,19 @@ mod tests {
     }
 
     #[test]
-    fn a_chart_without_channels_leaves_out_the_noise_line() {
-        assert!(strip_names(Some(Protocol::Nuphy)).contains("━ noise peak"));
-        let bluetooth = strip_names(Some(Protocol::Bluetooth));
-        assert!(bluetooth.contains("━ min"), "{bluetooth}");
-        assert!(!bluetooth.contains("noise"), "{bluetooth}");
+    fn every_protocol_charts_the_noise_line() {
+        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+            let panel = strip_names(protocol);
+            assert!(panel.contains("━ noise peak"), "{panel}");
+        }
     }
 
     #[test]
-    fn the_busy_caption_shows_only_beside_the_busy_strip() {
-        let caption = format!("busy: readings at {BUSY_DBM} dBm");
-        assert!(strip_names(Some(Protocol::Nuphy)).contains(&format!("└ {caption}")));
-        assert!(!strip_names(Some(Protocol::Bluetooth)).contains(&caption));
+    fn every_protocol_shows_the_busy_caption_beside_the_busy_strip() {
+        let caption = format!("└ busy: readings at {BUSY_DBM} dBm");
+        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+            let panel = strip_names(protocol);
+            assert!(panel.contains(&caption), "{panel}");
+        }
     }
 }
