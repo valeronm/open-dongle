@@ -23,8 +23,8 @@
 - The firmware and the tool each encode the diagnostic frames, and the hex files in
   `tool/fixtures` are the wire format both test suites check against, so a frame change starts in
   a fixture.
-- A wire change bumps `DIAG_VERSION` in `src/diagproto.h` and `VERSION` in `tool/src/protocol.rs`,
-  and the version byte in `status.hex` holds both to the same number.
+- A wire change bumps `DIAG_VERSION` in `src/diagproto.h` and `VERSION` in `tool/src/protocol.rs`
+  once per release, and the version byte in `status.hex` holds both to the same number.
 
 ## CHANGELOG.md
 
