@@ -19,6 +19,9 @@ int usb_start(const struct usb_callbacks *cb);
 /* Returns when the host has read the report or a reset or disable has cancelled the transfer. */
 int usb_send(const struct report *r);
 bool usb_live(void);
+/* The wheel steps per notch the host reads from the mouse: REPORT_WHEEL_HIRES_STEPS once it turns
+ * on high resolution, else 1. */
+uint8_t usb_mouse_wheel_steps(void);
 bool usb_suspended(void);
 int usb_wakeup(void);
 

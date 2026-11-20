@@ -6,11 +6,16 @@
 #define HIDPP_REPROG_CONTROLS 0x1b04
 #define HIDPP_BATTERY_STATUS 0x1000
 #define HIDPP_UNIFIED_BATTERY 0x1004
+#define HIDPP_HIRES_WHEEL 0x2121
 /* A request carries software ID 1 and an event ID 0. */
 #define HIDPP_GET_FEATURE 0x01
 #define HIDPP_SET_CID_REPORTING 0x31
 #define HIDPP_GET_BATTERY 0x01
 #define HIDPP_GET_UNIFIED_BATTERY 0x11
+#define HIDPP_GET_WHEEL_CAPABILITY 0x01
+#define HIDPP_SET_WHEEL_MODE 0x21
+/* Bit 0 of the wheel mode would send the wheel over HID++ instead of the HID report. */
+#define HIDPP_WHEEL_MODE_HIRES_BIT 0x02
 #define HIDPP_BATTERY_EVENT 0x00
 #define HIDPP_DIVERTED_EVENT 0x00
 /* The divert bit and the bit that says it is valid; the persist bits stay clear. */
@@ -79,7 +84,7 @@ static bool wanted(const struct hidpp *x, enum hidpp_step step)
 {
 	switch (step) {
 	case HIDPP_FIND_CONTROLS:
-		return !x->controls_known;
+		return x->kind == DEVICE_KEYBOARD && !x->controls_known;
 	case HIDPP_DIVERT:
 		return x->controls != 0;
 	case HIDPP_FIND_BATTERY:
@@ -87,7 +92,14 @@ static bool wanted(const struct hidpp *x, enum hidpp_step step)
 	case HIDPP_FIND_UNIFIED_BATTERY:
 		return !x->battery_known && x->no_battery_status;
 	case HIDPP_READ_BATTERY:
-		return x->battery_found;
+		return x->battery != 0;
+	case HIDPP_FIND_WHEEL:
+		return x->kind == DEVICE_MOUSE && !x->wheel_known;
+	case HIDPP_READ_WHEEL:
+		return x->wheel != 0 && x->wheel_multiplier == 0;
+	case HIDPP_SET_WHEEL:
+		return x->wheel != 0 && x->wheel_multiplier != 0 &&
+		       x->wheel_mode != (x->hires_wanted ? HIDPP_WHEEL_HIRES : HIDPP_WHEEL_NOTCHES);
 	default:
 		return false;
 	}
@@ -97,11 +109,11 @@ static void hidpp_advance(struct hidpp *x)
 {
 	enum hidpp_step next = x->step + 1;
 
-	while (next <= HIDPP_READ_BATTERY && !wanted(x, next)) {
+	while (next < HIDPP_STEPS && !wanted(x, next)) {
 		next++;
 	}
 	x->control_index = 0;
-	hidpp_step(x, next <= HIDPP_READ_BATTERY ? next : HIDPP_IDLE);
+	hidpp_step(x, next < HIDPP_STEPS ? next : HIDPP_IDLE);
 }
 
 static void divert_end(struct hidpp *x, enum history_divert outcome, uint16_t cid)
@@ -111,13 +123,18 @@ static void divert_end(struct hidpp *x, enum history_divert outcome, uint16_t ci
 	x->end.cid = cid;
 }
 
+void hidpp_init(struct hidpp *x, enum device_kind kind)
+{
+	*x = (struct hidpp){.kind = kind};
+}
+
 void hidpp_start(struct hidpp *x)
 {
 	if (x->step == HIDPP_FIND_CONTROLS || (x->step == HIDPP_DIVERT && x->control_index == 0)) {
 		return;
 	}
 	x->end = (struct hidpp_divert_end){0};
-	x->battery_found = false;
+	x->wheel_mode = HIDPP_WHEEL_UNKNOWN;
 	x->step = HIDPP_IDLE;
 	if (x->controls_known && x->controls == 0) {
 		divert_end(x, HISTORY_DIVERT_NO_FEATURE, 0);
@@ -186,6 +203,7 @@ bool hidpp_request(struct hidpp *x, uint8_t device, uint64_t now_ms, uint32_t re
 	*out = (struct hidpp_msg){.device = device};
 	switch (x->step) {
 	case HIDPP_IDLE:
+	case HIDPP_STEPS:
 		break;
 	case HIDPP_FIND_CONTROLS:
 		get_feature(out, HIDPP_REPROG_CONTROLS);
@@ -202,6 +220,19 @@ bool hidpp_request(struct hidpp *x, uint8_t device, uint64_t now_ms, uint32_t re
 	case HIDPP_READ_BATTERY:
 		out->feature = x->battery;
 		out->function = battery_function(x);
+		return true;
+	case HIDPP_FIND_WHEEL:
+		get_feature(out, HIDPP_HIRES_WHEEL);
+		return true;
+	case HIDPP_READ_WHEEL:
+		out->feature = x->wheel;
+		out->function = HIDPP_GET_WHEEL_CAPABILITY;
+		return true;
+	case HIDPP_SET_WHEEL:
+		x->hires_sent = x->hires_wanted;
+		out->feature = x->wheel;
+		out->function = HIDPP_SET_WHEEL_MODE;
+		out->params[0] = x->hires_sent ? HIDPP_WHEEL_MODE_HIRES_BIT : 0;
 		return true;
 	}
 	return false;
@@ -250,16 +281,29 @@ static bool hidpp_reply(struct hidpp *x, struct device_battery *b, const struct 
 		x->battery = error ? 0 : m->params[0];
 		x->no_battery_status = x->battery == 0;
 		x->battery_known = !x->no_battery_status;
-		x->battery_found = x->battery_known;
 	} else if (x->step == HIDPP_FIND_UNIFIED_BATTERY && find) {
 		x->battery = error ? 0 : m->params[0];
 		x->battery_known = true;
-		x->battery_found = x->battery != 0;
 	} else if (x->step == HIDPP_READ_BATTERY && feature == x->battery &&
 		   function == battery_function(x)) {
 		if (!error) {
 			read_battery(b, m);
 		}
+	} else if (x->step == HIDPP_FIND_WHEEL && find) {
+		x->wheel = error ? 0 : m->params[0];
+		x->wheel_known = true;
+	} else if (x->step == HIDPP_READ_WHEEL && feature == x->wheel &&
+		   function == HIDPP_GET_WHEEL_CAPABILITY) {
+		if (error || m->params[0] == 0) {
+			x->wheel = 0;
+		} else {
+			x->wheel_multiplier = m->params[0];
+		}
+	} else if (x->step == HIDPP_SET_WHEEL && feature == x->wheel &&
+		   function == HIDPP_SET_WHEEL_MODE) {
+		x->wheel_mode = error		 ? HIDPP_WHEEL_UNKNOWN
+				: x->hires_sent ? HIDPP_WHEEL_HIRES
+						: HIDPP_WHEEL_NOTCHES;
 	} else if (x->step == HIDPP_DIVERT && feature == x->controls &&
 		   function == HIDPP_SET_CID_REPORTING &&
 		   (error || (m->params[0] << 8 | m->params[1]) == diverted[x->control_index].cid)) {
@@ -305,4 +349,20 @@ bool hidpp_take_end(struct hidpp *x, struct hidpp_divert_end *out)
 	*out = x->end;
 	x->end.ended = false;
 	return true;
+}
+
+void hidpp_want_hires(struct hidpp *x, bool on)
+{
+	if (on == x->hires_wanted) {
+		return;
+	}
+	x->hires_wanted = on;
+	if (x->step == HIDPP_IDLE && wanted(x, HIDPP_SET_WHEEL)) {
+		hidpp_step(x, HIDPP_SET_WHEEL);
+	}
+}
+
+uint8_t hidpp_wheel_steps(const struct hidpp *x)
+{
+	return x->wheel_mode == HIDPP_WHEEL_HIRES ? x->wheel_multiplier : 1;
 }

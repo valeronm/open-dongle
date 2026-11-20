@@ -14,6 +14,7 @@
 #include "indicator.h"
 #include "pairwin.h"
 #include "store.h"
+#include "usb.h"
 
 #define TICK_MS 10
 #define RSSI_PERIOD_MS 1000
@@ -66,6 +67,7 @@ struct connected {
 	/* The consumer usages the keyboard's reports and its diverted keys each hold. */
 	uint16_t media_usage;
 	uint16_t divert_usage;
+	int wheel_carry;
 	bool rssi_read;
 	int8_t rssi;
 };
@@ -355,7 +357,7 @@ static void on_map_read(enum device_kind kind)
 		const uint8_t *peer = btpolicy_peer(&policy, kind);
 
 		if (memcmp(runs[kind].addr, peer, BTPOLICY_ADDR_LEN) != 0) {
-			runs[kind].hidpp = (struct hidpp){0};
+			hidpp_init(&runs[kind].hidpp, kind);
 			memcpy(runs[kind].addr, peer, BTPOLICY_ADDR_LEN);
 		}
 		hidpp_start(&runs[kind].hidpp);
@@ -395,6 +397,11 @@ static void on_mouse_report(const struct ble_event *ev)
 
 	if (hidkeys_pointer(&maps[DEVICE_MOUSE].pointer, ev->report.id, ev->report.data,
 			    ev->report.len, &out)) {
+		int wheel = reports_scale_wheel(&devices[DEVICE_MOUSE].wheel_carry, out.mouse.wheel,
+						hidpp_wheel_steps(&runs[DEVICE_MOUSE].hidpp),
+						usb_mouse_wheel_steps());
+
+		out.mouse.wheel = (int8_t)reports_clamp(wheel, -INT8_MAX, INT8_MAX);
 		core_submit(slot_of(DEVICE_MOUSE), &out, &ev->report.received_us);
 	}
 }
@@ -611,7 +618,6 @@ static void read_rssi(uint32_t now)
 	}
 }
 
-/* The run diverts only keyboard keys. */
 static void run_hidpp(enum device_kind kind, uint32_t now)
 {
 	struct hidpp *x = &runs[kind].hidpp;
@@ -621,6 +627,7 @@ static void run_hidpp(enum device_kind kind, uint32_t now)
 	if (!btpolicy_is_ready(&policy, kind) || !maps[kind].has_hidpp) {
 		return;
 	}
+	hidpp_want_hires(x, usb_mouse_wheel_steps() != 1);
 	if (hidpp_request(x, HIDPP_DEVICE_INDEX, now, HIDPP_RETRY_MS, &m)) {
 		uint8_t data[HIDPP_LONG_LEN] = {0};
 
@@ -629,7 +636,7 @@ static void run_hidpp(enum device_kind kind, uint32_t now)
 		ble_write_report(kind, HIDPP_LONG_REPORT_ID, data, sizeof(data));
 		hidpp_taken(x, now);
 	}
-	if (hidpp_take_end(x, &end) && kind == DEVICE_KEYBOARD) {
+	if (hidpp_take_end(x, &end)) {
 		core_log(HISTORY_KEYS_DIVERTED, slot_of(kind), end.outcome, end.diverted, end.refused,
 			 end.cid);
 	}

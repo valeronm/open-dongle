@@ -95,6 +95,12 @@ static const uint8_t extra_desc[] = {
 	HID_END_COLLECTION,
 };
 
+#define HID_PHYSICAL_MIN8(a) HID_ITEM(HID_ITEM_TAG_PHYSICAL_MIN, HID_ITEM_TYPE_GLOBAL, 1), a
+#define HID_PHYSICAL_MAX8(a) HID_ITEM(HID_ITEM_TAG_PHYSICAL_MAX, HID_ITEM_TYPE_GLOBAL, 1), a
+#define HID_USAGE_GEN_DESKTOP_RESOLUTION_MULTIPLIER 0x48
+
+/* A host sets the multiplier to 1 to read the wheel in REPORT_WHEEL_HIRES_STEPS per notch; the
+ * multiplier applies within its logical collection. */
 static const uint8_t mouse_desc[] = {
 	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
 	HID_USAGE(HID_USAGE_GEN_DESKTOP_MOUSE),
@@ -117,12 +123,26 @@ static const uint8_t mouse_desc[] = {
 	HID_REPORT_SIZE(16),
 	HID_REPORT_COUNT(2),
 	HID_INPUT(0x06),
+	HID_COLLECTION(HID_COLLECTION_LOGICAL),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_RESOLUTION_MULTIPLIER),
+	HID_LOGICAL_MIN8(0),
+	HID_LOGICAL_MAX8(1),
+	HID_PHYSICAL_MIN8(1),
+	HID_PHYSICAL_MAX8(REPORT_WHEEL_HIRES_STEPS),
+	HID_REPORT_SIZE(2),
+	HID_REPORT_COUNT(1),
+	HID_FEATURE(0x02),
+	HID_PHYSICAL_MIN8(0),
+	HID_PHYSICAL_MAX8(0),
+	HID_REPORT_SIZE(6),
+	HID_FEATURE(0x03),
 	HID_USAGE(HID_USAGE_GEN_DESKTOP_WHEEL),
 	HID_LOGICAL_MIN8(-127),
 	HID_LOGICAL_MAX8(127),
 	HID_REPORT_SIZE(8),
 	HID_REPORT_COUNT(1),
 	HID_INPUT(0x06),
+	HID_END_COLLECTION,
 	HID_USAGE_PAGE(0x0c), /* Consumer */
 	HID_USAGE16(0x0238), /* AC Pan */
 	HID_INPUT(0x06),
@@ -164,6 +184,7 @@ static const struct usb_callbacks *callbacks;
 static atomic_t ready_mask;
 static uint32_t idle_duration;
 static atomic_t mouse_boot;
+static atomic_t mouse_hires;
 
 bool usb_live(void)
 {
@@ -200,8 +221,35 @@ static void mouse_ready(const struct device *dev, const bool ready)
 	/* A host starts each configuration in report protocol. */
 	if (!ready) {
 		atomic_set(&mouse_boot, false);
+		atomic_set(&mouse_hires, false);
 	}
 	mark_ready(REPORT_IFACE_MOUSE, ready);
+}
+
+uint8_t usb_mouse_wheel_steps(void)
+{
+	return atomic_get(&mouse_hires) ? REPORT_WHEEL_HIRES_STEPS : 1;
+}
+
+/* The feature report is the multiplier's index in its two low bits, without a report ID. */
+static int mouse_get_report(const struct device *dev, const uint8_t type, const uint8_t id,
+			    const uint16_t len, uint8_t *const buf)
+{
+	if (type != HID_REPORT_TYPE_FEATURE || len < 1) {
+		return -ENOTSUP;
+	}
+	buf[0] = atomic_get(&mouse_hires) ? 1 : 0;
+	return 1;
+}
+
+static int mouse_set_report(const struct device *dev, const uint8_t type, const uint8_t id,
+			    const uint16_t len, const uint8_t *const buf)
+{
+	if (type != HID_REPORT_TYPE_FEATURE || len < 1) {
+		return -ENOTSUP;
+	}
+	atomic_set(&mouse_hires, (buf[0] & 0x03) != 0);
+	return 0;
 }
 
 static int no_get_report(const struct device *dev, const uint8_t type, const uint8_t id,
@@ -250,7 +298,8 @@ static void mouse_set_protocol(const struct device *dev, const uint8_t proto)
 
 static const struct hid_device_ops mouse_ops = {
 	.iface_ready = mouse_ready,
-	.get_report = no_get_report,
+	.get_report = mouse_get_report,
+	.set_report = mouse_set_report,
 	.set_idle = set_idle,
 	.get_idle = get_idle,
 	.set_protocol = mouse_set_protocol,

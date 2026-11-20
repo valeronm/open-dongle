@@ -10,6 +10,8 @@
 #define REPORTS_QUEUE_LEN 64
 #define REPORT_KEYBOARD_LEN 8
 #define REPORT_MOUSE_LEN 8
+/* The wheel steps per notch the USB mouse offers a host that turns on high resolution. */
+#define REPORT_WHEEL_HIRES_STEPS 8
 #define REPORT_MOUSE_BOOT_LEN 3
 /* The usages the USB report descriptors declare. */
 #define REPORT_CONSUMER_MAX 0x2a0
@@ -87,6 +89,9 @@ int reports_clamp(int value, int min, int max);
 /* The consumer report of two sources that each hold one usage: the usage that changed wins, and a
  * released one gives way to the other source's held usage. */
 struct report reports_consumer(uint16_t changed, uint16_t other);
+/* Converts wheel steps of from_steps per notch into to_steps per notch, keeping the part of a step
+ * not yet sent in carry. */
+int reports_scale_wheel(int *carry, int value, int from_steps, int to_steps);
 
 /* Returns true when next changed its kind's state or carries mouse motion. */
 bool reports_update(struct reports *r, const struct report *next, struct report_stamp stamp);

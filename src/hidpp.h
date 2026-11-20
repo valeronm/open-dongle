@@ -35,6 +35,16 @@ enum hidpp_step {
 	HIDPP_FIND_BATTERY,
 	HIDPP_FIND_UNIFIED_BATTERY,
 	HIDPP_READ_BATTERY,
+	HIDPP_FIND_WHEEL,
+	HIDPP_READ_WHEEL,
+	HIDPP_SET_WHEEL,
+	HIDPP_STEPS,
+};
+
+enum hidpp_wheel_mode {
+	HIDPP_WHEEL_UNKNOWN,
+	HIDPP_WHEEL_NOTCHES,
+	HIDPP_WHEEL_HIRES,
 };
 
 struct hidpp_divert_end {
@@ -47,12 +57,14 @@ struct hidpp_divert_end {
 };
 
 /*
- * The HID++ run at each connect: it diverts the controls in hidpp.c's table over feature 0x1B04
- * for the device's session only, since a persistent divert would also silence them on the
- * device's other hosts. It then reads the battery once, because a device can send its connect
- * battery event before the run can know the feature's index.
+ * The HID++ run at each connect. A keyboard's controls in hidpp.c's table are diverted over
+ * feature 0x1B04 for the device's session only, since a persistent divert would also silence them
+ * on the device's other hosts. The battery is read once, because a device can send its connect
+ * battery event before the run can know the feature's index. A mouse's wheel is set to the
+ * resolution the host wants.
  */
 struct hidpp {
+	enum device_kind kind;
 	enum hidpp_step step;
 	/* The index of feature 0x1B04; 0 until the device names it. */
 	uint8_t controls;
@@ -66,8 +78,16 @@ struct hidpp {
 	bool battery_known;
 	/* The device answered that it has no feature 0x1000. */
 	bool no_battery_status;
-	/* This run's lookup found a battery feature. */
-	bool battery_found;
+	/* The index of feature 0x2121; 0 until the mouse names it. */
+	uint8_t wheel;
+	bool wheel_known;
+	/* High-resolution steps per notch; 0 until the mouse reports it. */
+	uint8_t wheel_multiplier;
+	bool hires_wanted;
+	/* The mode the last wheel request asked for. */
+	bool hires_sent;
+	/* The mode the mouse last confirmed; a mouse can come back from a disconnect in either. */
+	enum hidpp_wheel_mode wheel_mode;
 	/* Requests the device took without answering. */
 	uint8_t tries;
 	bool awaiting;
@@ -81,6 +101,9 @@ void hidpp_msg_read(const uint8_t *bytes, size_t len, bool is_long, struct hidpp
 /* Writes the message into the len bytes after its report ID, which the caller zeroed. */
 void hidpp_msg_write(const struct hidpp_msg *m, uint8_t *bytes, size_t len);
 
+/* Clears the run for a newly paired device: a keyboard has its controls diverted, a mouse its
+ * wheel set to the resolution the host wants. */
+void hidpp_init(struct hidpp *x, enum device_kind kind);
 /* Starts the run at a connect; a run still on its first request is kept, since one connect can
  * call this several times. */
 void hidpp_start(struct hidpp *x);
@@ -94,6 +117,10 @@ void hidpp_taken(struct hidpp *x, uint64_t now_ms);
  * diverted-controls event, with the usage of the first held control in the table, or 0. */
 bool hidpp_rx(struct hidpp *x, struct device_battery *b, const struct hidpp_msg *m,
 	      uint16_t *usage);
+/* Sets the wheel resolution the host wants; the run sets the mouse's wheel to it. */
+void hidpp_want_hires(struct hidpp *x, bool on);
+/* The mouse's wheel steps per notch: its multiplier once it confirms high resolution, else 1. */
+uint8_t hidpp_wheel_steps(const struct hidpp *x);
 /* Copies out the divert's end once, the first time it is asked for after the divert ended. */
 bool hidpp_take_end(struct hidpp *x, struct hidpp_divert_end *out);
 

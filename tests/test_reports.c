@@ -414,8 +414,39 @@ static void test_a_delay_across_the_clock_wrapping_counts_its_length(void)
 	CHECK_EQ(r.latency[0].max_us, 500);
 }
 
+static void test_a_wheel_in_notches_is_multiplied_for_a_high_resolution_host(void)
+{
+	int carry = 0;
+
+	CHECK_EQ(reports_scale_wheel(&carry, 2, 1, 8), 16);
+	CHECK_EQ(reports_scale_wheel(&carry, -1, 1, 8), -8);
+	CHECK_EQ(carry, 0);
+}
+
+static void test_a_finer_wheel_carries_what_does_not_make_a_whole_step(void)
+{
+	int carry = 0;
+
+	CHECK_EQ(reports_scale_wheel(&carry, 1, 15, 8), 0);
+	CHECK_EQ(reports_scale_wheel(&carry, 1, 15, 8), 1);
+	CHECK_EQ(reports_scale_wheel(&carry, 13, 15, 8), 7);
+	CHECK_EQ(carry, 0);
+	CHECK_EQ(reports_scale_wheel(&carry, -15, 15, 8), -8);
+}
+
+static void test_equal_resolutions_pass_the_wheel_through(void)
+{
+	int carry = 0;
+
+	CHECK_EQ(reports_scale_wheel(&carry, 5, 8, 8), 5);
+	CHECK_EQ(reports_scale_wheel(&carry, -3, 1, 1), -3);
+}
+
 int main(void)
 {
+	RUN(test_a_wheel_in_notches_is_multiplied_for_a_high_resolution_host);
+	RUN(test_a_finer_wheel_carries_what_does_not_make_a_whole_step);
+	RUN(test_equal_resolutions_pass_the_wheel_through);
 	RUN(test_a_key_modifier_or_media_usage_counts_as_held);
 	RUN(test_repeated_report_is_queued_once);
 	RUN(test_quick_tap_keeps_press_and_release_in_order);

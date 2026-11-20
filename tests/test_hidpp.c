@@ -35,7 +35,7 @@ static void check_find(const struct hidpp_msg *m, uint16_t feature)
 /* The device has no reprogrammable controls and no feature 0x1000. */
 static void past_battery_status(struct hidpp *x, struct device_battery *b)
 {
-	*x = (struct hidpp){0};
+	hidpp_init(x, DEVICE_KEYBOARD);
 	*b = DEVICE_BATTERY_UNKNOWN;
 	hidpp_start(x);
 	request(x, 0);
@@ -114,8 +114,152 @@ static void test_a_device_with_neither_battery_feature_asks_nothing_more(void)
 	CHECK_EQ(b.level, DEVICE_NO_BATTERY);
 }
 
+#define WHEEL_AT 0x0d
+
+/* The mouse has feature 0x1000 at index 4 and has answered its battery read. */
+static void mouse_past_battery(struct hidpp *x, struct device_battery *b)
+{
+	struct hidpp_msg m;
+
+	hidpp_init(x, DEVICE_MOUSE);
+	*b = DEVICE_BATTERY_UNKNOWN;
+	hidpp_start(x);
+	m = request(x, 0);
+	check_find(&m, 0x1000);
+	reply(x, b, 0x00, 0x01, 0x04, 0x00, 0x00);
+	request(x, 10);
+	reply(x, b, 0x04, 0x01, 80, 0x00, 0x00);
+}
+
+static void mouse_with_wheel(struct hidpp *x, struct device_battery *b)
+{
+	mouse_past_battery(x, b);
+	request(x, 20);
+	reply(x, b, 0x00, 0x01, WHEEL_AT, 0x00, 0x00);
+	request(x, 30);
+	reply(x, b, WHEEL_AT, 0x01, 8, 0x00, 0x00);
+}
+
+static void test_a_mouse_is_asked_for_its_wheel_instead_of_a_divert(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_past_battery(&x, &b);
+	m = request(&x, 20);
+	check_find(&m, 0x2121);
+}
+
+static void test_the_wheel_capability_is_read_after_the_lookup(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_past_battery(&x, &b);
+	request(&x, 20);
+	reply(&x, &b, 0x00, 0x01, WHEEL_AT, 0x00, 0x00);
+	m = request(&x, 30);
+	CHECK_EQ(m.feature, WHEEL_AT);
+	CHECK_EQ(m.function, 0x01);
+}
+
+static void test_a_wheel_the_host_wants_in_notches_is_set_to_notches(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_with_wheel(&x, &b);
+	m = request(&x, 40);
+	CHECK_EQ(m.feature, WHEEL_AT);
+	CHECK_EQ(m.function, 0x21);
+	CHECK_EQ(m.params[0], 0x00);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x00, 0x00, 0x00);
+	CHECK(!hidpp_request(&x, DEVICE, 50, 1000, &m));
+	CHECK_EQ(hidpp_wheel_steps(&x), 1);
+}
+
+static void test_a_host_asking_for_high_resolution_sets_the_wheel_to_it(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_with_wheel(&x, &b);
+	request(&x, 40);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x00, 0x00, 0x00);
+	hidpp_want_hires(&x, true);
+	CHECK_EQ(hidpp_wheel_steps(&x), 1);
+	m = request(&x, 50);
+	CHECK_EQ(m.function, 0x21);
+	CHECK_EQ(m.params[0], 0x02);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x02, 0x00, 0x00);
+	CHECK_EQ(hidpp_wheel_steps(&x), 8);
+}
+
+static void test_a_wanted_high_resolution_is_set_at_the_first_chance(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_past_battery(&x, &b);
+	hidpp_want_hires(&x, true);
+	request(&x, 20);
+	reply(&x, &b, 0x00, 0x01, WHEEL_AT, 0x00, 0x00);
+	request(&x, 30);
+	reply(&x, &b, WHEEL_AT, 0x01, 8, 0x00, 0x00);
+	m = request(&x, 40);
+	CHECK_EQ(m.function, 0x21);
+	CHECK_EQ(m.params[0], 0x02);
+}
+
+static void test_a_reconnect_reads_the_battery_and_sets_the_wheel_mode_again(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_with_wheel(&x, &b);
+	hidpp_want_hires(&x, true);
+	request(&x, 40);
+	reply(&x, &b, WHEEL_AT, 0x21, 0x02, 0x00, 0x00);
+	hidpp_start(&x);
+	CHECK_EQ(hidpp_wheel_steps(&x), 1);
+	m = request(&x, 50);
+	CHECK_EQ(m.feature, 0x04);
+	CHECK_EQ(m.function, 0x01);
+	reply(&x, &b, 0x04, 0x01, 80, 0x00, 0x00);
+	m = request(&x, 60);
+	CHECK_EQ(m.function, 0x21);
+	CHECK_EQ(m.params[0], 0x02);
+}
+
+static void test_a_mouse_without_the_wheel_feature_stays_in_notches(void)
+{
+	struct hidpp x;
+	struct device_battery b;
+	struct hidpp_msg m;
+
+	mouse_past_battery(&x, &b);
+	hidpp_want_hires(&x, true);
+	request(&x, 20);
+	reply(&x, &b, 0x00, 0x01, 0x00, 0x00, 0x00);
+	CHECK(!hidpp_request(&x, DEVICE, 30, 1000, &m));
+	CHECK_EQ(hidpp_wheel_steps(&x), 1);
+}
+
 int main(void)
 {
+	RUN(test_a_mouse_is_asked_for_its_wheel_instead_of_a_divert);
+	RUN(test_the_wheel_capability_is_read_after_the_lookup);
+	RUN(test_a_wheel_the_host_wants_in_notches_is_set_to_notches);
+	RUN(test_a_host_asking_for_high_resolution_sets_the_wheel_to_it);
+	RUN(test_a_wanted_high_resolution_is_set_at_the_first_chance);
+	RUN(test_a_reconnect_reads_the_battery_and_sets_the_wheel_mode_again);
+	RUN(test_a_mouse_without_the_wheel_feature_stays_in_notches);
 	RUN(test_a_device_without_battery_status_is_asked_for_unified_battery);
 	RUN(test_unified_battery_is_read_with_its_get_status_function);
 	RUN(test_a_unified_battery_reply_gives_the_level_and_charging);

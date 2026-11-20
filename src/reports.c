@@ -204,3 +204,12 @@ size_t reports_encode_mouse(const struct report_mouse *m, bool boot,
 	out[7] = (uint8_t)m->pan;
 	return REPORT_MOUSE_LEN;
 }
+
+int reports_scale_wheel(int *carry, int value, int from_steps, int to_steps)
+{
+	int total = *carry + value * to_steps;
+	int out = total / from_steps;
+
+	*carry = total - out * from_steps;
+	return out;
+}

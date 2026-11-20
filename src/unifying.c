@@ -569,6 +569,7 @@ void unifying_session_init(struct unifying_session *s, const struct unifying_rec
 			   const uint8_t *record, uint64_t now_ms)
 {
 	memset(s, 0, sizeof(*s));
+	hidpp_init(&s->hidpp, DEVICE_KEYBOARD);
 	s->receiver = *r;
 	s->started_ms = now_ms;
 	s->battery = DEVICE_BATTERY_UNKNOWN;
@@ -590,7 +591,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
-		s->hidpp = (struct hidpp){0};
+		hidpp_init(&s->hidpp, DEVICE_KEYBOARD);
 		hidpp_start(&s->hidpp);
 		s->battery = DEVICE_BATTERY_UNKNOWN;
 	}

@@ -144,7 +144,7 @@ tells them apart by the kind the device advertises.
 | Media and system keys | yes | yes | ⚪ |
 | Vendor reports, such as keys set up by Logitech Options | yes | ignored | 🔴 |
 | Mice | yes | one, beside the keyboard | ⚪ |
-| Mouse wheel | high resolution where the PC's driver turns it on | in notches | 🔴 |
+| Mouse wheel | high resolution where the PC's driver turns it on | high resolution on Logitech mice where the PC turns it on; the thumb wheel in notches | ⚪ |
 | Devices | as many as the PC pairs | several stored, a keyboard and a mouse connected | 🔴 |
 | Boot menus and PCs without Bluetooth | no | yes | 🟢 |
 | Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
