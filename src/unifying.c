@@ -244,10 +244,14 @@ void unifying_pairing_restore(struct unifying_pairing *p, const struct unifying_
 	*p = (struct unifying_pairing){.has_device = true, .device = *d};
 }
 
+static bool shaped(const uint8_t *frame, size_t len, size_t want_len, uint8_t want_type)
+{
+	return len == want_len && (frame[1] & REPORT_TYPE_MASK) == want_type;
+}
+
 static bool frame_is(const uint8_t *frame, size_t len, size_t want_len, uint8_t want_type)
 {
-	return len == want_len && (frame[1] & REPORT_TYPE_MASK) == want_type &&
-	       unifying_checksum_ok(frame, len);
+	return shaped(frame, len, want_len, want_type) && unifying_checksum_ok(frame, len);
 }
 
 bool unifying_is_encrypted_keyboard(const uint8_t *frame, size_t len)
@@ -438,8 +442,8 @@ static const struct {
 
 static bool is_hidpp(const uint8_t *frame, size_t len)
 {
-	return frame_is(frame, len, HIDPP_SHORT_LEN, REPORT_HIDPP_SHORT) ||
-	       frame_is(frame, len, UNIFYING_FRAME_MAX, REPORT_HIDPP_LONG);
+	return shaped(frame, len, HIDPP_SHORT_LEN, REPORT_HIDPP_SHORT) ||
+	       shaped(frame, len, UNIFYING_FRAME_MAX, REPORT_HIDPP_LONG);
 }
 
 static uint16_t diverted_usage(uint16_t cid)
@@ -452,7 +456,8 @@ static uint16_t diverted_usage(uint16_t cid)
 	return 0;
 }
 
-void unifying_divert_start(struct unifying_divert *d)
+/* One connect brings several frames that each call this. */
+static void divert_start(struct unifying_divert *d)
 {
 	if (d->step != UNIFYING_DIVERT_FIND) {
 		*d = (struct unifying_divert){.step = UNIFYING_DIVERT_FIND};
@@ -480,8 +485,9 @@ static void divert_next(struct unifying_divert *d)
 	}
 }
 
-size_t unifying_divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
-			       uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX])
+/* Call it only while no other frame of the dongle's waits in the queue. */
+static size_t divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
+			     uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX])
 {
 	size_t len;
 
@@ -517,7 +523,7 @@ size_t unifying_divert_request(struct unifying_divert *d, uint8_t device_index, 
 	return seal(out, len);
 }
 
-void unifying_divert_taken(struct unifying_divert *d, uint64_t now_ms)
+static void divert_taken(struct unifying_divert *d, uint64_t now_ms)
 {
 	if (d->step != UNIFYING_DIVERT_IDLE) {
 		d->tries++;
@@ -557,8 +563,9 @@ static bool divert_reply(struct unifying_divert *d, const uint8_t *frame)
 	return false;
 }
 
-bool unifying_divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
-			size_t len, struct report *out)
+/* Takes only a frame whose checksum the caller checked. */
+static bool divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
+		      size_t len, struct report *out)
 {
 	uint16_t usage = 0;
 
@@ -714,9 +721,10 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
-		unifying_divert_start(&s->divert);
+		divert_start(&s->divert);
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
+		bool checksum_ok = unifying_checksum_ok(frame, len);
 		uint32_t refused = s->link.refused;
 		bool attack = now_ms < s->link.attack_until_ms;
 
@@ -729,10 +737,10 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		}
 		/* The keyboard forgets a divert whenever it reconnects, which a silence can hide. */
 		if (out->heard != UNIFYING_HEARD_NONE) {
-			unifying_divert_start(&s->divert);
+			divert_start(&s->divert);
 		}
 		/* Requests 2 and 3 of a pairing attempt arrive on this pipe too. */
-		if (!attempting(&s->pairing) && unifying_checksum_ok(frame, len)) {
+		if (!attempting(&s->pairing) && checksum_ok) {
 			pairwin_link_up(&s->pairing.window);
 		}
 		s->silent = false;
@@ -747,16 +755,17 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 							  now_ms, aes, out->report);
 			if (out->reports == 0 &&
 			    (unifying_media_report(&s->link, frame, len, &out->report[0]) ||
-			     unifying_divert_rx(&s->divert, &s->link, frame, len, &out->report[0]))) {
+			     (checksum_ok &&
+			      divert_rx(&s->divert, &s->link, frame, len, &out->report[0])))) {
 				out->reports = 1;
 			}
 		}
-		out->invalid = !unifying_checksum_ok(frame, len) || s->link.refused != refused;
+		out->invalid = !checksum_ok || s->link.refused != refused;
 		out->attack_started = !attack && now_ms < s->link.attack_until_ms;
 	} else if (pipe == UNIFYING_PIPE_RECEIVER) {
 		out->reconnected = unifying_is_connect_frame(frame, len, s->receiver.device_octet);
 		if (out->reconnected) {
-			unifying_divert_start(&s->divert);
+			divert_start(&s->divert);
 		}
 		s->connect_in_silence |= out->reconnected && s->silent;
 		out->release_all = unifying_link_reconnect(&s->link, s->receiver.device_octet, frame,
@@ -795,7 +804,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	}
 	if (s->queue.frame != UNIFYING_QUEUED_NONE && taken_count != s->queue.taken_count) {
 		if (s->queue.frame == UNIFYING_QUEUED_HIDPP) {
-			unifying_divert_taken(&s->divert, now_ms);
+			divert_taken(&s->divert, now_ms);
 		}
 		s->queue.frame = UNIFYING_QUEUED_NONE;
 	}
@@ -806,7 +815,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	/* The ACK payloads of a pairing attempt share the queue. */
 	if (s->queue.frame == UNIFYING_QUEUED_NONE && !out->send_led &&
 	    unifying_has_device(&s->pairing) && !attempting(&s->pairing)) {
-		out->hidpp_len = unifying_divert_request(&s->divert, s->receiver.device_octet,
+		out->hidpp_len = divert_request(&s->divert, s->receiver.device_octet,
 							 now_ms, 2U * s->link.keepalive_ms,
 							 out->hidpp);
 	}

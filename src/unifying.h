@@ -234,32 +234,6 @@ struct unifying_divert {
 	struct unifying_divert_end end;
 };
 
-/*
- * Forgets the feature index and starts over from finding it, unless a lookup is already under way,
- * since one connect brings several frames that each call this.
- */
-void unifying_divert_start(struct unifying_divert *d);
-
-/*
- * Returns the length of the HID++ request to queue as the next ACK payload, written to out, or 0.
- * Call it only while no other frame of the dongle's waits in the queue. A request the keyboard took
- * and left unanswered for retry_ms is sent again, up to UNIFYING_DIVERT_TRIES takes, after which
- * nothing more is sent until the next unifying_divert_start.
- */
-size_t unifying_divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
-			       uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX]);
-
-/* The keyboard took the request last returned by unifying_divert_request. */
-void unifying_divert_taken(struct unifying_divert *d, uint64_t now_ms);
-
-/*
- * Takes the keyboard's HID++ replies and its diverted-button events. Returns true with a consumer
- * report in *out for an event that presses or releases a brightness key; the events are
- * unencrypted.
- */
-bool unifying_divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
-			size_t len, struct report *out);
-
 size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN]);
 
 struct unifying_led {
