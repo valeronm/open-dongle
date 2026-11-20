@@ -3,8 +3,8 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, BluetoothLink, DeviceKind, Event, EventKind, Latency, Link, Noise,
-    NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice, Status, StoredDevice,
+    Action, BUSY_DBM, Battery, BluetoothLink, ChargeState, DeviceKind, Event, EventKind, Latency,
+    Link, Noise, NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice, Status, StoredDevice,
     UnifyingState, VersionMismatch, Watch, bucket_floor,
 };
 
@@ -401,6 +401,20 @@ pub fn pairing(p: Pairing) -> String {
     format!("{method}, {passkey}")
 }
 
+pub fn battery(b: Battery) -> String {
+    let name = |c| match c {
+        ChargeState::Discharging => "discharging",
+        ChargeState::Charging => "charging",
+        ChargeState::Charged => "charged",
+        ChargeState::Fault => "battery fault",
+    };
+    match b {
+        Battery::Level(level, None | Some(ChargeState::Discharging)) => format!("{level}%"),
+        Battery::Level(level, Some(c)) => format!("{level}%, {}", name(c)),
+        Battery::Charge(c) => name(c).into(),
+    }
+}
+
 /// In milliseconds to a tenth, rounded half up.
 pub fn latency(l: Option<Latency>) -> String {
     let Some(l) = l else {
@@ -773,6 +787,25 @@ mod tests {
     }
 
     #[test]
+    fn a_battery_reads_as_its_level_and_charging() {
+        let level = |level, charge| battery(Battery::Level(level, charge));
+        assert_eq!(level(85, Some(ChargeState::Discharging)), "85%");
+        assert_eq!(level(85, Some(ChargeState::Charging)), "85%, charging");
+        assert_eq!(level(100, Some(ChargeState::Charged)), "100%, charged");
+        assert_eq!(level(40, None), "40%");
+        assert_eq!(battery(Battery::Charge(ChargeState::Charging)), "charging");
+        assert_eq!(level(64, Some(ChargeState::Fault)), "64%, battery fault");
+        assert_eq!(
+            battery(Battery::Charge(ChargeState::Fault)),
+            "battery fault"
+        );
+        assert_eq!(
+            battery(Battery::Charge(ChargeState::Discharging)),
+            "discharging"
+        );
+    }
+
+    #[test]
     fn a_flash_ends_on_the_running_version() {
         let line = flashed(read_status(&fixture("status.hex")).unwrap());
         assert!(line.starts_with("flashed; SpareDongle 1.2.3 running, up "));
@@ -781,8 +814,8 @@ mod tests {
     #[test]
     fn a_flash_of_firmware_in_a_newer_protocol_says_to_update_the_tool() {
         assert_eq!(
-            flashed(read_status(&status_in_protocol(5)).unwrap()),
-            "flashed; the dongle speaks diagnostic protocol 5, this tool 4; install the \
+            flashed(read_status(&status_in_protocol(6)).unwrap()),
+            "flashed; the dongle speaks diagnostic protocol 6, this tool 5; install the \
              spare-dongle tool from the firmware's release"
         );
     }

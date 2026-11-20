@@ -16,7 +16,8 @@ dongle into its firmware or its bootloader, and clear the history.
 
 ## Reading the dongle
 
-- `status`: the link, USB state and counter totals, and each device's signal and counters.
+- `status`: the link, USB state and counter totals, and each device's signal, battery and
+  counters.
 - `history`: per-minute counters, and each device's packets and signal, oldest first.
 - `events`: the latest events, oldest first, among them every channel move with the noise on both
   channels.

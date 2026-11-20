@@ -13,7 +13,7 @@
 #include "protocol.h"
 
 /* Bumped only when a layout that a release has shipped, or what a value in it means, changes. */
-#define DIAG_VERSION 4
+#define DIAG_VERSION 5
 #define DIAG_REPORT_LEN 64
 #define DIAG_HEADER_LEN 4
 #define DIAG_CHUNK (DIAG_REPORT_LEN - DIAG_HEADER_LEN)
@@ -26,6 +26,12 @@
 #define DIAG_NAME_MAX 24
 /* Marks last_rssi as absent: no receiver reports a signal this low. */
 #define DIAG_NO_RSSI INT8_MIN
+#define DIAG_NO_BATTERY 0xff
+#define DIAG_DISCHARGING 0
+#define DIAG_CHARGING 1
+#define DIAG_CHARGED 2
+#define DIAG_BATTERY_FAULT 3
+#define DIAG_CHARGE_UNKNOWN 0xff
 #define DIAG_SLOT_STORED 0x01
 #define DIAG_SLOT_READY 0x02
 /* The other pairing bits are unset without it. */
@@ -132,6 +138,7 @@ struct diag_status {
 	uint8_t pairing;
 	/* Padded with zeros. */
 	uint8_t name[DIAG_NAME_MAX];
+	struct device_battery battery;
 };
 
 /* Returns false for a report shorter than DIAG_REQUEST_LEN. */

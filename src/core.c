@@ -612,6 +612,7 @@ void core_fill_status(struct diag_status *st, uint8_t slot)
 		.link_losses = t.link_losses[slot],
 		.latency_average_us = reports_latency_average_us(&l),
 		.latency_max_us = l.max_us,
+		.battery = DEVICE_BATTERY_UNKNOWN,
 	};
 	memcpy(st->firmware_version, core_firmware_version, sizeof(st->firmware_version));
 	loop->slots(st->slots);

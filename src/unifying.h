@@ -198,14 +198,16 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t len,
 			   struct report *out);
 
-#define UNIFYING_DIVERT_TRIES 3
+#define UNIFYING_HIDPP_TRIES 3
 #define UNIFYING_BRIGHTNESS_DOWN 0x70
 #define UNIFYING_BRIGHTNESS_UP 0x6f
 
-enum unifying_divert_step {
-	UNIFYING_DIVERT_IDLE,
-	UNIFYING_DIVERT_FIND,
-	UNIFYING_DIVERT_CONTROL,
+enum unifying_hidpp_step {
+	UNIFYING_HIDPP_IDLE,
+	UNIFYING_HIDPP_FIND_CONTROLS,
+	UNIFYING_HIDPP_DIVERT,
+	UNIFYING_HIDPP_FIND_BATTERY,
+	UNIFYING_HIDPP_READ_BATTERY,
 };
 
 struct unifying_divert_end {
@@ -218,19 +220,29 @@ struct unifying_divert_end {
 };
 
 /*
- * Diverts the HID++ controls in unifying.c's table over feature 0x1B04 for the keyboard's session
- * only, since a persistent divert would also silence them on the keyboard's other hosts.
+ * The HID++ run at each connect: it diverts the controls in unifying.c's table over feature 0x1B04
+ * for the keyboard's session only, since a persistent divert would also silence them on the
+ * keyboard's other hosts. It then reads the battery once, because the keyboard sends its connect
+ * battery event before the run can know the feature's index.
  */
-struct unifying_divert {
-	enum unifying_divert_step step;
+struct unifying_hidpp {
+	enum unifying_hidpp_step step;
 	/* The index of feature 0x1B04; 0 until the keyboard names it. */
-	uint8_t feature;
+	uint8_t controls;
 	uint8_t control_index;
+	/* The index of feature 0x1000; 0 until the keyboard names it. */
+	uint8_t battery;
+	/* A feature index is fixed by the keyboard's firmware, so it is kept until another keyboard
+	 * pairs. */
+	bool controls_known;
+	bool battery_known;
+	/* This run's lookup found feature 0x1000. */
+	bool battery_found;
 	/* Requests the keyboard took without answering. */
 	uint8_t tries;
 	bool awaiting;
 	uint64_t taken_ms;
-	/* Set once when a run ends. */
+	/* Set once when the divert ends. */
 	struct unifying_divert_end end;
 };
 
@@ -303,7 +315,8 @@ struct unifying_session {
 	struct unifying_pairing pairing;
 	struct unifying_link link;
 	struct unifying_led led;
-	struct unifying_divert divert;
+	struct unifying_hidpp hidpp;
+	struct device_battery battery;
 	struct unifying_queue queue;
 	struct unifying_sweep sweep;
 	uint8_t channel;

@@ -4,9 +4,11 @@
 
 - In Unifying mode a Logitech keyboard's screen brightness keys, such as the MX Keys's F1 and F2,
   work without Logitech's software.
-- The events record each time the dongle diverts a Unifying keyboard's keys, or what stopped it;
-  the 0.4.0 tool shows the event as unknown.
+- The events record each time the dongle diverts a Unifying keyboard's keys, or what stopped it.
+- The tool shows a Unifying keyboard's battery level and whether it is charging, in `status` and
+  in the title of the live view's device box.
 - A connected device's latency reads "no report yet" until its first report reaches the PC.
+- The diagnostic protocol is now 5, so the 0.4.0 tool can only `flash` new firmware.
 
 ## [0.4.0] - 2026-11-19
 

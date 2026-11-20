@@ -1843,6 +1843,10 @@ static uint64_t silence_after(const struct unifying_session *s, uint64_t heard)
 }
 
 static const uint8_t find_request[] = {0x00, 0x10, 0x07, 0x00, 0x01, 0x1b, 0x04, 0x00, 0x00, 0xc9};
+static const uint8_t find_battery_request[] = {0x00, 0x10, 0x07, 0x00, 0x01,
+					       0x10, 0x00, 0x00, 0x00, 0xd8};
+static const uint8_t read_battery_request[] = {0x00, 0x10, 0x07, 0x07, 0x01,
+					       0x00, 0x00, 0x00, 0x00, 0xe1};
 
 static void hidpp_frame(uint8_t f[UNIFYING_FRAME_MAX], uint8_t type, uint8_t feature,
 			uint8_t function, uint8_t p0, uint8_t p1, uint8_t p2)
@@ -1952,7 +1956,7 @@ static uint64_t run_out_retries(struct unifying_session *s, uint64_t now, uint32
 	uint64_t retry = 2 * (uint64_t)s->link.keepalive_ms;
 	struct unifying_out out;
 
-	for (int i = 0; i < UNIFYING_DIVERT_TRIES; i++) {
+	for (int i = 0; i < UNIFYING_HIDPP_TRIES; i++) {
 		tick_queue(s, now, *taken, &out);
 		check_hidpp(&out, want, len);
 		CHECK(!out.divert.ended);
@@ -1997,10 +2001,8 @@ static void test_the_brightness_keys_are_diverted_in_turn_and_reported_once(void
 	session_feed(&s, f, sizeof(f), 70, &out);
 	check_end(&out, HISTORY_DIVERT_FINISHED, 2, 0, 0);
 	unifying_session_tick(&s, 80, false, 0, 0, &out);
-	CHECK_EQ(out.hidpp_len, 0);
+	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
 	CHECK(!out.divert.ended);
-	unifying_session_tick(&s, 10000, false, 0, 0, &out);
-	CHECK_EQ(out.hidpp_len, 0);
 }
 
 static void test_an_unanswered_lookup_is_sent_again_then_given_up(void)
@@ -2016,8 +2018,8 @@ static void test_an_unanswered_lookup_is_sent_again_then_given_up(void)
 	unifying_session_tick(&s, now, false, 0, 0, &out);
 	CHECK_EQ(out.hidpp_len, 0);
 	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0);
-	unifying_session_tick(&s, now + 100000, false, 0, 0, &out);
-	CHECK_EQ(out.hidpp_len, 0);
+	tick_queue(&s, now + 1, taken, &out);
+	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
 	CHECK(!out.divert.ended);
 }
 
@@ -2049,7 +2051,7 @@ static void test_a_keyboard_without_reprogrammable_controls_is_reported_and_left
 	session_feed(&s, f, sizeof(f), 30, &out);
 	check_end(&out, HISTORY_DIVERT_NO_FEATURE, 0, 0, 0);
 	unifying_session_tick(&s, 40, false, 0, 0, &out);
-	CHECK_EQ(out.hidpp_len, 0);
+	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
 }
 
 static void test_a_refused_divert_is_counted_and_moves_on_to_the_other_key(void)
@@ -2121,10 +2123,11 @@ static void test_a_brightness_event_before_the_feature_is_found_types_nothing(vo
 	CHECK_EQ(out.reports, 0);
 }
 
-static void test_a_connect_frame_starts_the_divert_over(void)
+static void test_a_connect_frame_diverts_again_without_a_second_lookup(void)
 {
 	struct unifying_session s;
 	struct unifying_out out;
+	uint8_t want[UNIFYING_FRAME_MAX];
 
 	session_diverted(&s);
 	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 100,
@@ -2132,7 +2135,8 @@ static void test_a_connect_frame_starts_the_divert_over(void)
 	tick_queue(&s, 110, 0, &out);
 	CHECK(out.send_led);
 	tick_queue(&s, 111, 1, &out);
-	check_hidpp(&out, find_request, sizeof(find_request));
+	divert_request(want, 0xc7);
+	check_hidpp(&out, want, sizeof(want));
 }
 
 static void test_no_divert_request_goes_out_during_a_pairing_attempt(void)
@@ -2254,10 +2258,11 @@ static void test_a_dropped_request_is_sent_again_without_counting_a_try(void)
 	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0);
 }
 
-static void test_a_wake_looks_the_feature_up_once(void)
+static void test_a_wake_sends_the_divert_once(void)
 {
 	struct unifying_session s;
 	struct unifying_out out;
+	uint8_t want[UNIFYING_FRAME_MAX];
 	uint64_t silent;
 
 	session_diverted(&s);
@@ -2268,7 +2273,8 @@ static void test_a_wake_looks_the_feature_up_once(void)
 	tick_queue(&s, silent + 11, 0, &out);
 	CHECK(out.send_led);
 	tick_queue(&s, silent + 12, 1, &out);
-	check_hidpp(&out, find_request, sizeof(find_request));
+	divert_request(want, 0xc7);
+	check_hidpp(&out, want, sizeof(want));
 	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
 			       silent + 13, nonce, fake_aes, &out);
 	tick_queue(&s, silent + 14, 2, &out);
@@ -2311,6 +2317,212 @@ static void test_a_held_brightness_key_is_released_by_the_silence(void)
 	session_feed(&s, f, sizeof(f), 100, &out);
 	unifying_session_tick(&s, silence_after(&s, 100) + 1, false, 0, 0, &out);
 	CHECK(out.release_all);
+}
+
+static void session_battery_answered(struct unifying_session *s, uint8_t index)
+{
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(s);
+	unifying_session_tick(s, 80, false, 0, 0, &out);
+	hidpp(f, 0x00, 0x01, index, 0x00, 0x00);
+	session_feed(s, f, sizeof(f), 90, &out);
+}
+
+static void session_battery_found(struct unifying_session *s)
+{
+	session_battery_answered(s, 0x07);
+}
+
+static void session_battery_read(struct unifying_session *s)
+{
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_found(s);
+	unifying_session_tick(s, 100, false, 0, 0, &out);
+	hidpp(f, 0x07, 0x01, 0x55, 0x32, 0x01);
+	session_feed(s, f, sizeof(f), 110, &out);
+}
+
+static void test_the_battery_is_read_once_after_the_divert(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	unifying_session_tick(&s, 80, false, 0, 0, &out);
+	check_hidpp(&out, find_battery_request, sizeof(find_battery_request));
+	hidpp(f, 0x00, 0x01, 0x07, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 90, &out);
+	unifying_session_tick(&s, 100, false, 0, 0, &out);
+	check_hidpp(&out, read_battery_request, sizeof(read_battery_request));
+	hidpp(f, 0x07, 0x01, 0x55, 0x32, 0x01);
+	session_feed(&s, f, sizeof(f), 110, &out);
+	CHECK_EQ(s.battery.level, 85);
+	CHECK_EQ(s.battery.charging, DEVICE_CHARGING);
+	unifying_session_tick(&s, 120, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_battery_events_update_the_level_and_charging(void)
+{
+	static const struct {
+		uint8_t level, status;
+		enum device_charging charging;
+	} steps[] = {{80, 0x00, DEVICE_DISCHARGING},
+		     {90, 0x02, DEVICE_CHARGING},
+		     {100, 0x03, DEVICE_CHARGED},
+		     {95, 0x04, DEVICE_CHARGING},
+		     {95, 0x08, DEVICE_CHARGE_UNKNOWN}};
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_read(&s);
+	for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+		hidpp(f, 0x07, 0x00, steps[i].level, 0x00, steps[i].status);
+		session_feed(&s, f, sizeof(f), 200 + i, &out);
+		CHECK_EQ(out.reports, 0);
+		CHECK_EQ(s.battery.level, steps[i].level);
+		CHECK_EQ(s.battery.charging, steps[i].charging);
+	}
+}
+
+static void test_a_charging_event_without_a_level_keeps_the_level_unknown(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_read(&s);
+	hidpp(f, 0x07, 0x00, 0x00, 0x00, 0x01);
+	session_feed(&s, f, sizeof(f), 200, &out);
+	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
+	CHECK_EQ(s.battery.charging, DEVICE_CHARGING);
+}
+
+static void test_a_battery_event_before_the_lookup_is_ignored(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	hidpp(f, 0x07, 0x00, 0x64, 0x32, 0x00);
+	session_feed(&s, f, sizeof(f), 80, &out);
+	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
+}
+
+static void test_a_keyboard_without_a_battery_feature_is_not_asked_its_level(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_battery_answered(&s, 0x00);
+	unifying_session_tick(&s, 100, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
+}
+
+static void test_an_unanswered_battery_read_logs_no_divert_event(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint32_t taken = 0;
+	uint64_t now;
+
+	session_battery_found(&s);
+	now = run_out_retries(&s, 100, &taken, read_battery_request,
+			      sizeof(read_battery_request));
+	tick_queue(&s, now, taken, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	CHECK(!out.divert.ended);
+	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
+}
+
+static void session_reconnected_after_a_full_run(struct unifying_session *s)
+{
+	struct unifying_out out;
+
+	session_battery_read(s);
+	unifying_session_frame(s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 200,
+			       nonce, fake_aes, &out);
+}
+
+static void test_a_reconnect_keeps_the_battery_level(void)
+{
+	struct unifying_session s;
+
+	session_reconnected_after_a_full_run(&s);
+	CHECK_EQ(s.battery.level, 85);
+}
+
+static void test_a_reconnect_takes_the_connect_battery_event_at_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_reconnected_after_a_full_run(&s);
+	hidpp(f, 0x07, 0x00, 0x32, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 210, &out);
+	CHECK_EQ(s.battery.level, 50);
+}
+
+static void test_a_reconnect_reads_no_battery_after_the_divert(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_reconnected_after_a_full_run(&s);
+	unifying_session_tick(&s, 210, false, 0, 0, &out);
+	divert_reply(f, 0xc7);
+	session_feed(&s, f, sizeof(f), 220, &out);
+	unifying_session_tick(&s, 230, false, 0, 0, &out);
+	divert_reply(f, 0xc8);
+	session_feed(&s, f, sizeof(f), 240, &out);
+	check_end(&out, HISTORY_DIVERT_FINISHED, 2, 0, 0);
+	unifying_session_tick(&s, 250, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_a_battery_fault_is_its_own_state(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_read(&s);
+	for (uint8_t status = 5; status <= 7; status++) {
+		hidpp(f, 0x07, 0x00, 0x40, 0x00, status);
+		session_feed(&s, f, sizeof(f), 200 + status, &out);
+		CHECK_EQ(s.battery.charging, DEVICE_BATTERY_FAULT);
+	}
+}
+
+static void test_pairing_a_keyboard_forgets_the_old_ones_battery(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_read(&s);
+	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 200);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 210, nonce, fake_aes,
+			       &out);
+	request_2(f, 0xe1);
+	session_feed(&s, f, sizeof(f), 220, &out);
+	request_3(f, 0x00);
+	session_feed(&s, f, sizeof(f), 230, &out);
+	CHECK_EQ(out.event, UNIFYING_RX_PAIRED);
+	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
+	unifying_session_tick(&s, 240, false, 0, 0, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
 }
 
 static void session_holding_a_key(struct unifying_session *s)
@@ -2897,16 +3109,27 @@ int main(void)
 	RUN(test_diverted_brightness_keys_type_the_brightness_usages);
 	RUN(test_an_fn_event_types_nothing);
 	RUN(test_a_brightness_event_before_the_feature_is_found_types_nothing);
-	RUN(test_a_connect_frame_starts_the_divert_over);
+	RUN(test_a_connect_frame_diverts_again_without_a_second_lookup);
 	RUN(test_no_divert_request_goes_out_during_a_pairing_attempt);
 	RUN(test_a_held_brightness_key_is_released_by_the_silence);
+	RUN(test_the_battery_is_read_once_after_the_divert);
+	RUN(test_battery_events_update_the_level_and_charging);
+	RUN(test_a_charging_event_without_a_level_keeps_the_level_unknown);
+	RUN(test_a_battery_event_before_the_lookup_is_ignored);
+	RUN(test_a_keyboard_without_a_battery_feature_is_not_asked_its_level);
+	RUN(test_an_unanswered_battery_read_logs_no_divert_event);
+	RUN(test_a_reconnect_keeps_the_battery_level);
+	RUN(test_a_reconnect_takes_the_connect_battery_event_at_once);
+	RUN(test_a_reconnect_reads_no_battery_after_the_divert);
+	RUN(test_a_battery_fault_is_its_own_state);
+	RUN(test_pairing_a_keyboard_forgets_the_old_ones_battery);
 	RUN(test_an_led_change_waits_until_the_queued_frame_is_taken);
 	RUN(test_resends_while_a_frame_is_queued_are_sent_once_after_it_is_taken);
 	RUN(test_a_dropped_led_frame_is_sent_again);
 	RUN(test_a_divert_request_waits_behind_a_queued_led_frame);
 	RUN(test_a_request_the_sleeping_keyboard_never_takes_is_not_sent_again);
 	RUN(test_a_dropped_request_is_sent_again_without_counting_a_try);
-	RUN(test_a_wake_looks_the_feature_up_once);
+	RUN(test_a_wake_sends_the_divert_once);
 	RUN(test_releasing_a_brightness_key_leaves_a_held_media_key_down);
 	RUN(test_a_session_releases_a_held_key_once_after_twice_the_keep_alive);
 	RUN(test_a_session_releases_a_held_key_on_a_connect_frame_only);

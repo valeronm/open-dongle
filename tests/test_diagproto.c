@@ -100,9 +100,35 @@ static void test_status_matches_fixture(void)
 		.latency_average_us = 850,
 		.latency_max_us = 4200,
 		.name = "MX Keys",
+		.battery = {.level = 85, .charging = DEVICE_CHARGING},
 	};
 
 	check_status_fixture("status.hex", &s);
+}
+
+static void test_each_charging_state_has_its_wire_code(void)
+{
+	static const struct {
+		enum device_charging charging;
+		uint8_t code;
+	} codes[] = {{DEVICE_DISCHARGING, DIAG_DISCHARGING},
+		     {DEVICE_CHARGING, DIAG_CHARGING},
+		     {DEVICE_CHARGED, DIAG_CHARGED},
+		     {DEVICE_BATTERY_FAULT, DIAG_BATTERY_FAULT},
+		     {DEVICE_CHARGE_UNKNOWN, DIAG_CHARGE_UNKNOWN}};
+	uint8_t out[DIAG_PAYLOAD_MAX];
+
+	for (size_t i = 0; i < sizeof(codes) / sizeof(codes[0]); i++) {
+		struct diag_status s = {.battery = {.level = 40, .charging = codes[i].charging}};
+		size_t len = diag_encode_status(out, &s);
+
+		CHECK_EQ(out[len - 2], 40);
+		CHECK_EQ(out[len - 1], codes[i].code);
+	}
+	CHECK_EQ(DIAG_DISCHARGING, 0);
+	CHECK_EQ(DIAG_CHARGING, 1);
+	CHECK_EQ(DIAG_CHARGED, 2);
+	CHECK_EQ(DIAG_BATTERY_FAULT, 3);
 }
 
 static void test_a_mouse_slot_status_matches_fixture(void)
@@ -131,6 +157,7 @@ static void test_a_mouse_slot_status_matches_fixture(void)
 		.latency_average_us = UINT32_MAX,
 		.pairing = DIAG_PAIRING_KNOWN | DIAG_PAIRING_SECURE,
 		.name = "MX Master 3S",
+		.battery = DEVICE_BATTERY_UNKNOWN,
 	};
 
 	check_status_fixture("status-slot1.hex", &s);
@@ -497,6 +524,7 @@ int main(void)
 	RUN(test_request_carries_the_bytes_after_arg);
 	RUN(test_a_request_fixture_carries_the_slot_after_arg);
 	RUN(test_status_matches_fixture);
+	RUN(test_each_charging_state_has_its_wire_code);
 	RUN(test_a_mouse_slot_status_matches_fixture);
 	RUN(test_a_76_byte_payload_goes_out_in_two_parts);
 	RUN(test_an_empty_payload_is_one_part);

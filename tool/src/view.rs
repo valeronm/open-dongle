@@ -19,7 +19,7 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, bucket_label,
+    ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, battery, bucket_label,
     channel_role, counted_share, describe_event, device_at, device_lines, firmware,
     forget_question, last_packet, latency, link_health, noise_level, noise_ruler, paired, pairing,
     share, slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
@@ -1048,8 +1048,9 @@ fn dongle_title(status: Option<&Status>) -> String {
 }
 
 fn device_title(s: &Status, d: &SlotStatus) -> String {
-    std::iter::once(s.kind_name(d.slot))
-        .chain(d.name.as_deref())
+    std::iter::once(s.kind_name(d.slot).to_string())
+        .chain(d.name.clone())
+        .chain(d.battery.map(battery))
         .collect::<Vec<_>>()
         .join(" · ")
 }
@@ -1897,6 +1898,7 @@ mod tests {
             link_losses: None,
             latency: None,
             pairing: None,
+            battery: None,
         };
         let mut app = app_with(s);
         history(&mut app).slots.push(SlotHistory {
@@ -2907,7 +2909,11 @@ mod tests {
         );
         assert!(rows[3].starts_with("│firmware "), "{}", rows[3]);
         assert!(rows[4].starts_with('└'), "{}", rows[4]);
-        assert!(rows[5].starts_with("┌ keyboard · MX Keys ─"), "{}", rows[5]);
+        assert!(
+            rows[5].starts_with("┌ keyboard · MX Keys · 85%, charging ─"),
+            "{}",
+            rows[5]
+        );
         assert_eq!(
             inside_box(&rows[6]),
             "link      connected   -71 dBm   last packet 12 ms ago"
@@ -2985,13 +2991,17 @@ mod tests {
             "channels  5 8 17 32 35 41 44 62 65 71 74"
         );
         let title = &rows[CHANNELS_DEVICE_TITLE_ROW];
-        assert!(title.starts_with("┌ keyboard · MX Keys ─"), "{title}");
+        assert!(
+            title.starts_with("┌ keyboard · MX Keys · 85%, charging ─"),
+            "{title}"
+        );
     }
 
     #[test]
     fn the_device_title_ends_at_the_kind_before_the_keyboard_sent_its_name() {
         let mut unnamed = status_of(Protocol::Nuphy);
         unnamed.device.name = None;
+        unnamed.device.battery = None;
         let rows = screen(&status_box(&unnamed));
         let title = &rows[CHANNELS_DEVICE_TITLE_ROW];
         assert!(title.starts_with("┌ keyboard ─"), "{title}");

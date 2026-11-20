@@ -79,6 +79,22 @@ void diag_error_report(uint8_t out[DIAG_REPORT_LEN], const struct diag_request *
 	out[DIAG_HEADER_LEN + 1] = detail;
 }
 
+static uint8_t charge_code(enum device_charging charging)
+{
+	switch (charging) {
+	case DEVICE_DISCHARGING:
+		return DIAG_DISCHARGING;
+	case DEVICE_CHARGING:
+		return DIAG_CHARGING;
+	case DEVICE_CHARGED:
+		return DIAG_CHARGED;
+	case DEVICE_BATTERY_FAULT:
+		return DIAG_BATTERY_FAULT;
+	default:
+		return DIAG_CHARGE_UNKNOWN;
+	}
+}
+
 size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 {
 	uint8_t *p = out;
@@ -134,6 +150,8 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	*p++ = s->pairing;
 	memcpy(p, s->name, sizeof(s->name));
 	p += sizeof(s->name);
+	*p++ = s->battery.level == DEVICE_NO_BATTERY ? DIAG_NO_BATTERY : s->battery.level;
+	*p++ = charge_code(s->battery.charging);
 	return p - out;
 }
 

@@ -72,6 +72,9 @@ not show:
   each change: Num Lock `0x01`, Caps Lock `0x02`, Scroll Lock `0x04`.
 - Feature index `0x10` on the MX Keys reports a switch of mode in byte 6: `0x00` for Windows,
   `0x01` for macOS.
+- The MX Keys has feature `0x1000` (battery) at index 7 and sends its battery event at every
+  connect, before a receiver can have looked the feature up.
+- While it charges, the MX Keys reports its battery level as 0, which means unknown.
 
 ## Sources
 

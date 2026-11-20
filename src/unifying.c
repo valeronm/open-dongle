@@ -25,9 +25,12 @@
 #define HIDPP_ROOT 0x00
 #define HIDPP_ERROR 0xff
 #define HIDPP_REPROG_CONTROLS 0x1b04
+#define HIDPP_BATTERY_STATUS 0x1000
 /* A function number in the high nibble, the software ID 1 in the low one; events carry ID 0. */
 #define HIDPP_GET_FEATURE 0x01
 #define HIDPP_SET_CID_REPORTING 0x31
+#define HIDPP_GET_BATTERY 0x01
+#define HIDPP_BATTERY_EVENT 0x00
 #define HIDPP_DIVERTED_EVENT 0x00
 /* The divert bit and the bit that says it is valid; the persist bits stay clear. */
 #define HIDPP_DIVERT 0x03
@@ -456,123 +459,223 @@ static uint16_t diverted_usage(uint16_t cid)
 	return 0;
 }
 
-/* One connect brings several frames that each call this. */
-static void divert_start(struct unifying_divert *d)
+static void hidpp_step(struct unifying_hidpp *x, enum unifying_hidpp_step step)
 {
-	if (d->step != UNIFYING_DIVERT_FIND) {
-		*d = (struct unifying_divert){.step = UNIFYING_DIVERT_FIND};
+	x->step = step;
+	x->tries = 0;
+	x->awaiting = false;
+}
+
+/* A run takes the steps in their enum order and skips each one this keyboard does not need. */
+static bool wanted(const struct unifying_hidpp *x, enum unifying_hidpp_step step)
+{
+	switch (step) {
+	case UNIFYING_HIDPP_FIND_CONTROLS:
+		return !x->controls_known;
+	case UNIFYING_HIDPP_DIVERT:
+		return x->controls != 0;
+	case UNIFYING_HIDPP_FIND_BATTERY:
+		return !x->battery_known;
+	case UNIFYING_HIDPP_READ_BATTERY:
+		return x->battery_found;
+	default:
+		return false;
 	}
 }
 
-static void divert_end(struct unifying_divert *d, enum history_divert outcome,
-		       uint16_t cid)
+static void hidpp_advance(struct unifying_hidpp *x)
 {
-	d->step = UNIFYING_DIVERT_IDLE;
-	d->end.ended = true;
-	d->end.outcome = outcome;
-	d->end.cid = cid;
+	enum unifying_hidpp_step next = x->step + 1;
+
+	while (next <= UNIFYING_HIDPP_READ_BATTERY && !wanted(x, next)) {
+		next++;
+	}
+	x->control_index = 0;
+	hidpp_step(x, next <= UNIFYING_HIDPP_READ_BATTERY ? next : UNIFYING_HIDPP_IDLE);
 }
 
-static void divert_next(struct unifying_divert *d)
+static void divert_end(struct unifying_hidpp *x, enum history_divert outcome, uint16_t cid)
 {
-	d->tries = 0;
-	d->awaiting = false;
-	if (d->step == UNIFYING_DIVERT_FIND) {
-		d->step = UNIFYING_DIVERT_CONTROL;
-		d->control_index = 0;
-	} else if (++d->control_index >= DIVERTED_COUNT) {
-		divert_end(d, HISTORY_DIVERT_FINISHED, 0);
+	x->end.ended = true;
+	x->end.outcome = outcome;
+	x->end.cid = cid;
+}
+
+/* One connect brings several frames that each call this; a run on its first request is kept. */
+static void hidpp_start(struct unifying_hidpp *x)
+{
+	if (x->step == UNIFYING_HIDPP_FIND_CONTROLS ||
+	    (x->step == UNIFYING_HIDPP_DIVERT && x->control_index == 0)) {
+		return;
 	}
+	x->end = (struct unifying_divert_end){0};
+	x->battery_found = false;
+	x->step = UNIFYING_HIDPP_IDLE;
+	if (x->controls_known && x->controls == 0) {
+		divert_end(x, HISTORY_DIVERT_NO_FEATURE, 0);
+	}
+	hidpp_advance(x);
+}
+
+static void hidpp_next(struct unifying_hidpp *x)
+{
+	if (x->step == UNIFYING_HIDPP_DIVERT && (size_t)x->control_index + 1 < DIVERTED_COUNT) {
+		x->control_index++;
+		hidpp_step(x, UNIFYING_HIDPP_DIVERT);
+		return;
+	}
+	if (x->step == UNIFYING_HIDPP_DIVERT) {
+		divert_end(x, HISTORY_DIVERT_FINISHED, 0);
+	} else if (x->step == UNIFYING_HIDPP_FIND_CONTROLS && x->controls == 0) {
+		divert_end(x, HISTORY_DIVERT_NO_FEATURE, 0);
+	}
+	hidpp_advance(x);
+}
+
+static void hidpp_give_up(struct unifying_hidpp *x)
+{
+	if (x->step == UNIFYING_HIDPP_FIND_CONTROLS) {
+		divert_end(x, HISTORY_DIVERT_UNANSWERED, 0);
+	} else if (x->step == UNIFYING_HIDPP_DIVERT) {
+		divert_end(x, HISTORY_DIVERT_UNANSWERED, diverted[x->control_index].cid);
+	}
+	hidpp_advance(x);
+}
+
+static size_t get_feature(uint8_t out[UNIFYING_FRAME_MAX], uint16_t feature)
+{
+	out[1] = REPORT_HIDPP_SHORT;
+	out[3] = HIDPP_ROOT;
+	out[4] = HIDPP_GET_FEATURE;
+	out[5] = (uint8_t)(feature >> 8);
+	out[6] = (uint8_t)feature;
+	return HIDPP_SHORT_LEN;
+}
+
+static size_t set_cid_reporting(uint8_t out[UNIFYING_FRAME_MAX], uint8_t feature, uint16_t cid)
+{
+	out[1] = REPORT_HIDPP_LONG;
+	out[3] = feature;
+	out[4] = HIDPP_SET_CID_REPORTING;
+	out[5] = (uint8_t)(cid >> 8);
+	out[6] = (uint8_t)cid;
+	out[7] = HIDPP_DIVERT;
+	return UNIFYING_FRAME_MAX;
+}
+
+static size_t get_battery(uint8_t out[UNIFYING_FRAME_MAX], uint8_t feature)
+{
+	out[1] = REPORT_HIDPP_SHORT;
+	out[3] = feature;
+	out[4] = HIDPP_GET_BATTERY;
+	return HIDPP_SHORT_LEN;
 }
 
 /* Call it only while no other frame of the dongle's waits in the queue. */
-static size_t divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
-			     uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX])
+static size_t hidpp_request(struct unifying_hidpp *x, uint8_t device_index, uint64_t now_ms,
+			    uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX])
 {
-	size_t len;
-
-	if (d->step == UNIFYING_DIVERT_IDLE ||
-	    (d->awaiting && now_ms - d->taken_ms < retry_ms)) {
+	if (x->step == UNIFYING_HIDPP_IDLE || (x->awaiting && now_ms - x->taken_ms < retry_ms)) {
 		return 0;
 	}
-	if (d->tries >= UNIFYING_DIVERT_TRIES) {
-		divert_end(d, HISTORY_DIVERT_UNANSWERED,
-			   d->step == UNIFYING_DIVERT_CONTROL ? diverted[d->control_index].cid : 0);
+	if (x->tries >= UNIFYING_HIDPP_TRIES) {
+		hidpp_give_up(x);
 		return 0;
 	}
 	memset(out, 0, UNIFYING_FRAME_MAX);
 	out[2] = device_index;
-	if (d->step == UNIFYING_DIVERT_FIND) {
-		len = HIDPP_SHORT_LEN;
-		out[1] = REPORT_HIDPP_SHORT;
-		out[3] = HIDPP_ROOT;
-		out[4] = HIDPP_GET_FEATURE;
-		out[5] = HIDPP_REPROG_CONTROLS >> 8;
-		out[6] = HIDPP_REPROG_CONTROLS & 0xff;
-	} else {
-		uint16_t cid = diverted[d->control_index].cid;
-
-		len = UNIFYING_FRAME_MAX;
-		out[1] = REPORT_HIDPP_LONG;
-		out[3] = d->feature;
-		out[4] = HIDPP_SET_CID_REPORTING;
-		out[5] = (uint8_t)(cid >> 8);
-		out[6] = (uint8_t)cid;
-		out[7] = HIDPP_DIVERT;
+	switch (x->step) {
+	case UNIFYING_HIDPP_FIND_CONTROLS:
+		return seal(out, get_feature(out, HIDPP_REPROG_CONTROLS));
+	case UNIFYING_HIDPP_DIVERT:
+		return seal(out, set_cid_reporting(out, x->controls, diverted[x->control_index].cid));
+	case UNIFYING_HIDPP_FIND_BATTERY:
+		return seal(out, get_feature(out, HIDPP_BATTERY_STATUS));
+	case UNIFYING_HIDPP_READ_BATTERY:
+		return seal(out, get_battery(out, x->battery));
+	default:
+		return 0;
 	}
-	return seal(out, len);
 }
 
-static void divert_taken(struct unifying_divert *d, uint64_t now_ms)
+/* Bytes 5 to 7 of a battery reply or event: level, next level, status; a level of 0 is unknown. */
+static void read_battery(struct device_battery *b, const uint8_t *frame)
 {
-	if (d->step != UNIFYING_DIVERT_IDLE) {
-		d->tries++;
-		d->awaiting = true;
-		d->taken_ms = now_ms;
+	uint8_t status = frame[7];
+
+	b->level = frame[5] != 0 ? frame[5] : DEVICE_NO_BATTERY;
+	if (status == 0) {
+		b->charging = DEVICE_DISCHARGING;
+	} else if (status == 3) {
+		b->charging = DEVICE_CHARGED;
+	} else if (status == 1 || status == 2 || status == 4) {
+		b->charging = DEVICE_CHARGING;
+	} else if (status <= 7) {
+		b->charging = DEVICE_BATTERY_FAULT;
+	} else {
+		b->charging = DEVICE_CHARGE_UNKNOWN;
 	}
 }
 
-/* A reply to the request in flight moves on to the next one, whether it succeeded or failed. */
-static bool divert_reply(struct unifying_divert *d, const uint8_t *frame)
+static void hidpp_taken(struct unifying_hidpp *x, uint64_t now_ms)
+{
+	if (x->step != UNIFYING_HIDPP_IDLE) {
+		x->tries++;
+		x->awaiting = true;
+		x->taken_ms = now_ms;
+	}
+}
+
+/* Returns true for a reply or refusal of the request in flight, and moves the run on. */
+static bool hidpp_reply(struct unifying_hidpp *x, struct device_battery *b, const uint8_t *frame)
 {
 	bool error = frame[3] == HIDPP_ERROR;
 	uint8_t feature = error ? frame[4] : frame[3];
 	uint8_t function = error ? frame[5] : frame[4];
 
-	if (d->step == UNIFYING_DIVERT_FIND && feature == HIDPP_ROOT &&
-	    function == HIDPP_GET_FEATURE) {
-		d->feature = error ? 0 : frame[5];
-		if (d->feature == 0) {
-			divert_end(d, HISTORY_DIVERT_NO_FEATURE, 0);
-		} else {
-			divert_next(d);
+	bool find = feature == HIDPP_ROOT && function == HIDPP_GET_FEATURE;
+
+	if (x->step == UNIFYING_HIDPP_FIND_CONTROLS && find) {
+		x->controls = error ? 0 : frame[5];
+		x->controls_known = true;
+	} else if (x->step == UNIFYING_HIDPP_FIND_BATTERY && find) {
+		x->battery = error ? 0 : frame[5];
+		x->battery_known = true;
+		x->battery_found = x->battery != 0;
+	} else if (x->step == UNIFYING_HIDPP_READ_BATTERY && feature == x->battery &&
+		   function == HIDPP_GET_BATTERY) {
+		if (!error) {
+			read_battery(b, frame);
 		}
-		return true;
-	}
-	if (d->step == UNIFYING_DIVERT_CONTROL && feature == d->feature &&
-	    function == HIDPP_SET_CID_REPORTING &&
-	    (error || (frame[5] << 8 | frame[6]) == diverted[d->control_index].cid)) {
+	} else if (x->step == UNIFYING_HIDPP_DIVERT && feature == x->controls &&
+		   function == HIDPP_SET_CID_REPORTING &&
+		   (error || (frame[5] << 8 | frame[6]) == diverted[x->control_index].cid)) {
 		if (error) {
-			d->end.refused++;
+			x->end.refused++;
 		} else {
-			d->end.diverted++;
+			x->end.diverted++;
 		}
-		divert_next(d);
-		return true;
+	} else {
+		return false;
 	}
-	return false;
+	hidpp_next(x);
+	return true;
 }
 
 /* Takes only a frame whose checksum the caller checked. */
-static bool divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
-		      size_t len, struct report *out)
+static bool hidpp_rx(struct unifying_hidpp *x, struct unifying_link *l, struct device_battery *b,
+		     const uint8_t *frame, size_t len, struct report *out)
 {
 	uint16_t usage = 0;
 
-	if (!is_hidpp(frame, len) || divert_reply(d, frame)) {
+	if (!is_hidpp(frame, len) || hidpp_reply(x, b, frame)) {
 		return false;
 	}
-	if (d->feature == 0 || frame[3] != d->feature || frame[4] != HIDPP_DIVERTED_EVENT ||
+	if (x->battery != 0 && frame[3] == x->battery && frame[4] == HIDPP_BATTERY_EVENT) {
+		read_battery(b, frame);
+		return false;
+	}
+	if (x->controls == 0 || frame[3] != x->controls || frame[4] != HIDPP_DIVERTED_EVENT ||
 	    len != UNIFYING_FRAME_MAX) {
 		return false;
 	}
@@ -691,9 +794,9 @@ static bool quiet_too_long(const struct unifying_session *s, uint64_t now_ms)
 
 static void take_divert_end(struct unifying_session *s, struct unifying_out *out)
 {
-	if (s->divert.end.ended) {
-		out->divert = s->divert.end;
-		s->divert.end.ended = false;
+	if (s->hidpp.end.ended) {
+		out->divert = s->hidpp.end;
+		s->hidpp.end.ended = false;
 	}
 }
 
@@ -703,6 +806,7 @@ void unifying_session_init(struct unifying_session *s, const struct unifying_rec
 	memset(s, 0, sizeof(*s));
 	s->receiver = *r;
 	s->started_ms = now_ms;
+	s->battery = DEVICE_BATTERY_UNKNOWN;
 	unifying_link_reset(&s->link);
 	if (record != NULL) {
 		unifying_record_restore(&s->pairing, record);
@@ -721,7 +825,9 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
-		divert_start(&s->divert);
+		s->hidpp = (struct unifying_hidpp){0};
+		hidpp_start(&s->hidpp);
+		s->battery = DEVICE_BATTERY_UNKNOWN;
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
 		bool checksum_ok = unifying_checksum_ok(frame, len);
@@ -737,7 +843,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		}
 		/* The keyboard forgets a divert whenever it reconnects, which a silence can hide. */
 		if (out->heard != UNIFYING_HEARD_NONE) {
-			divert_start(&s->divert);
+			hidpp_start(&s->hidpp);
 		}
 		/* Requests 2 and 3 of a pairing attempt arrive on this pipe too. */
 		if (!attempting(&s->pairing) && checksum_ok) {
@@ -756,7 +862,8 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 			if (out->reports == 0 &&
 			    (unifying_media_report(&s->link, frame, len, &out->report[0]) ||
 			     (checksum_ok &&
-			      divert_rx(&s->divert, &s->link, frame, len, &out->report[0])))) {
+			      hidpp_rx(&s->hidpp, &s->link, &s->battery, frame, len,
+				       &out->report[0])))) {
 				out->reports = 1;
 			}
 		}
@@ -765,7 +872,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	} else if (pipe == UNIFYING_PIPE_RECEIVER) {
 		out->reconnected = unifying_is_connect_frame(frame, len, s->receiver.device_octet);
 		if (out->reconnected) {
-			divert_start(&s->divert);
+			hidpp_start(&s->hidpp);
 		}
 		s->connect_in_silence |= out->reconnected && s->silent;
 		out->release_all = unifying_link_reconnect(&s->link, s->receiver.device_octet, frame,
@@ -804,7 +911,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	}
 	if (s->queue.frame != UNIFYING_QUEUED_NONE && taken_count != s->queue.taken_count) {
 		if (s->queue.frame == UNIFYING_QUEUED_HIDPP) {
-			divert_taken(&s->divert, now_ms);
+			hidpp_taken(&s->hidpp, now_ms);
 		}
 		s->queue.frame = UNIFYING_QUEUED_NONE;
 	}
@@ -815,7 +922,7 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	/* The ACK payloads of a pairing attempt share the queue. */
 	if (s->queue.frame == UNIFYING_QUEUED_NONE && !out->send_led &&
 	    unifying_has_device(&s->pairing) && !attempting(&s->pairing)) {
-		out->hidpp_len = divert_request(&s->divert, s->receiver.device_octet,
+		out->hidpp_len = hidpp_request(&s->hidpp, s->receiver.device_octet,
 							 now_ms, 2U * s->link.keepalive_ms,
 							 out->hidpp);
 	}

@@ -9,9 +9,10 @@ use chrono::Local;
 use crate::board::{self, State};
 use crate::device::{self, Device, Refused, Transport};
 use crate::format::{
-    NOISE_QUESTION, action_question, channel_description, describe_event, firmware, flash_question,
-    flashed, hex, last_packet, latency, noise_level, paired, pairing, pairing_offer, reset_causes,
-    state_name, status_label, unifying_kind, uptime, usb_state, wall_clock,
+    NOISE_QUESTION, action_question, battery, channel_description, describe_event, firmware,
+    flash_question, flashed, hex, last_packet, latency, noise_level, paired, pairing,
+    pairing_offer, reset_causes, state_name, status_label, unifying_kind, uptime, usb_state,
+    wall_clock,
 };
 use crate::protocol::{
     Action, Counter, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol,
@@ -126,6 +127,9 @@ fn slot_rows(s: &Status, slot: &Slot, d: &SlotStatus) -> Vec<(&'static str, Stri
             "signal",
             format!("{level}{}", last_packet(d.last_packet_ms)),
         ));
+    }
+    if let Some(b) = d.battery {
+        rows.push(("battery", battery(b)));
     }
     if let Some(p) = d.pairing {
         rows.push(("security", pairing(p)));
@@ -676,6 +680,7 @@ mod tests {
             link_losses: None,
             latency: None,
             pairing: None,
+            battery: None,
         };
         assert_eq!(
             status_lines(&s, &[keyboard, s.device.clone()]),
@@ -1006,6 +1011,7 @@ mod tests {
                 "",
                 "keyboard  MX Keys, ID 7015a329, connected",
                 "signal    -71 dBm, last packet 12 ms ago",
+                "battery   85%, charging",
                 "counters  packets 1000 losses 4 gaps 8",
                 "latency   0.9 ms average, 4.2 ms max",
             ]
@@ -1039,6 +1045,7 @@ mod tests {
                 "",
                 "keyboard  MX Keys, serial b8bcd5b3, WPID 7015, connected",
                 "signal    -71 dBm, last packet 12 ms ago",
+                "battery   85%, charging",
                 "counters  packets 1000",
                 "latency   0.9 ms average, 4.2 ms max",
             ]

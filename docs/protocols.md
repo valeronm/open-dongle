@@ -82,6 +82,7 @@ configuring the receiver and its devices.
 | Caps Lock LED on the keyboard | yes[^dj] | yes[^led] | ⚪ |
 | Logitech Options and Solaar | yes[^solaar] | no | 🔴 |
 | Keyboard name, serial and type | through HID++ | shown by the tool | ⚪ |
+| Battery level | with Logitech Options or Solaar | shown by the tool[^battery] | 🟢 |
 | Pairing | on request from Logitech's software | after plugging in or on request | 🟢 |
 
 Pairing a new keyboard replaces the one SpareDongle had. Both pair a keyboard that is switched off
@@ -223,6 +224,8 @@ Unifying link key.
     switched off and on.
 [^brightness]: [HID++](unifying.md#hid): SpareDongle diverts the brightness keys itself, as
     Solaar does.
+[^battery]: [HID++](unifying.md#hid): SpareDongle reads the battery at each connect and follows
+    the keyboard's battery events.
 [^media]: [After pairing](unifying.md#after-pairing), seen on air from an MX Keys.
 [^led]: [After pairing](unifying.md#after-pairing), seen on air with an MX Keys.
 [^bastille-11]: Bastille, [advisory 11](https://github.com/BastilleResearch/mousejack/blob/master/doc/advisories/bastille-11.logitech.public.txt): the C-U0007 on

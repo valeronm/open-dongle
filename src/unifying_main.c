@@ -282,6 +282,7 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 		memcpy(st->keyboard_serial, d->serial, sizeof(st->keyboard_serial));
 		st->keyboard_type = d->type;
 		memcpy(st->name, d->name, sizeof(d->name));
+		st->battery = session.battery;
 	}
 }
 

@@ -4,9 +4,13 @@ pub const REPORT_LEN: usize = 64;
 pub const HEADER_LEN: usize = 4;
 pub const CHUNK: usize = REPORT_LEN - HEADER_LEN;
 pub const ERROR_FLAG: u8 = 0x80;
-pub const VERSION: u8 = 4;
+pub const VERSION: u8 = 5;
 /// Equals `DIAG_NO_RSSI` in the firmware's `diagproto.h`.
 const NO_RSSI: i8 = i8::MIN;
+// Equal to the firmware's `DIAG_NO_BATTERY`.
+const NO_BATTERY: u8 = u8::MAX;
+// Equal to the firmware's `DIAG_CHARGE_UNKNOWN`.
+const CHARGE_UNKNOWN: u8 = u8::MAX;
 
 /// A status reply in a diagnostic protocol other than [`VERSION`].
 #[derive(Debug)]
@@ -436,6 +440,25 @@ pub struct SlotStatus {
     pub latency: Option<Latency>,
     /// `None` until the slot's connection is encrypted, and under NuPhy and Unifying.
     pub pairing: Option<Pairing>,
+    /// `None` until the device reports its battery.
+    pub battery: Option<Battery>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Battery {
+    /// Percent, with the charging state when the device reports it.
+    Level(u8, Option<ChargeState>),
+    /// The charging state of a device whose level is unknown.
+    Charge(ChargeState),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChargeState {
+    Discharging,
+    Charging,
+    /// On power with the battery full.
+    Charged,
+    Fault,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -752,6 +775,7 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
     let [average_us, max_us] = [r.u32()?, r.u32()?];
     let pairing = read_pairing(r)?;
     let name = read_name(r)?;
+    let battery = read_battery(r)?;
     Ok(SlotStatus {
         slot,
         name: match protocol {
@@ -768,6 +792,24 @@ fn read_slot_status(r: &mut Reader, protocol: Protocol) -> Result<SlotStatus> {
         link_losses: protocol.counted(Counter::LinkLosses, link_losses),
         latency: (average_us != u32::MAX).then_some(Latency { average_us, max_us }),
         pairing,
+        battery,
+    })
+}
+
+fn read_battery(r: &mut Reader) -> Result<Option<Battery>> {
+    let [level, charge] = [r.u8()?, r.u8()?];
+    let charge = match charge {
+        0 => Some(ChargeState::Discharging),
+        1 => Some(ChargeState::Charging),
+        2 => Some(ChargeState::Charged),
+        3 => Some(ChargeState::Fault),
+        CHARGE_UNKNOWN => None,
+        _ => return Err(unknown("battery state")),
+    };
+    Ok(match ((level != NO_BATTERY).then_some(level), charge) {
+        (Some(level), charge) => Some(Battery::Level(level, charge)),
+        (None, Some(charge)) => Some(Battery::Charge(charge)),
+        (None, None) => None,
     })
 }
 
@@ -1219,8 +1261,9 @@ pub(crate) mod tests {
     /// The asked slot's fields before its name, the slot's number first.
     const SLOT_FIELDS_LEN: usize = 27;
     const NAME_AT: usize = SLOT_AT + SLOT_FIELDS_LEN;
+    const BATTERY_LEN: usize = 2;
     /// How far before a status reply's end the asked slot's number sits.
-    pub(crate) const SLOT_FROM_END: usize = SLOT_FIELDS_LEN + NAME_MAX;
+    pub(crate) const SLOT_FROM_END: usize = SLOT_FIELDS_LEN + NAME_MAX + BATTERY_LEN;
 
     pub(crate) fn fixture(name: &str) -> Vec<u8> {
         parse_hex(&fixture_text(name))
@@ -1486,6 +1529,7 @@ pub(crate) mod tests {
                         max_us: 4200,
                     }),
                     pairing: None,
+                    battery: Some(Battery::Level(85, Some(ChargeState::Charging))),
                 },
             })
         );
@@ -1497,6 +1541,35 @@ pub(crate) mod tests {
                 kind: 1,
                 state: UnifyingState::Connected
             })))
+        );
+    }
+
+    #[test]
+    fn each_charge_code_decodes_to_its_state() {
+        let mut payload = fixture("status.hex");
+        let at = payload.len() - BATTERY_LEN;
+        for (code, charge) in [
+            (0, ChargeState::Discharging),
+            (1, ChargeState::Charging),
+            (2, ChargeState::Charged),
+            (3, ChargeState::Fault),
+        ] {
+            payload[at..].copy_from_slice(&[0x40, code]);
+            assert_eq!(
+                decoded(&payload).and_then(|s| s.device.battery),
+                Some(Battery::Level(0x40, Some(charge)))
+            );
+        }
+    }
+
+    #[test]
+    fn a_battery_charging_with_no_level_decodes_with_its_level_unknown() {
+        let mut payload = fixture("status.hex");
+        let at = payload.len() - BATTERY_LEN;
+        payload[at..].copy_from_slice(&[0xff, 0x01]);
+        assert_eq!(
+            decoded(&payload).and_then(|s| s.device.battery),
+            Some(Battery::Charge(ChargeState::Charging))
         );
     }
 
@@ -1552,6 +1625,7 @@ pub(crate) mod tests {
                         secure: true,
                         passkey: false,
                     }),
+                    battery: None,
                 },
             })
         );
@@ -1710,8 +1784,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_status_fixture_ends_with_the_slots_name() {
-        assert_eq!(fixture("status.hex").len(), NAME_AT + NAME_MAX);
+    fn the_status_fixture_ends_with_the_slots_name_and_battery() {
+        assert_eq!(
+            fixture("status.hex").len(),
+            NAME_AT + NAME_MAX + BATTERY_LEN
+        );
     }
 
     #[test]
@@ -1825,8 +1902,8 @@ pub(crate) mod tests {
     #[test]
     fn an_older_dongle_is_told_to_take_this_tools_firmware() {
         assert_eq!(
-            refusal(3),
-            "the dongle speaks diagnostic protocol 3, this tool 4; flash the firmware from this \
+            refusal(4),
+            "the dongle speaks diagnostic protocol 4, this tool 5; flash the firmware from this \
              tool's release with `spare-dongle flash`"
         );
     }
@@ -1834,8 +1911,8 @@ pub(crate) mod tests {
     #[test]
     fn a_newer_dongle_is_told_to_take_its_releases_tool() {
         assert_eq!(
-            refusal(5),
-            "the dongle speaks diagnostic protocol 5, this tool 4; install the spare-dongle tool \
+            refusal(6),
+            "the dongle speaks diagnostic protocol 6, this tool 5; install the spare-dongle tool \
              from the firmware's release"
         );
     }
