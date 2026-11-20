@@ -15,8 +15,9 @@ use crate::format::{
     wall_clock,
 };
 use crate::protocol::{
-    Action, Counter, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel, Protocol,
-    Slot, SlotMinute, SlotStatus, Status, StoredDevice, Watch, shown_slots,
+    Action, Counter, DeviceKind, ErrorCode, EventKind, Link, Minute, NOISE_BUCKETS, NoiseChannel,
+    PairingWindow, Protocol, Slot, SlotMinute, SlotStatus, Status, StoredDevice, Watch,
+    shown_slots,
 };
 use crate::{dfu, format, uf2};
 
@@ -54,7 +55,7 @@ fn status_lines(s: &Status, devices: &[SlotStatus]) -> Vec<String> {
         ("link", link),
         (
             "pairing",
-            format!("{}{offer}", if s.pairing_open { "open" } else { "closed" }),
+            format!("{}{offer}", window_state(&s.pairing_window)),
         ),
         ("usb", usb_state(s.usb_live, s.usb_suspended).to_string()),
         (
@@ -168,20 +169,85 @@ pub fn open_nuphy(
     Ok((dev, s))
 }
 
-/// Opens pairing and returns the line that says what to do at the keyboard.
+fn window_state(window: &PairingWindow) -> String {
+    match window {
+        PairingWindow::Closed => "closed".into(),
+        PairingWindow::Open => "open".into(),
+        PairingWindow::PasskeyAwaited(a) => format!(
+            "open, {}: {}",
+            format::waits_for_passkey(format::waiting_keyboard(a)),
+            format::passkey_digits(a.passkey)
+        ),
+    }
+}
+
+pub const PAIRING_POLL: Duration = Duration::from_millis(250);
+
+/// Opens pairing and returns the line that says what to do at the keyboard, and whether a
+/// keyboard is asked for a passkey.
 pub fn pair<T: Transport>(
     dev: &mut Device<T>,
     protocol: Protocol,
     no_passkey: bool,
-) -> Result<String> {
+) -> Result<(String, bool)> {
     if no_passkey && protocol != Protocol::Bluetooth {
         bail!(
             "--no-passkey applies only while the dongle runs Bluetooth; it runs {}",
             protocol.name()
         );
     }
-    let passkey = dev.pair(no_passkey)?;
-    Ok(format::pairing_open(protocol, passkey))
+    let passkey_asked = dev.pair(no_passkey)?;
+    Ok((format::pairing_open(protocol, passkey_asked), passkey_asked))
+}
+
+/// Follows the pairing window until it closes, writing the passkey once a keyboard waits for it,
+/// then the pairings and refusals among the events from `from_event` on.
+pub fn follow_pairing<T: Transport>(
+    dev: &mut Device<T>,
+    from_event: u32,
+    poll: Duration,
+    out: &mut impl Write,
+    highlight: bool,
+) -> Result<()> {
+    use ratatui::crossterm::style::Stylize;
+    let mut shown = None;
+    let s = loop {
+        let s = dev.status()?;
+        match &s.pairing_window {
+            PairingWindow::Closed => break s,
+            PairingWindow::PasskeyAwaited(a) if shown != Some(a.passkey) => {
+                let [before, digits, after] = format::passkey_prompt(a);
+                let digits = if highlight {
+                    digits.as_str().bold().to_string()
+                } else {
+                    digits
+                };
+                writeln!(out, "{before} {digits} {after}")?;
+                shown = Some(a.passkey);
+            }
+            _ => {}
+        }
+        std::thread::sleep(poll);
+    };
+    let outcomes: Vec<_> = dev
+        .events_between(from_event, s.events_total)?
+        .into_iter()
+        .filter(|(_, e)| {
+            matches!(
+                e.kind,
+                EventKind::BluetoothPaired | EventKind::BluetoothRefused
+            )
+        })
+        .collect();
+    if outcomes.is_empty() {
+        writeln!(out, "{}", format::PAIRING_CLOSED_UNPAIRED)?;
+        return Ok(());
+    }
+    let stored = stored_devices(dev, s.protocol())?;
+    for (_, e) in outcomes {
+        writeln!(out, "{}", describe_event(&e, &s, &stored))?;
+    }
+    Ok(())
 }
 
 pub fn devices<T: Transport>(dev: &mut Device<T>, protocol: Protocol) -> Result<()> {
@@ -589,7 +655,9 @@ fn upload(port: &str, image: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use crate::device::tests::{Fake, error_part, parts};
-    use crate::protocol::tests::{mouse_status, nuphy, status_of, unifying};
+    use crate::protocol::tests::{
+        awaited, mouse_status, nuphy, status_of, status_with_window, unifying,
+    };
     use crate::protocol::{BluetoothLink, Command, Link, Protocol};
 
     fn strings(values: &[&str]) -> Vec<String> {
@@ -869,11 +937,121 @@ mod tests {
     }
 
     #[test]
-    fn the_pairing_line_carries_the_passkey_the_dongle_sent() {
-        let reply = |req: &[u8; 64]| parts(req[0], req[1], &[1, 42, 0, 0, 0]);
+    fn opening_bluetooth_pairing_says_whether_a_passkey_follows() {
+        let reply = |req: &[u8; 64]| parts(req[0], req[1], &[1]);
         let mut dev = Device::new(Fake::new(reply), 0);
-        let line = pair(&mut dev, Protocol::Bluetooth, false).unwrap();
-        assert!(line.contains("000042"), "{line}");
+        let (line, asked) = pair(&mut dev, Protocol::Bluetooth, false).unwrap();
+        assert!(asked);
+        assert_eq!(
+            line,
+            "within 30 s, put the keyboard in Bluetooth pairing mode"
+        );
+    }
+
+    #[test]
+    fn a_status_shows_the_passkey_a_keyboard_waits_for() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.pairing_window = awaited(42, Some("MX Keys"));
+        assert!(
+            lines(&s)
+                .contains(&"pairing   open, MX Keys waits for the passkey: 000042".to_string()),
+            "{:#?}",
+            lines(&s)
+        );
+    }
+
+    /// The bytes of one event as the dongle sends it, with no noise reading.
+    fn event_record(kind: u8, slot: u8, c: u8) -> Vec<u8> {
+        let mut e = vec![0; 8];
+        e.extend([kind, slot, 0, 0, c]);
+        e.extend([0; 9]);
+        e
+    }
+
+    /// A Bluetooth dongle answering status with each window in turn, keeping the last, and
+    /// holding `events` from index 600 on.
+    fn pairing_dongle(windows: Vec<(PairingWindow, u32)>, events: Vec<Vec<u8>>) -> Device<Fake> {
+        let mut windows = std::collections::VecDeque::from(windows);
+        Device::new(
+            Fake::new(move |req| {
+                let payload = match req[0] {
+                    c if c == Command::Status as u8 => {
+                        let (window, total) = if windows.len() > 1 {
+                            windows.pop_front().unwrap()
+                        } else {
+                            windows[0].clone()
+                        };
+                        status_with_window(Protocol::Bluetooth, window, total)
+                    }
+                    c if c == Command::Events as u8 => {
+                        let mut page = 600u32.to_le_bytes().to_vec();
+                        page.push(events.len() as u8);
+                        page.extend(events.concat());
+                        page
+                    }
+                    _ => vec![0],
+                };
+                parts(req[0], req[1], &payload)
+            }),
+            0,
+        )
+    }
+
+    #[test]
+    fn following_pairing_shows_the_passkey_once_then_the_pairing() {
+        let mut dev = pairing_dongle(
+            vec![
+                (PairingWindow::Open, 600),
+                (awaited(42, None), 601),
+                (awaited(42, None), 601),
+                (PairingWindow::Closed, 602),
+            ],
+            vec![event_record(26, 0, 0), event_record(20, 0, 1)],
+        );
+        let mut out = Vec::new();
+        follow_pairing(&mut dev, 600, Duration::ZERO, &mut out, false).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 2, "{out}");
+        assert_eq!(lines[0], "type 000042 on the keyboard and press Enter");
+        assert!(lines[1].starts_with("paired keyboard"), "{out}");
+        assert!(lines[1].ends_with("with a passkey"), "{out}");
+    }
+
+    #[test]
+    fn following_pairing_says_when_it_closes_with_nothing_paired() {
+        let mut dev = pairing_dongle(
+            vec![(PairingWindow::Open, 600), (PairingWindow::Closed, 600)],
+            Vec::new(),
+        );
+        let mut out = Vec::new();
+        follow_pairing(&mut dev, 600, Duration::ZERO, &mut out, false).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "pairing closed with no keyboard paired\n"
+        );
+    }
+
+    #[test]
+    fn a_highlighted_passkey_keeps_its_digits_and_the_words_around_it() {
+        let mut dev = pairing_dongle(
+            vec![(awaited(123_456, None), 600), (PairingWindow::Closed, 600)],
+            Vec::new(),
+        );
+        let mut out = Vec::new();
+        follow_pairing(&mut dev, 600, Duration::ZERO, &mut out, true).unwrap();
+        let first = String::from_utf8(out)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(first.starts_with("type \x1b["), "{first:?}");
+        assert!(first.contains("123456"), "{first:?}");
+        assert!(
+            first.ends_with(" on the keyboard and press Enter"),
+            "{first:?}"
+        );
     }
 
     #[test]
@@ -1021,7 +1199,7 @@ mod tests {
     #[test]
     fn prints_closed_pairing_in_a_nuphy_status() {
         let mut s = status_of(Protocol::Nuphy);
-        s.pairing_open = false;
+        s.pairing_window = PairingWindow::Closed;
         assert!(
             lines(&s)
                 .contains(&"pairing   closed, offers channels 62 52 44, set by hand".to_string())

@@ -19,15 +19,16 @@ use ratatui::{
 
 use crate::device::{self, Device, Lost, Transport};
 use crate::format::{
-    ChannelRole, LinkHealth, NOISE_QUESTION, PAIRING_OPEN, action_question, battery, bucket_label,
-    channel_role, counted_share, describe_event, device_at, device_lines, firmware,
-    forget_question, last_packet, latency, link_health, noise_level, noise_ruler, paired, pairing,
-    share, slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
-    wall_clock, watch_role, watch_summary,
+    ChannelRole, LinkHealth, NOISE_QUESTION, action_question, battery, bucket_label, channel_role,
+    counted_share, describe_event, device_at, device_lines, firmware, forget_question, last_packet,
+    latency, link_health, noise_level, noise_ruler, paired, pairing, passkey_prompt, share,
+    slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
+    waiting_keyboard, waits_for_passkey, wall_clock, watch_role, watch_summary,
 };
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
-    Pairing, Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots, step_channel,
+    Pairing, PairingWindow, Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots,
+    step_channel,
 };
 
 const POLL_EVERY: Duration = Duration::from_secs(1);
@@ -570,25 +571,26 @@ fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
 }
 
 /// Packs pieces greedily into lines of at most `width` columns, so a line breaks only between pieces.
-fn flow<'a>(
-    pieces: impl IntoIterator<Item = &'a str>,
-    separator: &str,
+fn flow(
+    pieces: impl IntoIterator<Item = Span<'static>>,
+    separator: &'static str,
     width: usize,
-) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
     for piece in pieces {
         match lines.last_mut() {
-            Some(line)
-                if line.chars().count() + separator.chars().count() + piece.chars().count()
-                    <= width =>
-            {
-                line.push_str(separator);
-                line.push_str(piece);
+            Some(line) if line.width() + separator.chars().count() + piece.width() <= width => {
+                line.push_span(Span::raw(separator));
+                line.push_span(piece);
             }
-            _ => lines.push(piece.to_string()),
+            _ => lines.push(Line::from(piece)),
         }
     }
     lines
+}
+
+fn words(text: &str) -> Vec<Span<'static>> {
+    text.split(' ').map(|w| Span::raw(w.to_string())).collect()
 }
 
 /// Holds every cause, since the outermost context alone often omits why it failed.
@@ -607,6 +609,8 @@ struct Session<T: Transport> {
     prompt: Option<Prompt>,
     choosing: Option<Choice>,
     message: String,
+    /// The line opening pairing put in `message`, cleared once the window closes.
+    pairing_message: Option<String>,
 }
 
 enum Pane {
@@ -730,6 +734,7 @@ impl<T: Transport> Session<T> {
             prompt: None,
             choosing: None,
             message: String::new(),
+            pairing_message: None,
         }
     }
 
@@ -810,8 +815,13 @@ impl<T: Transport> Session<T> {
 
     fn pair(&mut self, no_passkey: bool) {
         let protocol = self.protocol();
-        self.message = crate::cli::pair(&mut self.device, protocol, no_passkey)
-            .unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
+        match crate::cli::pair(&mut self.device, protocol, no_passkey) {
+            Ok((line, _)) => {
+                self.pairing_message = Some(line.clone());
+                self.message = line;
+            }
+            Err(e) => self.message = format!("failed: {}", error_text(&e)),
+        }
     }
 
     fn step(&mut self, step: Step) {
@@ -854,8 +864,10 @@ impl<T: Transport> Session<T> {
 
     /// The dongle closes its pairing window on its own, so the message outlives the window.
     fn drop_pairing_message_once_closed(&mut self) {
-        let status = &self.history.status;
-        if !status.pairing_open && self.message.starts_with(PAIRING_OPEN) {
+        if self.history.status.pairing_window.is_open() {
+            return;
+        }
+        if self.pairing_message.take().as_ref() == Some(&self.message) {
             self.message.clear();
         }
     }
@@ -882,33 +894,39 @@ impl<T: Transport> Session<T> {
         self.message = result.unwrap_or_else(|e| format!("failed: {}", error_text(&e)));
     }
 
-    fn help(&self, width: usize) -> Vec<String> {
+    fn help(&self, width: usize) -> Vec<Line<'static>> {
         if let Some(choice) = self.choosing {
-            return flow(choice.question(self.protocol()).split(' '), " ", width);
+            return flow(words(&choice.question(self.protocol())), " ", width);
         }
-        match &self.prompt {
-            Some(p) => flow(p.question().split(' '), " ", width),
-            None if !self.message.is_empty() => flow(self.message.split(' '), " ", width),
-            None => match &self.refresh_error {
-                Some(e) => flow(e.split(' '), " ", width),
-                None => {
-                    let mut hints: Vec<_> = action_keys(self.protocol())
-                        .into_iter()
-                        .map(|(key, label, _)| format!("{key} {label}"))
-                        .collect();
-                    if self.cycling(u16::try_from(width).unwrap_or(u16::MAX)) {
-                        hints.push("o device".into());
-                    }
-                    if self.protocol().has_channels() {
-                        hints.push("[/] channel".into());
-                    }
-                    hints.extend(
-                        ["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from),
-                    );
-                    flow(hints.iter().map(String::as_str), "  ", width)
-                }
-            },
+        if let Some(p) = &self.prompt {
+            return flow(words(&p.question()), " ", width);
         }
+        if let PairingWindow::PasskeyAwaited(a) = &self.history.status.pairing_window {
+            let [before, digits, after] = passkey_prompt(a);
+            let pieces = words(&before)
+                .into_iter()
+                .chain([Span::styled(digits, PASSKEY_STYLE)])
+                .chain(words(&after));
+            return flow(pieces, " ", width);
+        }
+        if !self.message.is_empty() {
+            return flow(words(&self.message), " ", width);
+        }
+        if let Some(e) = &self.refresh_error {
+            return flow(words(e), " ", width);
+        }
+        let mut hints: Vec<_> = action_keys(self.protocol())
+            .into_iter()
+            .map(|(key, label, _)| format!("{key} {label}"))
+            .collect();
+        if self.cycling(u16::try_from(width).unwrap_or(u16::MAX)) {
+            hints.push("o device".into());
+        }
+        if self.protocol().has_channels() {
+            hints.push("[/] channel".into());
+        }
+        hints.extend(["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from));
+        flow(hints.into_iter().map(Span::raw), "  ", width)
     }
 }
 
@@ -1010,7 +1028,7 @@ impl<T: Transport> App<T> {
                 .min(),
         };
         let event_rows = draw_events(f, bottom, history);
-        f.render_widget(Paragraph::new(help.join("\n")), footer);
+        f.render_widget(Paragraph::new(help), footer);
         self.drawn = Drawn {
             event_rows,
             plot_width,
@@ -1018,6 +1036,8 @@ impl<T: Transport> App<T> {
         };
     }
 }
+
+const PASSKEY_STYLE: Style = Style::new().add_modifier(Modifier::BOLD);
 
 fn dongle_title(status: Option<&Status>) -> String {
     std::iter::once(crate::PRODUCT)
@@ -1035,12 +1055,12 @@ fn device_title(s: &Status, d: &SlotStatus) -> String {
 }
 
 impl<T: Transport> Connection<T> {
-    fn view(&self, width: usize) -> (Option<&Session<T>>, Vec<String>) {
+    fn view(&self, width: usize) -> (Option<&Session<T>>, Vec<Line<'static>>) {
         match self {
             Connection::Connected(session) => (Some(session), session.help(width)),
             Connection::Disconnected(line) => {
-                let mut lines = flow(line.split(' '), " ", width);
-                lines.push("q quit".into());
+                let mut lines = flow(words(line), " ", width);
+                lines.push(Line::from("q quit"));
                 (None, lines)
             }
         }
@@ -1060,10 +1080,15 @@ fn dongle_lines(status: Option<&Status>) -> Vec<Line<'static>> {
         usb_state(s.usb_live, s.usb_suspended),
         uptime(s.uptime_ms)
     ))];
-    if s.pairing_open {
+    let pairing = match &s.pairing_window {
+        PairingWindow::Closed => None,
+        PairingWindow::Open => Some("pairing open".to_string()),
+        PairingWindow::PasskeyAwaited(a) => Some(waits_for_passkey(waiting_keyboard(a))),
+    };
+    if let Some(label) = pairing {
         dongle.push(Span::raw(SEPARATOR));
         dongle.push(Span::styled(
-            "pairing open",
+            label,
             Style::new().fg(link_color(LinkHealth::Pairing)),
         ));
     }
@@ -1397,7 +1422,7 @@ mod tests {
     use crate::device::tests::{Fake, error_part, parts};
     use crate::format::pairing_open;
     use crate::protocol::REPORT_LEN;
-    use crate::protocol::tests::{mouse_status, nuphy, status_of, status_running};
+    use crate::protocol::tests::{awaited, mouse_status, nuphy, status_of, status_running};
     use crate::protocol::{
         BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Pairing, Protocol, Rssi,
         SlotMinute,
@@ -1612,6 +1637,10 @@ mod tests {
         terminal.backend().buffer()[(x, y as u16)].fg
     }
 
+    fn texts(lines: &[Line]) -> Vec<String> {
+        lines.iter().map(Line::to_string).collect()
+    }
+
     fn footer<T: Transport>(app: &mut App<T>) -> String {
         let rows = screen(&drawn(app));
         rows[rows.len() - app.connection.view(80).1.len()..]
@@ -1637,7 +1666,7 @@ mod tests {
 
     #[test]
     fn hints_break_only_between_hints() {
-        let lines = flow(UNIFYING_HINTS, "  ", 80);
+        let lines = texts(&flow(UNIFYING_HINTS.map(Span::raw), "  ", 80));
         assert_eq!(
             lines,
             [
@@ -1661,13 +1690,16 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(flow(nuphy, "  ", 100), [nuphy.join("  ")]);
+        assert_eq!(
+            texts(&flow(nuphy.map(Span::raw), "  ", 100)),
+            [nuphy.join("  ")]
+        );
     }
 
     #[test]
     fn a_message_breaks_between_words() {
-        let message = pairing_open(Protocol::Unifying, None);
-        let lines = flow(message.split(' '), " ", 80);
+        let message = pairing_open(Protocol::Unifying, false);
+        let lines = texts(&flow(words(&message), " ", 80));
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines.iter().all(|l| l.chars().count() <= 80), "{lines:?}");
         assert_eq!(lines.join(" "), message);
@@ -1675,7 +1707,10 @@ mod tests {
 
     #[test]
     fn a_piece_wider_than_the_line_gets_a_line_of_its_own() {
-        assert_eq!(flow(["a", "bbbbbb", "c"], " ", 4), ["a", "bbbbbb", "c"]);
+        assert_eq!(
+            texts(&flow(["a", "bbbbbb", "c"].map(Span::raw), " ", 4)),
+            ["a", "bbbbbb", "c"]
+        );
     }
 
     #[test]
@@ -1768,7 +1803,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(app.connection.view(130).1, [hints.join("  ")]);
+        assert_eq!(texts(&app.connection.view(130).1), [hints.join("  ")]);
     }
 
     #[test]
@@ -1786,7 +1821,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(app.connection.view(200).1, [hints.join("  ")]);
+        assert_eq!(texts(&app.connection.view(200).1), [hints.join("  ")]);
         for c in ['n', 'm'] {
             press(&mut app, c);
             assert!(session(&mut app).prompt.is_none(), "{c}");
@@ -1860,7 +1895,7 @@ mod tests {
     }
 
     fn footer_at<T: Transport>(app: &App<T>, width: u16) -> String {
-        app.connection.view(usize::from(width)).1.join("\n")
+        texts(&app.connection.view(usize::from(width)).1).join("\n")
     }
 
     /// A Bluetooth dongle with the MX Keys stored and the MX Master 3S connected.
@@ -1917,14 +1952,13 @@ mod tests {
     fn narrowest_whole(mut app: App<Fake>) -> u16 {
         let h = history(&mut app);
         let device = &h.slots[0].device;
-        let text = |lines: Vec<Line>| lines.iter().map(Line::to_string).collect::<Vec<_>>();
-        let dongle = text(dongle_lines(Some(&h.status)));
+        let dongle = texts(&dongle_lines(Some(&h.status)));
         let device_top = dongle.len() + 2;
         let boxes = [
             (dongle_title(Some(&h.status)), dongle),
             (
                 device_title(&h.status, device),
-                text(slot_lines(Some(&h.status), Some(device))),
+                texts(&slot_lines(Some(&h.status), Some(device))),
             ),
         ];
         let chart_row = device_top + usize::from(device_rows(Some(h.status.protocol()))) + 2;
@@ -2120,7 +2154,7 @@ mod tests {
         assert!(matches!(s.key('p'), Some(Key::Choose(Choice::Protocol))));
         s.handle(KeyCode::Char('p'), Drawn::default());
         assert_eq!(
-            s.help(200),
+            texts(&s.help(200)),
             ["Switch to which protocol? 1 NuPhy  2 Bluetooth  (any other key cancels)"]
         );
         assert!(s.handle(KeyCode::Char('2'), Drawn::default()).is_none());
@@ -2198,7 +2232,7 @@ mod tests {
         assert_eq!(sent.get(), Some(Command::Pair as u8));
         assert_eq!(
             footer(&mut app),
-            "pairing is open for 30 s; switch the keyboard off and on, after holding an\nEasy-Switch key until it blinks fast if it has them"
+            "within 30 s, switch the keyboard off and on, after holding an Easy-Switch key\nuntil it blinks fast if it has them"
         );
     }
 
@@ -2226,7 +2260,7 @@ mod tests {
         assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
         assert_eq!(
             footer(&mut app),
-            "pairing is open for 30 s; put the keyboard or mouse in Bluetooth pairing mode"
+            "within 30 s, put the keyboard or mouse in Bluetooth pairing mode"
         );
         press(&mut app, 'a');
         press(&mut app, 'x');
@@ -2299,8 +2333,52 @@ mod tests {
         assert!(dongle_row(&status_of(Protocol::Unifying)).ends_with("   pairing open"));
         let mut s = status_of(Protocol::Nuphy);
         assert!(dongle_row(&s).ends_with("   pairing open"));
-        s.pairing_open = false;
+        s.pairing_window = PairingWindow::Closed;
         assert!(!dongle_row(&s).contains("pairing"));
+    }
+
+    #[test]
+    fn the_status_shows_a_keyboard_waiting_for_the_passkey() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.pairing_window = awaited(42, None);
+        assert!(
+            dongle_lines(Some(&s))[0]
+                .to_string()
+                .ends_with("   keyboard waits for the passkey")
+        );
+        s.pairing_window = awaited(42, Some("MX Keys"));
+        assert!(
+            dongle_lines(Some(&s))[0]
+                .to_string()
+                .ends_with("   MX Keys waits for the passkey")
+        );
+    }
+
+    #[test]
+    fn the_footer_asks_for_the_passkey_with_its_digits_highlighted() {
+        let mut s = status_of(Protocol::Bluetooth);
+        s.pairing_window = awaited(42, None);
+        let mut app = app_with(s);
+        session(&mut app).message = pairing_open(Protocol::Bluetooth, true);
+        assert_eq!(
+            footer(&mut app),
+            "type 000042 on the keyboard and press Enter"
+        );
+        let terminal = drawn(&mut app);
+        let row = screen(&terminal)
+            .iter()
+            .position(|r| r.starts_with("type 000042"))
+            .unwrap() as u16;
+        assert!(
+            cell_at(&terminal, row, "000042")
+                .modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            !cell_at(&terminal, row, "type")
+                .modifier
+                .contains(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -2309,7 +2387,7 @@ mod tests {
         press(&mut app, 'a');
         assert_eq!(
             footer(&mut app),
-            "pairing is open for 30 s; hold Fn+4 on the keyboard for 3 s"
+            "within 30 s, hold Fn+4 on the keyboard for 3 s"
         );
     }
 
@@ -2325,7 +2403,7 @@ mod tests {
             0,
         );
         let mut app = app_on(device, status_of(Protocol::Nuphy));
-        session(&mut app).message = pairing_open(Protocol::Nuphy, None);
+        show_pairing(&mut app, Protocol::Nuphy);
         let status = session(&mut app).device.status();
         app.refresh(status);
         assert_eq!(session(&mut app).message, "");
@@ -2333,10 +2411,20 @@ mod tests {
 
     fn refreshed_with_pairing(app: &mut App<Fake>, protocol: Protocol, open: bool) {
         let mut s = status_of(protocol);
-        s.pairing_open = open;
+        s.pairing_window = if open {
+            PairingWindow::Open
+        } else {
+            PairingWindow::Closed
+        };
         s.minute_next = s.minute_oldest;
         s.events_total = s.events_oldest;
         app.refresh(Ok(s));
+    }
+
+    fn show_pairing<T: Transport>(app: &mut App<T>, protocol: Protocol) {
+        let s = session(app);
+        s.message = pairing_open(protocol, false);
+        s.pairing_message = Some(s.message.clone());
     }
 
     fn app_showing(message: &str) -> App<Fake> {
@@ -2348,15 +2436,17 @@ mod tests {
     #[test]
     fn the_pairing_message_stays_while_the_status_reads_pairing() {
         for protocol in Protocol::ALL {
-            let mut app = app_showing(&pairing_open(protocol, None));
+            let mut app = app_showing("");
+            show_pairing(&mut app, protocol);
             refreshed_with_pairing(&mut app, protocol, true);
-            assert_eq!(session(&mut app).message, pairing_open(protocol, None));
+            assert_eq!(session(&mut app).message, pairing_open(protocol, false));
         }
     }
 
     #[test]
     fn the_pairing_message_goes_once_the_status_no_longer_reads_pairing() {
-        let mut app = app_showing(&pairing_open(Protocol::Unifying, None));
+        let mut app = app_showing("");
+        show_pairing(&mut app, Protocol::Unifying);
         refreshed_with_pairing(&mut app, Protocol::Unifying, false);
         assert_eq!(session(&mut app).message, "");
         assert_eq!(
@@ -2547,7 +2637,8 @@ mod tests {
         let n = crate::protocol::tests::PROTOCOL_AT;
         p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
         p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
-        p[n - 8..n - 4].copy_from_slice(&0u32.to_le_bytes());
+        let e = crate::protocol::tests::EVENTS_TOTAL_AT;
+        p[e..e + 4].copy_from_slice(&0u32.to_le_bytes());
         p[n - 4..n].copy_from_slice(&0u32.to_le_bytes());
         p
     }

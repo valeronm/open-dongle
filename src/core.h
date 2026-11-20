@@ -91,6 +91,7 @@ bool core_take_radio_noise(struct noise_tally *t, int *home);
 /* Takes the pending noise readings first, which a gap or loss event records. */
 void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
 void core_log_pairing_opened(const struct pairwin *w);
+void core_log_pairing_closed(void);
 /* Takes the pending noise readings first. */
 void core_rssi(uint8_t slot, int8_t dbm);
 /* Logs an event whose bytes b and c hold the time since the slot's last input, a report that

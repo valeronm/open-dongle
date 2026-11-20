@@ -207,7 +207,7 @@ size_t unifying_pairing_rx(struct unifying_pairing *p, const struct unifying_rec
 		a->state = UNIFYING_IDLE;
 		p->has_device = true;
 		p->device = a->dev;
-		pairwin_paired(&p->window);
+		pairwin_close(&p->window);
 		*event = UNIFYING_RX_PAIRED;
 		return response_final(a, reply);
 	}

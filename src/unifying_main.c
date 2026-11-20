@@ -187,7 +187,7 @@ static void apply_tick(const struct unifying_out *out)
 		core_log(HISTORY_PAIRING_TIMEOUT, DEVICE_NO_SLOT, out->expired_step, 0, 0, 0);
 	}
 	if (out->window_closed) {
-		core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
+		core_log_pairing_closed();
 	}
 	if (out->set_channel) {
 		core_set_channel(out->channel);
@@ -268,7 +268,8 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 
 	ARG_UNUSED(slot);
 	st->link_state = unifying_session_status(&session, now);
-	st->pairing_open = unifying_pairing_window_open(&session.pairing, now);
+	st->pairing_window = unifying_pairing_window_open(&session.pairing, now) ? DIAG_WINDOW_OPEN
+										  : DIAG_WINDOW_CLOSED;
 	st->channel = session.channel;
 	if (session.heard) {
 		st->last_rssi = session.rssi;

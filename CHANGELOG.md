@@ -10,6 +10,12 @@
 - In Bluetooth mode a Logitech mouse's wheel scrolls in high resolution where the PC turns it on,
   as Linux does, and in notches elsewhere.
 - In Bluetooth mode the history and the live view's chart show the radio noise again.
+- In Bluetooth mode the tool shows the passkey once the keyboard has connected and waits for it,
+  naming the keyboard where it advertises a name, and `pair` waits until pairing closes and says
+  whether the keyboard paired.
+- In Bluetooth mode a failed passkey pairing closes pairing, and opening it again gives a new
+  passkey.
+- The events record each time a keyboard waits for the passkey.
 - The tool shows a device's battery level and whether it is charging, as far as the device
   reports them, in `status` and in the title of the live view's device box.
 - A connected device's latency reads "no report yet" until its first report reaches the PC.

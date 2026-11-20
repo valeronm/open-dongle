@@ -12,7 +12,7 @@
 
 #define BLE_REPORT_MAX 64
 #define BLE_MAP_MAX 1024
-#define BLE_NAME_MAX 32
+#define BLE_NAME_MAX BTPOLICY_NAME_MAX
 #define BLE_ADDRESS_MAX 30
 #define BLE_REASON_NOT_ESTABLISHED 0x3e
 
@@ -22,6 +22,8 @@ enum ble_event_type {
 	BLE_DISCONNECTED,
 	BLE_FAILED,
 	BLE_PAIRED,
+	/* The device waits for the offered passkey to be typed on it. */
+	BLE_PASSKEY_AWAITED,
 	BLE_MAP_READ,
 	BLE_REPORT,
 	BLE_BATTERY,
@@ -56,6 +58,8 @@ struct ble_event {
 		} failed;
 		/* BLE_PAIRED: the device was typed the offered passkey. */
 		bool passkey_used;
+		/* BLE_PASSKEY_AWAITED: the passkey the device was given. */
+		uint32_t passkey;
 		/* BLE_REPORT: the bytes exclude the report ID. */
 		struct {
 			uint32_t received_us;
@@ -75,7 +79,8 @@ int ble_start(void);
 int ble_scan(enum btpolicy_scan mode);
 /* Every call that returns 0 ends in one BLE_DISCONNECTED for the slot, after a BLE_FAILED when a
  * stage failed. */
-int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN]);
+int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN],
+		const char *advertised_name);
 /* While on, a keyboard able to take a passkey is asked for this six-digit one as it pairs. */
 int ble_offer_passkey(bool on, uint32_t value);
 uint8_t ble_stored_count(void);
@@ -87,7 +92,8 @@ bool ble_take_event(struct ble_event *ev, k_timeout_t wait);
 /* Copies the report map read at the slot's connection and returns its length, 0 before its
  * BLE_MAP_READ. */
 size_t ble_copy_map(enum device_kind kind, uint8_t *out, size_t cap);
-/* The name of the slot's device, empty if it gave none. */
+/* The name of the slot's device, the advertised one until its own is read; empty if it gave
+ * none. */
 void ble_copy_name(enum device_kind kind, char out[BLE_NAME_MAX + 1]);
 void ble_disconnect(enum device_kind kind);
 /* Writes the slot's output report with this ID, data excluding the ID; fails until the device's

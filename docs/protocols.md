@@ -181,7 +181,8 @@ way, and the live view colors it as in the table.
 
 An encrypted link is readable by anyone who has its encryption key, and a legacy pairing gives
 that key to anyone who recorded it. A passkey also keeps another device in pairing mode nearby
-from pairing in the device's place while the window is open. Only a stored device connects.
+from pairing in the device's place while the window is open, and the dongle offers each passkey to
+one attempt only, since a failed attempt can reveal it. Only a stored device connects.
 
 The MX Master 3S pairs with LE Secure Connections and no passkey, since it has no keys to type one
 on; the Air75 V2 pairs legacy with no passkey step, and the MX Keys legacy with the passkey typed.

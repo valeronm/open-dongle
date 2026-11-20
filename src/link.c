@@ -143,7 +143,7 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		set_own(l, l->offered);
 		l->keyboard_name = (struct nuphy_name){0};
-		pairwin_paired(&l->window);
+		pairwin_close(&l->window);
 		out->save_channels = true;
 		l->state = LINK_CONFIRMED;
 		/* The keyboard addresses pipe 1 once this confirm is acknowledged. */

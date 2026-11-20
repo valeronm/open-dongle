@@ -210,13 +210,11 @@ impl<T: Transport> Device<T> {
         Reader::new(&reply).u8()
     }
 
-    /// Returns the passkey to type on the keyboard when the dongle asks for one, which only
-    /// Bluetooth does.
-    pub fn pair(&mut self, no_passkey: bool) -> Result<Option<u32>> {
+    /// Returns whether a keyboard pairing is asked for a passkey, which only Bluetooth does; the
+    /// status carries the passkey once a keyboard waits for it.
+    pub fn pair(&mut self, no_passkey: bool) -> Result<bool> {
         let reply = self.call(Command::Pair, u32::from(no_passkey), TIMEOUT)?;
-        let mut r = Reader::new(&reply);
-        let asked = r.u8()? != 0;
-        Ok(asked.then_some(r.u32()?))
+        Ok(Reader::new(&reply).u8()? != 0)
     }
 
     /// Returns the protocol running when the dongle answered, and whether it now reboots.
@@ -621,16 +619,13 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn pair_returns_the_passkey_a_bluetooth_dongle_chose() {
-        let mut dev = Device::new(
-            Fake::new(|req| parts(req[0], req[1], &[1, 0x40, 0xe2, 0x01, 0x00])),
-            0,
-        );
-        assert_eq!(dev.pair(false).unwrap(), Some(123_456));
-        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[1, 0, 0, 0, 0])), 0);
-        assert_eq!(dev.pair(false).unwrap(), Some(0));
+    fn pair_returns_whether_a_bluetooth_dongle_asks_for_a_passkey() {
+        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[1])), 0);
+        assert!(dev.pair(false).unwrap());
+        let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[0])), 0);
+        assert!(!dev.pair(false).unwrap());
         let mut dev = Device::new(Fake::new(|req| parts(req[0], req[1], &[])), 0);
-        assert_eq!(dev.pair(false).unwrap(), None);
+        assert!(!dev.pair(false).unwrap());
     }
 
     #[test]

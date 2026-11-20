@@ -106,8 +106,7 @@ static void apply(const struct link_out *out)
 		core_log(HISTORY_PAIRING_TIMEOUT, DEVICE_NO_SLOT, 0, 0, 0, 0);
 	}
 	if (out->window_closed) {
-		printk("pairing closed\n");
-		core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
+		core_log_pairing_closed();
 	}
 }
 
@@ -195,7 +194,8 @@ static void fill_status(struct diag_status *s, uint8_t slot)
 
 	ARG_UNUSED(slot);
 	s->link_state = link.state;
-	s->pairing_open = link_pairing_open(&link, k_uptime_get_32());
+	s->pairing_window =
+		link_pairing_open(&link, k_uptime_get_32()) ? DIAG_WINDOW_OPEN : DIAG_WINDOW_CLOSED;
 	s->channel = link.channel;
 	s->last_rssi = keyboard_rssi;
 	if (heard) {

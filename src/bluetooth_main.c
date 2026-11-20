@@ -1,7 +1,6 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/random/random.h>
-#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include "ble.h"
 #include "btlist.h"
@@ -82,6 +81,7 @@ static struct {
 } runs[DEVICE_KINDS];
 static int start_err;
 static bool passkey_asked;
+static uint32_t awaited_passkey;
 static uint32_t rssi_tried_ms;
 static bool reported[DEVICE_SLOTS];
 static uint32_t report_ms[DEVICE_SLOTS];
@@ -149,7 +149,17 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 	const struct connected *c = &devices[kind];
 
 	st->link_state = start_err ? LINK_START_FAILED : any_ready() ? LINK_READY : LINK_NONE_READY;
-	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
+	if (pairwin_holder(&window) != DEVICE_NO_KIND) {
+		char name[BLE_NAME_MAX + 1];
+
+		ble_copy_name(pairwin_holder(&window), name);
+		st->pairing_window = DIAG_WINDOW_PASSKEY_AWAITED;
+		st->passkey = awaited_passkey;
+		strncpy((char *)st->passkey_name, name, sizeof(st->passkey_name));
+	} else {
+		st->pairing_window = pairwin_is_open(&window, k_uptime_get_32()) ? DIAG_WINDOW_OPEN
+										 : DIAG_WINDOW_CLOSED;
+	}
 	st->pairing = pairing_of(kind);
 	st->battery = battery_of(c);
 	if (c->rssi_read) {
@@ -295,12 +305,19 @@ static void on_advert(const struct btpolicy_advert *heard)
 		break;
 	}
 	ble_scan(BTPOLICY_SCAN_OFF);
-	err = ble_connect(a.kind, a.addr);
+	err = ble_connect(a.kind, a.addr, a.name);
 	if (err) {
 		printk("bluetooth connect not started: %d\n", err);
 		return;
 	}
 	btpolicy_connecting(&policy, &a);
+}
+
+static void end_passkey_attempt(enum device_kind kind)
+{
+	if (pairwin_end_attempt(&window, kind)) {
+		core_log_pairing_closed();
+	}
 }
 
 static void on_failed(const struct ble_event *ev)
@@ -323,6 +340,7 @@ static void on_failed(const struct ble_event *ev)
 	case BTPOLICY_SECURITY_FAILED:
 		break;
 	}
+	end_passkey_attempt(ev->kind);
 }
 
 static void device_ready(enum device_kind kind)
@@ -387,6 +405,7 @@ static void on_disconnected(enum device_kind kind, uint8_t reason)
 		}
 		hidkeys_reset(&keys);
 	}
+	end_passkey_attempt(kind);
 	connection_over(kind);
 	btpolicy_disconnected(&policy, kind, k_uptime_get_32(),
 			      reason == BLE_REASON_NOT_ESTABLISHED);
@@ -472,6 +491,8 @@ static void on_report(const struct ble_event *ev)
 
 static void on_event(const struct ble_event *ev)
 {
+	char name[BLE_NAME_MAX + 1];
+
 	switch (ev->type) {
 	case BLE_ADVERT:
 		on_advert(&ev->advert);
@@ -499,9 +520,18 @@ static void on_event(const struct ble_event *ev)
 		}
 		printk("bluetooth paired\n");
 		log_device(HISTORY_BT_PAIRED, ev->kind, ev->passkey_used);
+		ble_copy_name(ev->kind, name);
 		save_list(btlist_paired(&list, btpolicy_peer(&policy, ev->kind), ev->kind,
-					!ev->passkey_used));
-		pairwin_paired(&window);
+					!ev->passkey_used, name));
+		pairwin_close(&window);
+		break;
+	case BLE_PASSKEY_AWAITED:
+		if (pairwin_hold(&window, ev->kind, k_uptime_get_32())) {
+			awaited_passkey = ev->passkey;
+			ble_copy_name(ev->kind, name);
+			printk("bluetooth passkey awaited by \"%s\"\n", name);
+			log_device(HISTORY_BT_PASSKEY_AWAITED, ev->kind, 0);
+		}
 		break;
 	case BLE_MAP_READ:
 		on_map_read(ev->kind);
@@ -547,7 +577,6 @@ static void open_pairing(const struct diag_request *req)
 	pairwin_open(&window, PAIRWIN_REQUEST, true, k_uptime_get_32());
 	core_log_pairing_opened(&window);
 	printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
-	sys_put_le32(passkey, &reply[1]);
 	diag_reply(req, reply, sizeof(reply), DIAG_AFTER_NONE);
 }
 
@@ -691,8 +720,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 		}
 		now = k_uptime_get_32();
 		if (pairwin_ran_out(&window, now)) {
-			printk("pairing closed\n");
-			core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
+			core_log_pairing_closed();
 		}
 		if (!pairwin_is_open(&window, now)) {
 			passkey_asked = false;

@@ -247,6 +247,12 @@ void core_log_pairing_opened(const struct pairwin *w)
 	core_log(HISTORY_PAIRING_OPENED, DEVICE_NO_SLOT, w->cause, w->until_paired, 0, 0);
 }
 
+void core_log_pairing_closed(void)
+{
+	printk("pairing closed\n");
+	core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
+}
+
 void core_rssi(uint8_t slot, int8_t dbm)
 {
 	take_noise();

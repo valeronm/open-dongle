@@ -85,7 +85,7 @@ static void test_status_matches_fixture(void)
 		.events_total = 600,
 		.events_oldest = 88,
 		.protocol = PROTOCOL_NUPHY,
-		.pairing_open = true,
+		.pairing_window = DIAG_WINDOW_OPEN,
 		.keyboard_serial = {0xb8, 0xbc, 0xd5, 0xb3},
 		.keyboard_type = 1,
 		.slot_count = 1,
@@ -146,6 +146,9 @@ static void test_a_mouse_slot_status_matches_fixture(void)
 		.events_total = 600,
 		.events_oldest = 88,
 		.protocol = PROTOCOL_BLUETOOTH,
+		.pairing_window = DIAG_WINDOW_PASSKEY_AWAITED,
+		.passkey = 123456,
+		.passkey_name = "MX Keys",
 		.slot_count = 2,
 		.slots = {{.kind = DEVICE_KEYBOARD, .stored = true},
 			  {.kind = DEVICE_MOUSE, .stored = true, .ready = true}},
@@ -397,7 +400,8 @@ static void test_event_type_numbers_match_fixture(void)
 			       HISTORY_RECONNECT, HISTORY_ATTACK, HISTORY_BT_CONNECTED,
 			       HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
 			       HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST, HISTORY_BT_FORGOTTEN,
-			       HISTORY_KEYS_DIVERTED, HISTORY_WHEEL_SET};
+			       HISTORY_KEYS_DIVERTED, HISTORY_WHEEL_SET,
+			       HISTORY_BT_PASSKEY_AWAITED};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 
@@ -491,8 +495,8 @@ static void test_a_device_ready_in_no_slot_is_sent_with_none(void)
 	const uint8_t mouse[BTPOLICY_ADDR_LEN] = {1, 2};
 	uint8_t got[DIAG_DEVICES_MAX];
 
-	btlist_paired(&list, keyboard, DEVICE_KEYBOARD, false);
-	btlist_paired(&list, mouse, DEVICE_MOUSE, true);
+	btlist_paired(&list, keyboard, DEVICE_KEYBOARD, false, "");
+	btlist_paired(&list, mouse, DEVICE_MOUSE, true, "");
 	secure_addr = mouse;
 	CHECK_EQ(diag_encode_devices(got, &list, (const uint8_t *const[]){keyboard, NULL}, is_secure),
 		 1 + 2 * DIAG_DEVICE_LEN);

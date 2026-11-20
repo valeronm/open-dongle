@@ -30,8 +30,10 @@ struct btlist {
 bool btlist_reconcile(struct btlist *l, const uint8_t addrs[][BTPOLICY_ADDR_LEN], size_t n);
 /* Moves the device to the front and records its name. */
 bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name);
+/* Moves the device to the front and records its kind, its passkey mark and, unless empty, its
+ * name. */
 bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
-		   bool no_passkey);
+		   bool no_passkey, const char *name);
 bool btlist_remove(struct btlist *l, const uint8_t *addr);
 
 /* NULL for an address not in the list. */

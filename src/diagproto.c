@@ -128,7 +128,10 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	p = put_le(p, s->events_total, 4);
 	p = put_le(p, s->events_oldest, 4);
 	*p++ = s->protocol;
-	*p++ = s->pairing_open ? 1 : 0;
+	*p++ = s->pairing_window;
+	p = put_le(p, s->passkey, 4);
+	memcpy(p, s->passkey_name, sizeof(s->passkey_name));
+	p += sizeof(s->passkey_name);
 	memcpy(p, s->keyboard_serial, sizeof(s->keyboard_serial));
 	p += sizeof(s->keyboard_serial);
 	*p++ = s->keyboard_type;

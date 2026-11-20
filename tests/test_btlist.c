@@ -52,15 +52,35 @@ static void pairing_records_whether_a_passkey_was_typed(void)
 {
 	struct btlist l = {0};
 
-	CHECK(btlist_paired(&l, air, DEVICE_KEYBOARD, true));
-	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
+	CHECK(btlist_paired(&l, air, DEVICE_KEYBOARD, true, ""));
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false, ""));
 	CHECK_EQ(l.count, 2);
 	CHECK(is(&l.entries[0], mx, ""));
 	CHECK(!l.entries[0].no_passkey);
 	CHECK(l.entries[1].no_passkey);
-	CHECK(!btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
+	CHECK(!btlist_paired(&l, mx, DEVICE_KEYBOARD, false, ""));
 	btlist_connected(&l, air, "NuPhy Air75 V2-1");
 	CHECK(l.entries[0].no_passkey);
+}
+
+static void pairing_records_the_name_the_device_gave(void)
+{
+	struct btlist l = {0};
+
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false, "MX Keys"));
+	CHECK(is(&l.entries[0], mx, "MX Keys"));
+	CHECK(!btlist_paired(&l, mx, DEVICE_KEYBOARD, false, "MX Keys"));
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false, "MX Keys S"));
+	CHECK(is(&l.entries[0], mx, "MX Keys S"));
+}
+
+static void pairing_with_no_name_keeps_the_stored_one(void)
+{
+	struct btlist l = {0};
+
+	btlist_connected(&l, mx, "MX Keys");
+	CHECK(!btlist_paired(&l, mx, DEVICE_KEYBOARD, false, ""));
+	CHECK(is(&l.entries[0], mx, "MX Keys"));
 }
 
 static void removing_closes_the_gap(void)
@@ -105,7 +125,7 @@ static void a_full_list_takes_no_more_devices(void)
 	}
 	addr[1] = 99;
 	CHECK(!btlist_connected(&l, addr, "k"));
-	CHECK(!btlist_paired(&l, addr, DEVICE_KEYBOARD, false));
+	CHECK(!btlist_paired(&l, addr, DEVICE_KEYBOARD, false, ""));
 	CHECK_EQ(l.count, BTPOLICY_STORED_MAX);
 }
 
@@ -128,8 +148,8 @@ static void pairing_records_the_kind(void)
 {
 	struct btlist l = {0};
 
-	CHECK(btlist_paired(&l, mouse, DEVICE_MOUSE, true));
-	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false));
+	CHECK(btlist_paired(&l, mouse, DEVICE_MOUSE, true, ""));
+	CHECK(btlist_paired(&l, mx, DEVICE_KEYBOARD, false, ""));
 	CHECK_EQ(btlist_kind(&l, mouse), DEVICE_MOUSE);
 	CHECK_EQ(btlist_kind(&l, mx), DEVICE_KEYBOARD);
 	CHECK_EQ(btlist_kind(&l, air), DEVICE_NO_KIND);
@@ -151,10 +171,10 @@ static void a_kind_is_stored_once_a_device_of_it_is_listed(void)
 	struct btlist l = {0};
 
 	CHECK(!btlist_has_kind(&l, DEVICE_KEYBOARD));
-	btlist_paired(&l, mouse, DEVICE_MOUSE, true);
+	btlist_paired(&l, mouse, DEVICE_MOUSE, true, "");
 	CHECK(btlist_has_kind(&l, DEVICE_MOUSE));
 	CHECK(!btlist_has_kind(&l, DEVICE_KEYBOARD));
-	btlist_paired(&l, mx, DEVICE_KEYBOARD, false);
+	btlist_paired(&l, mx, DEVICE_KEYBOARD, false, "");
 	CHECK(btlist_has_kind(&l, DEVICE_KEYBOARD));
 	btlist_remove(&l, mouse);
 	CHECK(!btlist_has_kind(&l, DEVICE_MOUSE));
@@ -173,11 +193,11 @@ static void the_latest_of_a_kind_is_the_most_recently_connected(void)
 	struct btlist l = {0};
 
 	CHECK(btlist_latest(&l, DEVICE_KEYBOARD) == NULL);
-	btlist_paired(&l, mouse, DEVICE_MOUSE, true);
+	btlist_paired(&l, mouse, DEVICE_MOUSE, true, "");
 	btlist_connected(&l, mouse, "MX Master 3S");
-	btlist_paired(&l, air, DEVICE_KEYBOARD, true);
+	btlist_paired(&l, air, DEVICE_KEYBOARD, true, "");
 	btlist_connected(&l, air, "Air75");
-	btlist_paired(&l, mx, DEVICE_KEYBOARD, false);
+	btlist_paired(&l, mx, DEVICE_KEYBOARD, false, "");
 	btlist_connected(&l, mx, "MX Keys");
 	CHECK(latest_is(&l, DEVICE_KEYBOARD, mx, "MX Keys"));
 	btlist_connected(&l, air, "Air75");
@@ -203,7 +223,7 @@ static void an_entry_is_found_by_its_address(void)
 	struct btlist l = {0};
 
 	btlist_connected(&l, mx, "MX Keys");
-	btlist_paired(&l, air, DEVICE_KEYBOARD, true);
+	btlist_paired(&l, air, DEVICE_KEYBOARD, true, "");
 	const struct btlist_entry *keys = btlist_entry(&l, mx);
 	const struct btlist_entry *air75 = btlist_entry(&l, air);
 
@@ -228,5 +248,7 @@ int main(void)
 	RUN(a_bond_without_an_entry_is_listed_as_a_keyboard);
 	RUN(a_kind_is_stored_once_a_device_of_it_is_listed);
 	RUN(an_entry_is_found_by_its_address);
+	RUN(pairing_records_the_name_the_device_gave);
+	RUN(pairing_with_no_name_keeps_the_stored_one);
 	return TEST_EXIT();
 }

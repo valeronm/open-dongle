@@ -377,6 +377,13 @@ static void next_discovery(void)
 	}
 }
 
+static void copy_name(char out[BLE_NAME_MAX + 1], const void *data, size_t len)
+{
+	len = MIN(len, BLE_NAME_MAX);
+	memcpy(out, data, len);
+	out[len] = '\0';
+}
+
 static uint8_t on_name(struct bt_conn *conn, uint8_t err, struct bt_gatt_read_params *params,
 		       const void *data, uint16_t length)
 {
@@ -384,10 +391,7 @@ static uint8_t on_name(struct bt_conn *conn, uint8_t err, struct bt_gatt_read_pa
 
 	ARG_UNUSED(conn);
 	if (!err && data) {
-		size_t len = MIN(length, BLE_NAME_MAX);
-
-		memcpy(l->name, data, len);
-		l->name[len] = '\0';
+		copy_name(l->name, data, length);
 	}
 	want_discovery(l, DISCOVERY_HID);
 	return BT_GATT_ITER_STOP;
@@ -452,7 +456,6 @@ static void on_connected(struct bt_conn *conn, uint8_t err)
 		return;
 	}
 	l->map_len = 0;
-	l->name[0] = '\0';
 	bt_addr_le_to_str(bt_conn_get_dst(conn), ev.address, sizeof(ev.address));
 	emit(l, ev);
 	print_params(l);
@@ -525,6 +528,10 @@ static struct bt_conn_auth_info_cb pairing_callbacks = {
 static bool parse_field(struct bt_data *data, void *user_data)
 {
 	struct btpolicy_advert *a = user_data;
+
+	if (data->type == BT_DATA_NAME_COMPLETE || data->type == BT_DATA_NAME_SHORTENED) {
+		copy_name(a->name, data->data, data->data_len);
+	}
 
 	if (data->type == BT_DATA_GAP_APPEARANCE && data->data_len == 2 &&
 	    a->kind == DEVICE_NO_KIND) {
@@ -616,7 +623,8 @@ int ble_scan(enum btpolicy_scan mode)
 #define SETUP_CONN_PARAM                                                                           \
 	BT_LE_CONN_PARAM(SHORTEST_INTERVAL, SHORTEST_INTERVAL, 0, BT_GAP_MS_TO_CONN_TIMEOUT(4000))
 
-int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN])
+int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN],
+		const char *advertised_name)
 {
 	struct link *l = &links[kind];
 	bt_addr_le_t peer;
@@ -625,6 +633,7 @@ int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN])
 	if (l->conn) {
 		return -EALREADY;
 	}
+	copy_name(l->name, advertised_name, strlen(advertised_name));
 	memcpy(&peer, addr, sizeof(peer));
 	err = bt_conn_le_create(&peer, BT_CONN_LE_CREATE_CONN, SETUP_CONN_PARAM, &l->conn);
 	if (err) {
@@ -633,14 +642,18 @@ int ble_connect(enum device_kind kind, const uint8_t addr[BTPOLICY_ADDR_LEN])
 	return err;
 }
 
+/* Each passkey serves one pairing, since a failed or abandoned attempt can reveal it. */
 static uint32_t on_app_passkey(struct bt_conn *conn)
 {
 	struct link *l = link_of_conn(conn);
+	uint32_t offered = passkey;
 
 	if (l) {
 		l->passkey_used = true;
+		emit(l, (struct ble_event){.type = BLE_PASSKEY_AWAITED, .passkey = offered});
 	}
-	return passkey;
+	passkey = BT_PASSKEY_RAND;
+	return offered;
 }
 
 static void on_pairing_cancel(struct bt_conn *conn)

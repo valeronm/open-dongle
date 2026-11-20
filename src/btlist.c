@@ -68,25 +68,31 @@ bool btlist_reconcile(struct btlist *l, const uint8_t addrs[][BTPOLICY_ADDR_LEN]
 	return changed;
 }
 
-bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name)
+static bool set_name(struct btlist_entry *e, const char *name)
 {
 	char padded[BTLIST_NAME_LEN] = {0};
+
+	strncpy(padded, name, sizeof(padded));
+	if (memcmp(e->name, padded, sizeof(padded)) == 0) {
+		return false;
+	}
+	memcpy(e->name, padded, sizeof(padded));
+	return true;
+}
+
+bool btlist_connected(struct btlist *l, const uint8_t *addr, const char *name)
+{
 	bool changed = false;
 	struct btlist_entry *e = to_front(l, addr, &changed);
 
 	if (!e) {
 		return false;
 	}
-	strncpy(padded, name, sizeof(padded));
-	if (memcmp(e->name, padded, sizeof(padded)) != 0) {
-		memcpy(e->name, padded, sizeof(padded));
-		changed = true;
-	}
-	return changed;
+	return set_name(e, name) || changed;
 }
 
 bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
-		   bool no_passkey)
+		   bool no_passkey, const char *name)
 {
 	bool changed = false;
 	struct btlist_entry *e = to_front(l, addr, &changed);
@@ -97,6 +103,9 @@ bool btlist_paired(struct btlist *l, const uint8_t *addr, enum device_kind kind,
 	if (e->no_passkey != no_passkey || e->kind != kind) {
 		e->no_passkey = no_passkey;
 		e->kind = kind;
+		changed = true;
+	}
+	if (name[0] != '\0' && set_name(e, name)) {
 		changed = true;
 	}
 	return changed;

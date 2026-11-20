@@ -602,10 +602,42 @@ pub struct Status {
     pub minute_oldest: u32,
     pub events_total: u32,
     pub events_oldest: u32,
-    pub pairing_open: bool,
+    pub pairing_window: PairingWindow,
     pub link: Link,
     pub slots: Vec<Slot>,
     pub device: SlotStatus,
+}
+
+/// Equal `DIAG_WINDOW_*` in the firmware's `diagproto.h`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PairingWindow {
+    Closed,
+    Open,
+    PasskeyAwaited(AwaitedPasskey),
+}
+
+/// A keyboard waiting for its passkey to be typed on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AwaitedPasskey {
+    pub passkey: u32,
+    /// The name it advertised.
+    pub name: Option<String>,
+}
+
+impl PairingWindow {
+    fn read(r: &mut Reader) -> Result<Self> {
+        let (window, passkey, name) = (r.u8()?, r.u32()?, read_name(r)?);
+        match window {
+            0 => Ok(Self::Closed),
+            1 => Ok(Self::Open),
+            2 => Ok(Self::PasskeyAwaited(AwaitedPasskey { passkey, name })),
+            _ => Err(unknown("pairing window")),
+        }
+    }
+
+    pub fn is_open(&self) -> bool {
+        *self != Self::Closed
+    }
 }
 
 /// The channels a NuPhy keyboard looks for its dongle on besides the three it gets at pairing.
@@ -706,7 +738,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         merges,
         surveys: protocol.counted(Counter::Surveys, surveys),
     };
-    let pairing_open = r.u8()? != 0;
+    let pairing_window = PairingWindow::read(&mut r)?;
     let link = read_link(&mut r, protocol, link_state, own, forced, keyboard_id)?;
     let slots = (0..r.u8()?)
         .map(|_| {
@@ -734,7 +766,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         minute_oldest,
         events_total,
         events_oldest,
-        pairing_open,
+        pairing_window,
         link,
         slots,
         device,
@@ -1014,6 +1046,7 @@ pub enum EventKind {
     BluetoothForgotten,
     KeysDiverted,
     WheelSet,
+    BluetoothPasskeyAwaited,
     Unknown(u8),
 }
 
@@ -1045,6 +1078,7 @@ impl From<u8> for EventKind {
             23 => Self::BluetoothForgotten,
             24 => Self::KeysDiverted,
             25 => Self::WheelSet,
+            26 => Self::BluetoothPasskeyAwaited,
             other => Self::Unknown(other),
         }
     }
@@ -1271,7 +1305,9 @@ pub(crate) mod tests {
     const KEYBOARD_ID_AT: usize = OWN_AT + 6;
     pub(crate) const PROTOCOL_AT: usize = KEYBOARD_ID_AT + 4 + 1 + 9 * 4;
     const PAIRING_AT: usize = PROTOCOL_AT + 1;
-    const KEYBOARD_AT: usize = PAIRING_AT + 1;
+    /// Two counters, `events_total` then `events_oldest`, sit just before the protocol byte.
+    pub(crate) const EVENTS_TOTAL_AT: usize = PROTOCOL_AT - 8;
+    const KEYBOARD_AT: usize = PAIRING_AT + 1 + 4 + NAME_MAX;
     const SLOTS_AT: usize = KEYBOARD_AT + 5;
     /// Where status.hex, with its one-slot table, holds the asked slot.
     const SLOT_AT: usize = SLOTS_AT + 3;
@@ -1284,6 +1320,36 @@ pub(crate) mod tests {
 
     pub(crate) fn fixture(name: &str) -> Vec<u8> {
         parse_hex(&fixture_text(name))
+    }
+
+    pub(crate) fn awaited(passkey: u32, name: Option<&str>) -> PairingWindow {
+        PairingWindow::PasskeyAwaited(AwaitedPasskey {
+            passkey,
+            name: name.map(str::to_string),
+        })
+    }
+
+    /// A status reply from a dongle running `protocol`, with its pairing window and event count.
+    pub(crate) fn status_with_window(
+        protocol: Protocol,
+        window: PairingWindow,
+        events_total: u32,
+    ) -> Vec<u8> {
+        let mut payload = status_running(protocol as u8);
+        let (code, passkey, name) = match window {
+            PairingWindow::Closed => (0, 0, None),
+            PairingWindow::Open => (1, 0, None),
+            PairingWindow::PasskeyAwaited(a) => (2, a.passkey, a.name),
+        };
+        payload[PAIRING_AT] = code;
+        payload[PAIRING_AT + 1..PAIRING_AT + 5].copy_from_slice(&passkey.to_le_bytes());
+        let name_at = PAIRING_AT + 5;
+        payload[name_at..name_at + NAME_MAX].fill(0);
+        if let Some(name) = name {
+            payload[name_at..name_at + name.len()].copy_from_slice(name.as_bytes());
+        }
+        payload[EVENTS_TOTAL_AT..EVENTS_TOTAL_AT + 4].copy_from_slice(&events_total.to_le_bytes());
+        payload
     }
 
     pub(crate) fn status_running(code: u8) -> Vec<u8> {
@@ -1307,9 +1373,12 @@ pub(crate) mod tests {
             .unwrap()
     }
 
-    /// A Bluetooth dongle with a keyboard stored and a mouse connected, answering for the mouse.
+    /// A Bluetooth dongle with a keyboard stored and a mouse connected, answering for the mouse,
+    /// with pairing closed.
     pub(crate) fn mouse_status() -> Status {
-        read_status(&fixture("status-slot1.hex")).unwrap().unwrap()
+        let mut s = read_status(&fixture("status-slot1.hex")).unwrap().unwrap();
+        s.pairing_window = PairingWindow::Closed;
+        s
     }
 
     pub(crate) fn nuphy(s: &mut Status) -> &mut NuphyLink {
@@ -1520,7 +1589,7 @@ pub(crate) mod tests {
                 minute_oldest: 60,
                 events_total: 600,
                 events_oldest: 88,
-                pairing_open: true,
+                pairing_window: PairingWindow::Open,
                 link: Link::Nuphy(NuphyLink {
                     state: NuphyState::Connected,
                     own: Some([26, 30, 34]),
@@ -1613,7 +1682,7 @@ pub(crate) mod tests {
                 minute_oldest: 60,
                 events_total: 600,
                 events_oldest: 88,
-                pairing_open: false,
+                pairing_window: awaited(123_456, Some("MX Keys")),
                 link: Link::Bluetooth(BluetoothLink::Connected),
                 slots: vec![
                     Slot {
@@ -1729,7 +1798,17 @@ pub(crate) mod tests {
     fn a_zero_pairing_byte_reads_as_closed() {
         let mut payload = fixture("status.hex");
         payload[PAIRING_AT] = 0;
-        assert!(!read_status(&payload).unwrap().unwrap().pairing_open);
+        assert_eq!(
+            read_status(&payload).unwrap().unwrap().pairing_window,
+            PairingWindow::Closed
+        );
+    }
+
+    #[test]
+    fn an_unknown_pairing_window_is_refused() {
+        let mut payload = fixture("status.hex");
+        payload[PAIRING_AT] = 3;
+        assert!(read_status(&payload).is_err());
     }
 
     #[test]
@@ -2164,6 +2243,7 @@ pub(crate) mod tests {
                 EventKind::BluetoothForgotten,
                 EventKind::KeysDiverted,
                 EventKind::WheelSet,
+                EventKind::BluetoothPasskeyAwaited,
             ]
         );
     }

@@ -3,9 +3,10 @@ use chrono::{DateTime, Duration, Local};
 
 use crate::board::State;
 use crate::protocol::{
-    Action, BUSY_DBM, Battery, BluetoothLink, ChargeState, DeviceKind, DivertOutcome, Event,
-    EventKind, Latency, Link, Noise, NuphyState, Pairing, Protocol, STRONG_DBM, Slot, SoftDevice,
-    Status, StoredDevice, UnifyingState, VersionMismatch, Watch, WheelOutcome, bucket_floor,
+    Action, AwaitedPasskey, BUSY_DBM, Battery, BluetoothLink, ChargeState, DeviceKind,
+    DivertOutcome, Event, EventKind, Latency, Link, Noise, NuphyState, Pairing, Protocol,
+    STRONG_DBM, Slot, SoftDevice, Status, StoredDevice, UnifyingState, VersionMismatch, Watch,
+    WheelOutcome, bucket_floor,
 };
 
 pub const NOISE_QUESTION: &str =
@@ -119,21 +120,46 @@ pub fn switch_question(to: Protocol) -> String {
     )
 }
 
-pub const PAIRING_OPEN: &str = "pairing is open";
-
-pub fn pairing_open(protocol: Protocol, passkey: Option<u32>) -> String {
-    let how = match (protocol, passkey) {
+pub fn pairing_open(protocol: Protocol, passkey_asked: bool) -> String {
+    let how: String = match (protocol, passkey_asked) {
         (Protocol::Nuphy, _) => "hold Fn+4 on the keyboard for 3 s".into(),
         (Protocol::Unifying, _) => {
             "switch the keyboard off and on, after holding an Easy-Switch key until it blinks fast if it has them".into()
         }
-        (Protocol::Bluetooth, Some(passkey)) => format!(
-            "put the keyboard in Bluetooth pairing mode, then type {passkey:06} on it and press Enter"
-        ),
-        (Protocol::Bluetooth, None) => "put the keyboard or mouse in Bluetooth pairing mode".into(),
+        (Protocol::Bluetooth, true) => {
+            "put the keyboard in Bluetooth pairing mode".into()
+        }
+        (Protocol::Bluetooth, false) => {
+            "put the keyboard or mouse in Bluetooth pairing mode".into()
+        }
     };
-    format!("{PAIRING_OPEN} for 30 s; {how}")
+    format!("within 30 s, {how}")
 }
+
+pub fn passkey_digits(passkey: u32) -> String {
+    format!("{passkey:06}")
+}
+
+/// The keyboard's advertised name, or "keyboard" where it gave none.
+pub fn waiting_keyboard(a: &AwaitedPasskey) -> &str {
+    a.name.as_deref().unwrap_or("keyboard")
+}
+
+/// The words asking for the passkey a keyboard waits for: those before the digits, the digits, and
+/// those after them.
+pub fn passkey_prompt(a: &AwaitedPasskey) -> [String; 3] {
+    [
+        "type".into(),
+        passkey_digits(a.passkey),
+        format!("on the {} and press Enter", waiting_keyboard(a)),
+    ]
+}
+
+pub fn waits_for_passkey(who: &str) -> String {
+    format!("{who} waits for the passkey")
+}
+
+pub const PAIRING_CLOSED_UNPAIRED: &str = "pairing closed with no keyboard paired";
 
 pub fn moved(from: u8, to: u8) -> String {
     if from == to {
@@ -724,6 +750,9 @@ pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String 
             "pairing refused: the passkey was not typed".into()
         }
         EventKind::BluetoothRefused => format!("pairing refused by the {}", event_kind(e, s)),
+        EventKind::BluetoothPasskeyAwaited => {
+            waits_for_passkey(&format!("{} {}", event_kind(e, s), event_device(e, stored)))
+        }
         EventKind::BluetoothBondLost => format!(
             "{} {} lost its pairing; forget it and pair again",
             event_kind(e, s),
@@ -979,6 +1008,27 @@ mod tests {
         assert_eq!(
             describe_event(&event(EventKind::BluetoothRefused, 1, 0, 0, 0), &bt, &[]),
             "pairing refused: the passkey was not typed"
+        );
+    }
+
+    #[test]
+    fn describes_a_keyboard_waiting_for_the_passkey_by_its_name_or_address() {
+        let bt = status_of(Protocol::Bluetooth);
+        let stored = crate::protocol::read_devices(&fixture("devices.hex")).unwrap();
+        let waiting = event(
+            EventKind::BluetoothPasskeyAwaited,
+            0xeb,
+            0xbb,
+            1,
+            0x49a6_9ad9,
+        );
+        assert_eq!(
+            describe_event(&waiting, &bt, &stored),
+            "keyboard MX Keys waits for the passkey"
+        );
+        assert_eq!(
+            describe_event(&waiting, &bt, &[]),
+            "keyboard EB:BB:49:A6:9A:D9 waits for the passkey"
         );
     }
 
@@ -1250,16 +1300,44 @@ mod tests {
     }
 
     #[test]
-    fn a_bluetooth_pairing_prints_the_passkey_with_its_leading_zeros() {
-        let line = pairing_open(Protocol::Bluetooth, Some(1234));
-        assert!(line.contains("type 001234"), "{line}");
-        assert!(line.contains("Enter"), "{line}");
-        assert!(line.contains("30 s"), "{line}");
-        let line = pairing_open(Protocol::Bluetooth, None);
-        assert!(line.contains("pairing mode"), "{line}");
-        assert!(!line.contains("type"), "{line}");
-        let line = pairing_open(Protocol::Nuphy, None);
-        assert!(line.contains("Fn+4"), "{line}");
+    fn a_bluetooth_pairing_opens_without_showing_a_passkey() {
+        assert_eq!(
+            pairing_open(Protocol::Bluetooth, true),
+            "within 30 s, put the keyboard in Bluetooth pairing mode"
+        );
+        assert_eq!(
+            pairing_open(Protocol::Bluetooth, false),
+            "within 30 s, put the keyboard or mouse in Bluetooth pairing mode"
+        );
+        assert_eq!(
+            pairing_open(Protocol::Nuphy, false),
+            "within 30 s, hold Fn+4 on the keyboard for 3 s"
+        );
+    }
+
+    #[test]
+    fn the_passkey_prompt_keeps_the_leading_zeros() {
+        let a = AwaitedPasskey {
+            passkey: 1234,
+            name: None,
+        };
+        assert_eq!(
+            passkey_prompt(&a).join(" "),
+            "type 001234 on the keyboard and press Enter"
+        );
+        assert_eq!(passkey_prompt(&a)[1], "001234");
+    }
+
+    #[test]
+    fn the_passkey_prompt_names_the_keyboard_by_its_advertised_name() {
+        let a = AwaitedPasskey {
+            passkey: 1234,
+            name: Some("MX Keys".into()),
+        };
+        assert_eq!(
+            passkey_prompt(&a).join(" "),
+            "type 001234 on the MX Keys and press Enter"
+        );
     }
 
     #[test]

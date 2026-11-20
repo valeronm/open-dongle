@@ -77,8 +77,10 @@ connected. The events record each device's connects, disconnects with their reas
 refused pairings, each device forgotten, on request or for a report map it cannot use, and a device
 that lost its pairing, which has to be forgotten and paired again.
 
-- `pair` prints the passkey to type on the keyboard, and `pair --no-passkey` opens pairing without
-  one. In the live view `a` asks which of the two.
+- `pair` waits for the keyboard to connect, prints the passkey to type on it, and once pairing
+  closes says whether the keyboard paired; `pair --no-passkey` opens pairing without one. In the
+  live view `a` asks which of the two, and the footer shows the passkey once the keyboard waits for
+  it. A passkey serves one attempt, and a failed one closes pairing.
 - `devices` lists the stored keyboards and mice, the most recently connected first, and
   `forget <n>` removes the one at that place in the list. In the live view `d` shows the list in
   place of the chart, and a device's number asks to forget it. The dongle stores up to eight, and a

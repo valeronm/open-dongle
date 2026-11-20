@@ -11,6 +11,7 @@
 #define BTPOLICY_QUICK_RETRIES 3
 /* The address type, then the six address bytes. */
 #define BTPOLICY_ADDR_LEN 7
+#define BTPOLICY_NAME_MAX 32
 #define BTPOLICY_APPEARANCE_KEYBOARD 0x03c1
 #define BTPOLICY_APPEARANCE_MOUSE 0x03c2
 
@@ -22,6 +23,8 @@ struct btpolicy_advert {
 	bool stored;
 	/* From the appearance for a new device, from the stored list for a stored one. */
 	enum device_kind kind;
+	/* Empty unless the advert or its scan response named the device. */
+	char name[BTPOLICY_NAME_MAX + 1];
 };
 
 enum btpolicy_state {

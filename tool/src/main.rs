@@ -154,7 +154,19 @@ fn main() -> Result<()> {
         Cmd::Protocol { name } => cli::protocol(serial, name.map(Into::into)),
         Cmd::Pair { no_passkey } => {
             let (mut dev, s) = device::open(serial)?;
-            println!("{}", cli::pair(&mut dev, s.protocol(), no_passkey)?);
+            let (line, passkey_asked) = cli::pair(&mut dev, s.protocol(), no_passkey)?;
+            println!("{line}");
+            if passkey_asked {
+                let stdout = std::io::stdout();
+                let highlight = std::io::IsTerminal::is_terminal(&stdout);
+                cli::follow_pairing(
+                    &mut dev,
+                    s.events_total,
+                    cli::PAIRING_POLL,
+                    &mut stdout.lock(),
+                    highlight,
+                )?;
+            }
             Ok(())
         }
         Cmd::Devices => {

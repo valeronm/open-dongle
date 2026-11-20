@@ -41,8 +41,12 @@
 #define DIAG_PAIRING_PASSKEY 0x04
 /* In a DIAG_PAIR request's arg under Bluetooth: pair without asking the keyboard for a passkey. */
 #define DIAG_PAIR_NO_PASSKEY 1
-/* The reply under Bluetooth: 1 if a passkey is to be typed, then the passkey. */
-#define DIAG_PAIR_REPLY_LEN 5
+/* The status's pairing window byte. */
+#define DIAG_WINDOW_CLOSED 0
+#define DIAG_WINDOW_OPEN 1
+#define DIAG_WINDOW_PASSKEY_AWAITED 2
+/* The reply under Bluetooth: 1 if a passkey is to be typed. */
+#define DIAG_PAIR_REPLY_LEN 1
 #define DIAG_DEVICE_LEN (BTPOLICY_ADDR_LEN + 3 + BTLIST_NAME_LEN)
 #define DIAG_DEVICES_MAX (1 + BTPOLICY_STORED_MAX * DIAG_DEVICE_LEN)
 
@@ -118,7 +122,12 @@ struct diag_status {
 	uint32_t events_total;
 	uint32_t events_oldest;
 	uint8_t protocol;
-	bool pairing_open;
+	/* A DIAG_WINDOW_* value. */
+	uint8_t pairing_window;
+	/* The passkey a keyboard waits for and its name, padded with zeros; zero without
+	 * DIAG_WINDOW_PASSKEY_AWAITED. */
+	uint32_t passkey;
+	uint8_t passkey_name[DIAG_NAME_MAX];
 	uint8_t keyboard_serial[4];
 	uint8_t keyboard_type;
 	uint8_t slot_count;
