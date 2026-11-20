@@ -8,6 +8,7 @@
 
 #define NUPHY_ID_LEN 4
 #define NUPHY_KEYBOARD_LEN 8
+#define NUPHY_NKRO_LEN 14
 #define NUPHY_FRAME_MAX 16
 #define NUPHY_NAME_CHUNK 20
 #define NUPHY_NAME_MAX 24
@@ -20,6 +21,7 @@ enum nuphy_kind {
 	NUPHY_KEEPALIVE,
 	NUPHY_KEYBOARD,
 	NUPHY_MOUSE,
+	NUPHY_NKRO,
 	NUPHY_CONSUMER,
 	NUPHY_SYSTEM,
 	NUPHY_PAIR_REQUEST,
@@ -27,6 +29,12 @@ enum nuphy_kind {
 	NUPHY_HELLO,
 	NUPHY_NAME,
 	NUPHY_IGNORED,
+};
+
+/* Keys past the six in the keyboard's 0x61 report, usages 0x00-0x6f. */
+struct nuphy_nkro {
+	uint8_t modifiers;
+	uint8_t keys[NUPHY_NKRO_LEN];
 };
 
 struct nuphy_ids {
@@ -41,6 +49,7 @@ struct nuphy_msg {
 		uint8_t keyboard[NUPHY_KEYBOARD_LEN];
 		uint16_t usage;
 		struct report_mouse mouse;
+		struct nuphy_nkro nkro;
 		struct nuphy_ids ids;
 		uint8_t name_chunk[NUPHY_NAME_CHUNK];
 	};
@@ -53,8 +62,14 @@ struct nuphy_msg {
  */
 struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len);
 
-/* Returns false for a message that carries no report. */
-bool nuphy_report(const struct nuphy_msg *m, struct report *out);
+/* The keyboard splits its held keys between its 0x61 report and the 0x62 overflow. */
+struct nuphy_keys {
+	uint8_t boot[NUPHY_KEYBOARD_LEN];
+	struct nuphy_nkro nkro;
+};
+
+/* Returns false for a message that carries no report. A keyboard or overflow frame updates k, which the caller zeroes when the host's keys are released. */
+bool nuphy_report(struct nuphy_keys *k, const struct nuphy_msg *m, struct report *out);
 
 uint8_t nuphy_next_seq(uint8_t seq);
 

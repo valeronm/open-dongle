@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- In NuPhy mode the PC receives every held key in the keyboard's Windows mode, not only six.
 - In Bluetooth mode the PC receives every held key, where a seventh key used to make it drop them
   all.
 - In NuPhy mode the mouse reports a keyboard sends reach the PC.

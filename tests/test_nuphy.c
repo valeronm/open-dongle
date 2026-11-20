@@ -32,6 +32,17 @@ static const uint8_t consumer_volume_up[] = {
 static const uint8_t system_sleep[] = {
 	0x31, 0x64, 0x82, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x71};
+/* S D F J K L in the 0x61 report. */
+static const uint8_t six_keys[] = {
+	0x71, 0x61, 0x00, 0x00, 0x16, 0x07, 0x09, 0x0d, 0x0e, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x7c};
+/* A in the overflow, laid out as the official dongle's NKRO report forwards it. */
+static const uint8_t overflow_a[] = {
+	0x70, 0x62, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x3c};
+static const uint8_t overflow_none[] = {
+	0x72, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x5a, 0x2e};
 static const uint8_t keepalive[] = {0x10, 0x57, 0x5a, 0xc1, 0x00, 0x00, 0x00, 0x00};
 
 static const uint8_t dongle_id[4] = {0x26, 0xc1, 0x21, 0x59};
@@ -216,18 +227,19 @@ static void test_report_messages_convert_to_reports(void)
 	struct nuphy_msg consumer = nuphy_parse(consumer_volume_up, sizeof(consumer_volume_up));
 	struct nuphy_msg sys = nuphy_parse(system_sleep, sizeof(system_sleep));
 	struct nuphy_msg pointer = nuphy_parse(mouse, sizeof(mouse));
+	struct nuphy_keys keys = {0};
 	struct report out;
 
-	CHECK(nuphy_report(&key, &out));
+	CHECK(nuphy_report(&keys, &key, &out));
 	CHECK_EQ(out.kind, REPORT_KEYBOARD);
 	CHECK(reports_key_held(&out, 0x09));
-	CHECK(nuphy_report(&consumer, &out));
+	CHECK(nuphy_report(&keys, &consumer, &out));
 	CHECK_EQ(out.kind, REPORT_CONSUMER);
 	CHECK_EQ(out.usage, 0x00e9);
-	CHECK(nuphy_report(&sys, &out));
+	CHECK(nuphy_report(&keys, &sys, &out));
 	CHECK_EQ(out.kind, REPORT_SYSTEM);
 	CHECK_EQ(out.usage, 0x0082);
-	CHECK(nuphy_report(&pointer, &out));
+	CHECK(nuphy_report(&keys, &pointer, &out));
 	CHECK_EQ(out.kind, REPORT_MOUSE);
 	CHECK_EQ(out.mouse.buttons, 0x05);
 	CHECK_EQ(out.mouse.x, 3);
@@ -239,13 +251,64 @@ static void test_report_messages_convert_to_reports(void)
 static void test_other_messages_carry_no_report(void)
 {
 	struct nuphy_msg m = nuphy_parse(keepalive, sizeof(keepalive));
+	struct nuphy_keys keys = {0};
 	struct report out;
 
-	CHECK(!nuphy_report(&m, &out));
+	CHECK(!nuphy_report(&keys, &m, &out));
+}
+
+static void test_an_overflow_frame_carries_its_bitmap(void)
+{
+	struct nuphy_msg m = nuphy_parse(overflow_a, sizeof(overflow_a));
+
+	CHECK_EQ(m.kind, NUPHY_NKRO);
+	CHECK_EQ(m.nkro.modifiers, 0);
+	CHECK_EQ(m.nkro.keys[0], 0x10);
+	CHECK_EQ(m.nkro.keys[1], 0);
+}
+
+static void test_six_keys_and_the_overflow_make_seven(void)
+{
+	static const uint8_t asdfjkl[] = {0x04, 0x16, 0x07, 0x09, 0x0d, 0x0e, 0x0f};
+	struct nuphy_msg six = nuphy_parse(six_keys, sizeof(six_keys));
+	struct nuphy_msg over = nuphy_parse(overflow_a, sizeof(overflow_a));
+	struct nuphy_keys keys = {0};
+	struct report out;
+
+	CHECK(nuphy_report(&keys, &six, &out));
+	CHECK(!reports_key_held(&out, 0x04));
+	CHECK(nuphy_report(&keys, &over, &out));
+	for (size_t i = 0; i < sizeof(asdfjkl); i++) {
+		CHECK(reports_key_held(&out, asdfjkl[i]));
+	}
+	CHECK(nuphy_report(&keys, &six, &out));
+	CHECK(reports_key_held(&out, 0x04));
+}
+
+static void test_a_cleared_overflow_or_a_reset_lets_go_of_its_keys(void)
+{
+	struct nuphy_msg six = nuphy_parse(six_keys, sizeof(six_keys));
+	struct nuphy_msg over = nuphy_parse(overflow_a, sizeof(overflow_a));
+	struct nuphy_msg none = nuphy_parse(overflow_none, sizeof(overflow_none));
+	struct nuphy_keys keys = {0};
+	struct report out;
+
+	nuphy_report(&keys, &six, &out);
+	nuphy_report(&keys, &over, &out);
+	CHECK(nuphy_report(&keys, &none, &out));
+	CHECK(!reports_key_held(&out, 0x04));
+	CHECK(reports_key_held(&out, 0x16));
+	nuphy_report(&keys, &over, &out);
+	keys = (struct nuphy_keys){0};
+	CHECK(nuphy_report(&keys, &six, &out));
+	CHECK(!reports_key_held(&out, 0x04));
 }
 
 int main(void)
 {
+	RUN(test_an_overflow_frame_carries_its_bitmap);
+	RUN(test_six_keys_and_the_overflow_make_seven);
+	RUN(test_a_cleared_overflow_or_a_reset_lets_go_of_its_keys);
 	RUN(test_pair_request_carries_keyboard_and_previous_dongle_ids);
 	RUN(test_pair_confirm_carries_both_ids);
 	RUN(test_keyboard_report_is_the_8_byte_boot_report);

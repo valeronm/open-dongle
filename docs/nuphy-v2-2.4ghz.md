@@ -24,7 +24,8 @@ code does not show:
 - A pair request carries the ID of the dongle the keyboard was last paired with.
 - The radio module passes a USB suspend message on to the keyboard's main controller, which runs
   QMK.
-- The NKRO bitmap is a valid frame this firmware ignores.
+- The keyboard sends `0x62` only with its Win/Mac switch on Win, and then only for the keys past
+  the six in its `0x61` report.
 
 ## Pairing
 

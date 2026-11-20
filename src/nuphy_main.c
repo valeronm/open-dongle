@@ -25,6 +25,7 @@ static uint32_t link_down_ms;
 static bool link_was_lost;
 static bool heard;
 static uint32_t last_packet_ms;
+static struct nuphy_keys keys;
 
 _Static_assert(sizeof(((struct diag_status *)0)->name) >= NUPHY_NAME_MAX, "status name");
 _Static_assert(DIAG_NAME_MAX >= NUPHY_NAME_MAX, "device list name");
@@ -35,8 +36,10 @@ static int home(void)
 	return link_home(&link);
 }
 
+/* Key releases sent while the receiver was off are lost. */
 static void radio_resumed(void)
 {
+	keys = (struct nuphy_keys){0};
 	link_radio_resumed(&link, k_uptime_get_32());
 }
 
@@ -96,6 +99,7 @@ static void apply(const struct link_out *out)
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();
+		keys = (struct nuphy_keys){0};
 	}
 	if (out->up) {
 		uint8_t kind = link_was_lost ? HISTORY_UP_AGAIN : HISTORY_UP_FIRST;
@@ -179,7 +183,7 @@ static void handle(const struct rx_item *item)
 	if (item->pipe != 1) {
 		return;
 	}
-	if (nuphy_report(&m, &next)) {
+	if (nuphy_report(&keys, &m, &next)) {
 		if (next.kind == REPORT_MOUSE) {
 			/* The keyboard counts the wheel in whole notches. */
 			int wheel = next.mouse.wheel * usb_mouse_wheel_steps();

@@ -16,6 +16,7 @@
 #define TYPE_KEEPALIVE 0x57
 #define TYPE_MOUSE 0x60
 #define TYPE_KEYBOARD 0x61
+#define TYPE_NKRO 0x62
 #define TYPE_CONSUMER 0x63
 #define TYPE_SYSTEM 0x64
 #define TYPE_PAIR_REQUEST 0x80
@@ -60,6 +61,11 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 		m.kind = NUPHY_KEYBOARD;
 		memcpy(m.keyboard, &buf[2], NUPHY_KEYBOARD_LEN);
 		break;
+	case TYPE_NKRO:
+		m.kind = NUPHY_NKRO;
+		m.nkro.modifiers = buf[2];
+		memcpy(m.nkro.keys, &buf[3], NUPHY_NKRO_LEN);
+		break;
 	case TYPE_MOUSE:
 		m.kind = NUPHY_MOUSE;
 		m.mouse = (struct report_mouse){
@@ -98,11 +104,26 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 _Static_assert(NUPHY_KEYBOARD_LEN == REPORT_KEYBOARD_LEN,
 	       "a NuPhy keyboard frame is a boot report");
 
-bool nuphy_report(const struct nuphy_msg *m, struct report *out)
+static void held_keys(const struct nuphy_keys *k, struct report *out)
+{
+	*out = reports_held_keys(k->boot[0], &k->boot[2]);
+	out->keys[REPORT_MODIFIER_FIRST / 8] |= k->nkro.modifiers;
+	for (size_t i = 0; i < NUPHY_NKRO_LEN; i++) {
+		out->keys[i] |= k->nkro.keys[i];
+	}
+	out->keys[0] &= (uint8_t)~((1u << REPORT_KEY_FIRST) - 1);
+}
+
+bool nuphy_report(struct nuphy_keys *k, const struct nuphy_msg *m, struct report *out)
 {
 	switch (m->kind) {
 	case NUPHY_KEYBOARD:
-		*out = reports_held_keys(m->keyboard[0], &m->keyboard[2]);
+		memcpy(k->boot, m->keyboard, sizeof(k->boot));
+		held_keys(k, out);
+		return true;
+	case NUPHY_NKRO:
+		k->nkro = m->nkro;
+		held_keys(k, out);
 		return true;
 	case NUPHY_MOUSE:
 		*out = (struct report){.kind = REPORT_MOUSE, .mouse = m->mouse};

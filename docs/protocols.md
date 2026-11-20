@@ -18,16 +18,20 @@ no documentation of it.
 |---|---|---|---|
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
-| N-key rollover reports | yes | ignored | 🔴 |
+| N-key rollover reports | yes | yes | ⚪ |
 | Mouse reports | yes | yes | ⚪ |
 | Caps Lock and other lock LEDs on the keyboard | yes | yes | ⚪ |
 | Tells the keyboard the PC suspended | yes | yes | ⚪ |
 | Wakes a suspended PC | on the keyboard's hello or any key | the same | ⚪ |
 | Pairing window | 30 s after plugging in | 30 s after plugging in or on request | 🟢 |
 | Keyboard name | used as the dongle's USB name | shown by the tool | ⚪ |
+| A second keyboard in its other pairing slot | yes | no | 🔴 |
 
 Both close the window once the paired keyboard connects. With no keyboard paired, SpareDongle keeps
 it open until one pairs.
+
+The official dongle has a second pairing slot whose keyboard's keys it merges with the first one's,
+but no known NuPhy keyboard pairs into it, so SpareDongle does not implement it.
 
 ### Reliability
 

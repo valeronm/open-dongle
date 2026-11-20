@@ -24,7 +24,7 @@ each device's signal over time, its latency through the dongle, and the dongle's
 
 | Protocol | Support | Security | Tested with |
 |---|---|---|---|
-| NuPhy 2.4G, V2 (QMK) keyboards | [🟡 partial](docs/protocols.md#nuphy-24g): one keyboard, 6KRO | [❌ none](docs/protocols.md#nuphy-security) | Air75 V2 |
+| NuPhy 2.4G, V2 (QMK) keyboards | [🟢 full](docs/protocols.md#nuphy-24g) | [❌ none](docs/protocols.md#nuphy-security) | Air75 V2 |
 | NuPhy 2.4G, V3 (NuPhyIO) keyboards | 🔴 none yet: the link is known only from NuPhy's firmware | ❌ none, in NuPhy's firmware | no hardware to test with |
 | Logitech Unifying | [🟡 partial](docs/protocols.md#logitech-unifying): one keyboard | [🔴 weak at any time](docs/protocols.md#unifying-security) | original MX Keys |
 | Bluetooth LE | [🟡 partial](docs/protocols.md#bluetooth-le): one keyboard and one mouse at a time | [🟡 to 🟢, by how the device paired](docs/protocols.md#bluetooth-security) | Air75 V2, MX Keys, MX Master 3S |
