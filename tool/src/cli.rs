@@ -137,8 +137,8 @@ fn slot_rows(s: &Status, slot: &Slot, d: &SlotStatus) -> Vec<(&'static str, Stri
         .filter_map(|&counter| Some(format!("{} {}", counter.name(), d.get(counter)?)))
         .collect();
     rows.push(("counters", counters.join(" ")));
-    if let Some(l) = s.shown_latency(d) {
-        rows.push(("latency", latency(l)));
+    if s.connected(d.slot) {
+        rows.push(("latency", latency(d.latency)));
     }
     rows
 }
@@ -696,6 +696,7 @@ mod tests {
                 "signal    -60 dBm, last packet 250 ms ago",
                 "security  secure, no passkey",
                 "counters  packets 2000",
+                "latency   no report yet",
             ]
         );
     }

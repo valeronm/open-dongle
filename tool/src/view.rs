@@ -1132,8 +1132,8 @@ fn slot_lines(status: Option<&Status>, device: Option<&SlotStatus>) -> Vec<Line<
             [Span::styled(pairing(p), Style::new().fg(pairing_color(p)))],
         ));
     }
-    if let Some(l) = device.and_then(|d| s.shown_latency(d)) {
-        rows.push(status_row("latency", vec![Span::raw(latency(l))]));
+    if let Some(d) = device.filter(|d| s.connected(d.slot)) {
+        rows.push(status_row("latency", vec![Span::raw(latency(d.latency))]));
     }
     rows
 }
@@ -2914,6 +2914,18 @@ mod tests {
         );
         assert_eq!(inside_box(&rows[7]), "latency   0.9 ms average, 4.2 ms max");
         assert!(rows[8].starts_with('└'), "{}", rows[8]);
+    }
+
+    #[test]
+    fn a_connected_device_with_no_report_yet_says_so_on_the_latency_row() {
+        let mut s = status_of(Protocol::Unifying);
+        s.device.latency = None;
+        let rows = screen(&status_box(&s));
+        assert!(
+            rows.iter()
+                .any(|r| inside_box(r) == "latency   no report yet"),
+            "{rows:#?}"
+        );
     }
 
     #[test]

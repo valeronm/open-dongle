@@ -402,7 +402,10 @@ pub fn pairing(p: Pairing) -> String {
 }
 
 /// In milliseconds to a tenth, rounded half up.
-pub fn latency(l: Latency) -> String {
+pub fn latency(l: Option<Latency>) -> String {
+    let Some(l) = l else {
+        return "no report yet".into();
+    };
     let tenths = |us: u32| {
         let t = (u64::from(us) + 50) / 100;
         format!("{}.{} ms", t / 10, t % 10)

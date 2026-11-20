@@ -628,11 +628,8 @@ impl Status {
         self.slot(slot).map_or("device", |s| s.kind.name())
     }
 
-    /// The device's latency while its slot is connected.
-    pub fn shown_latency(&self, device: &SlotStatus) -> Option<Latency> {
-        device
-            .latency
-            .filter(|_| self.slot(device.slot).is_some_and(|slot| slot.connected))
+    pub fn connected(&self, slot: u8) -> bool {
+        self.slot(slot).is_some_and(|s| s.connected)
     }
 
     /// The channels a move can send the link to, ascending.

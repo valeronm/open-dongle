@@ -6,6 +6,7 @@
   work without Logitech's software.
 - The events record each time the dongle diverts a Unifying keyboard's keys, or what stopped it;
   the 0.4.0 tool shows the event as unknown.
+- A connected device's latency reads "no report yet" until its first report reaches the PC.
 
 ## [0.4.0] - 2026-11-19
 
