@@ -746,13 +746,14 @@ static int start_survey(void)
 	return err ? err : hci_vs_sdc_qos_channel_survey_enable(&survey);
 }
 
-bool ble_take_noise(struct noise_tally *t)
+bool ble_take_noise(struct noise_tally *t, int *home)
 {
 	k_spinlock_key_t key = k_spin_lock(&noise_lock);
 
 	*t = data_noise;
 	data_noise = (struct noise_tally){0};
 	k_spin_unlock(&noise_lock, key);
+	*home = CHANMOVE_NO_HOME;
 	return true;
 }
 

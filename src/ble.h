@@ -101,7 +101,7 @@ int ble_rssi(enum device_kind kind, int8_t *dbm);
 bool ble_bond_secure(const uint8_t addr[BTPOLICY_ADDR_LEN]);
 const char *ble_stage_name(enum ble_stage stage);
 /* Takes the energy read on the data channels since the last call; it always counts toward the
- * minute, since the links hop over every data channel. */
-bool ble_take_noise(struct noise_tally *t);
+ * minute, since the links hop over every data channel; *home is always CHANMOVE_NO_HOME. */
+bool ble_take_noise(struct noise_tally *t, int *home);
 
 #endif

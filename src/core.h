@@ -26,8 +26,8 @@ struct core_loop {
 	/* The channel the channel watch follows, or CHANMOVE_NO_HOME. */
 	int (*home)(void);
 	/* Takes the noise read since the last call and returns whether it counts toward the
-	 * minute. */
-	bool (*take_noise)(struct noise_tally *t);
+	 * minute; *home is the home channel it was read on, or CHANMOVE_NO_HOME. */
+	bool (*take_noise)(struct noise_tally *t, int *home);
 	/* Runs after each survey that answers a noise request, which keeps the receiver off. */
 	void (*radio_resumed)(void);
 	/* At most DEVICE_SLOTS. */
@@ -85,8 +85,9 @@ void core_count(enum core_counter c);
 void core_packet(uint8_t slot);
 void core_gap(uint8_t slot);
 void core_link_lost(uint8_t slot);
-/* Takes the radio's noise readings; they count toward the minute when read on the home channel. */
-bool core_take_radio_noise(struct noise_tally *t);
+/* Takes the radio's noise readings; they count toward the minute when read on the home channel,
+ * which *home then holds, else CHANMOVE_NO_HOME. */
+bool core_take_radio_noise(struct noise_tally *t, int *home);
 /* Takes the pending noise readings first, which a gap or loss event records. */
 void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
 void core_log_pairing_opened(const struct pairwin *w);
