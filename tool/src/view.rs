@@ -3047,6 +3047,10 @@ mod tests {
         panel_in(protocol, quiet(), history_min_rows(protocol)).join("\n")
     }
 
+    fn every_panel() -> impl Iterator<Item = Option<Protocol>> {
+        [None].into_iter().chain(Protocol::ALL.map(Some))
+    }
+
     #[test]
     fn a_panel_leaves_out_the_strips_its_firmware_never_counts() {
         let nuphy = strip_names(Some(Protocol::Nuphy));
@@ -3072,7 +3076,7 @@ mod tests {
 
     #[test]
     fn no_panel_charts_channel_changes() {
-        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+        for protocol in every_panel() {
             let panel = strip_names(protocol);
             assert!(!panel.contains("channel"), "channel shown in {panel}");
         }
@@ -3080,7 +3084,7 @@ mod tests {
 
     #[test]
     fn every_protocol_charts_the_noise_line() {
-        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+        for protocol in every_panel() {
             let panel = strip_names(protocol);
             assert!(panel.contains("━ noise peak"), "{panel}");
         }
@@ -3089,7 +3093,7 @@ mod tests {
     #[test]
     fn every_protocol_shows_the_busy_caption_beside_the_busy_strip() {
         let caption = format!("└ busy: readings at {BUSY_DBM} dBm");
-        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+        for protocol in every_panel() {
             let panel = strip_names(protocol);
             assert!(panel.contains(&caption), "{panel}");
         }
