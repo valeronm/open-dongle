@@ -125,6 +125,17 @@ static bool starts_descriptor(const uint8_t *chunk)
 	       chunk[0] <= NUPHY_NAME_BLOCK_MAX && chunk[0] % 2 == 0;
 }
 
+/* The keyboard sends the name its dongle shows on USB. */
+static void trim_dongle(uint8_t *name, size_t len)
+{
+	static const char suffix[] = " Dongle";
+	size_t n = sizeof(suffix) - 1;
+
+	if (len >= n && memcmp(&name[len - n], suffix, n) == 0) {
+		memset(&name[len - n], 0, n);
+	}
+}
+
 void nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK])
 {
 	uint8_t *out = n->name;
@@ -146,6 +157,7 @@ void nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK])
 
 		*out++ = unit >= 0x20 && unit <= 0x7e ? (uint8_t)unit : '?';
 	}
+	trim_dongle(n->name, (size_t)(out - n->name));
 	n->held = 0;
 }
 

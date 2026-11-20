@@ -196,7 +196,7 @@ static void send_name(uint8_t pipe, uint32_t now)
 
 static void test_the_paired_keyboard_sends_its_name_on_pipe_1(void)
 {
-	static const uint8_t expected[NUPHY_NAME_MAX] = "NuPhy Air75 V2 Dongle";
+	static const uint8_t expected[NUPHY_NAME_MAX] = "NuPhy Air75 V2";
 
 	init(home);
 	send_name(0, 10);

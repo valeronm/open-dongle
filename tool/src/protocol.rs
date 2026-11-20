@@ -526,13 +526,7 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
         slots,
         device: SlotStatus {
             slot: w.slot,
-            name: match protocol {
-                // A NuPhy keyboard sends the name its dongle should show on USB.
-                Protocol::Nuphy => {
-                    name.map(|name| name.strip_suffix(" Dongle").unwrap_or(&name).into())
-                }
-                _ => name,
-            },
+            name,
             signal: (w.last_rssi != NO_RSSI).then_some(w.last_rssi),
             last_packet_ms: (w.last_rx_age_ms != u32::MAX).then_some(w.last_rx_age_ms),
             packets: w.packets,
@@ -1367,17 +1361,6 @@ pub(crate) mod tests {
     fn a_device_name_can_fill_its_field() {
         let name = device_named(Protocol::Nuphy, b"Twenty-four letters long");
         assert_eq!(name.as_deref(), Some("Twenty-four letters long"));
-    }
-
-    #[test]
-    fn only_a_nuphy_name_loses_its_dongle_suffix() {
-        for (protocol, shown) in [
-            (Protocol::Nuphy, "NuPhy Air75 V2"),
-            (Protocol::Unifying, "NuPhy Air75 V2 Dongle"),
-        ] {
-            let name = device_named(protocol, b"NuPhy Air75 V2 Dongle");
-            assert_eq!(name.as_deref(), Some(shown));
-        }
     }
 
     #[test]

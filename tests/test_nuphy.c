@@ -89,7 +89,7 @@ static void test_hello_and_other_valid_types(void)
 }
 
 static const uint8_t no_name[NUPHY_NAME_MAX];
-static const uint8_t air75_name[NUPHY_NAME_MAX] = "NuPhy Air75 V2 Dongle";
+static const uint8_t air75_name[NUPHY_NAME_MAX] = "NuPhy Air75 V2";
 
 static void add(struct nuphy_name *n, const uint8_t *frame, size_t len)
 {

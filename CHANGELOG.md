@@ -19,6 +19,7 @@
 - In the live view, the protocol to switch to is chosen with `n` for NuPhy, `u` for Unifying and
   `b` for Bluetooth, and Bluetooth pairing with `p` for a passkey and `n` for none, instead of `1`
   and `2`.
+- In NuPhy mode `devices` names the keyboard as `status` does, without "Dongle" at the end.
 - The tool shows a legacy Bluetooth pairing in red even when a passkey was typed.
 - The tool shows a device's battery level and whether it is charging, as far as the device
   reports them, in `status` and in the title of the live view's device box.
