@@ -52,6 +52,7 @@ static struct btpolicy policy;
 static struct btlist list;
 static struct pairwin window;
 static char names[DEVICE_KINDS][BLE_NAME_MAX + 1];
+static struct device_battery battery[DEVICE_KINDS];
 static int start_err;
 static bool passkey_asked;
 static bool rssi_read[DEVICE_SLOTS];
@@ -104,6 +105,7 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 	st->link_state = start_err ? LINK_START_FAILED : any_ready() ? LINK_READY : LINK_NONE_READY;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
 	st->pairing = pairing_of(kind);
+	st->battery = battery[kind];
 	if (rssi_read[slot]) {
 		st->last_rssi = rssi[slot];
 	}
@@ -330,6 +332,7 @@ static void on_disconnected(enum device_kind kind, uint8_t reason)
 		hidkeys_reset(&keys);
 	}
 	rssi_read[slot_of(kind)] = false;
+	battery[kind] = DEVICE_BATTERY_UNKNOWN;
 	btpolicy_disconnected(&policy, kind, k_uptime_get_32(),
 			      reason == BLE_REASON_NOT_ESTABLISHED);
 }
@@ -406,6 +409,15 @@ static void on_event(const struct ble_event *ev)
 		break;
 	case BLE_REPORT:
 		on_report(ev);
+		break;
+	case BLE_BATTERY:
+		if (ev->battery.level == DEVICE_NO_BATTERY) {
+			printk("bluetooth %s battery unknown\n", device_kind_name(ev->kind));
+		} else {
+			printk("bluetooth %s battery %u%%\n", device_kind_name(ev->kind),
+			       ev->battery.level);
+		}
+		battery[ev->kind] = ev->battery;
 		break;
 	}
 }
@@ -529,6 +541,9 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 	ARG_UNUSED(store_err);
 	core_start_history(&loop);
 	btpolicy_init(&policy);
+	for (int k = 0; k < DEVICE_KINDS; k++) {
+		battery[k] = DEVICE_BATTERY_UNKNOWN;
+	}
 	start_err = ble_start();
 	if (start_err) {
 		printk("bluetooth start failed: %d\n", start_err);

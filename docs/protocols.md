@@ -149,6 +149,7 @@ tells them apart by the kind the device advertises.
 | Boot menus and PCs without Bluetooth | no | yes | 🟢 |
 | Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
 | Keyboard name and signal | in the PC's settings | shown by the tool | ⚪ |
+| Battery level | in the PC's settings | shown by the tool | ⚪ |
 
 The nRF52840 has no Bluetooth Classic radio. A report map the dongle cannot parse refuses the
 device, and so does a keyboard's map with no keyboard in it or a mouse's map with no relative

@@ -9,6 +9,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 #include <bluetooth/gatt_dm.h>
+#include <bluetooth/services/bas_client.h>
 #include <bluetooth/services/hogp.h>
 /* Host-internal: the public API gives a bond's address but not how it paired. */
 #include <host/keys.h>
@@ -23,13 +24,22 @@ BUILD_ASSERT(CONFIG_BT_MAX_PAIRED == BTPOLICY_STORED_MAX);
 BUILD_ASSERT(BTPOLICY_APPEARANCE_KEYBOARD == BT_APPEARANCE_HID_KEYBOARD);
 BUILD_ASSERT(BTPOLICY_APPEARANCE_MOUSE == BT_APPEARANCE_HID_MOUSE);
 
+/* In the order waiting discoveries start. */
+enum discovery {
+	DISCOVERY_NONE,
+	DISCOVERY_HID,
+	DISCOVERY_BATTERY,
+};
+
 struct link {
 	struct bt_conn *conn;
 	struct bt_hogp hogp;
+	struct bt_bas_client bas;
 	uint8_t map[BLE_MAP_MAX];
 	size_t map_len;
 	char name[BLE_NAME_MAX + 1];
 	struct bt_gatt_read_params name_read;
+	enum discovery wanted;
 	bool failed;
 	bool passkey_used;
 };
@@ -100,6 +110,14 @@ static void fail(struct link *l, enum ble_stage stage, int error)
 	ble_disconnect(kind_of(l));
 }
 
+static void next_discovery(void);
+
+static void want_discovery(struct link *l, enum discovery what)
+{
+	l->wanted = what;
+	next_discovery();
+}
+
 static uint8_t on_report(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err,
 			 const uint8_t *data)
 {
@@ -118,8 +136,9 @@ static uint8_t on_report(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_
 	return BT_GATT_ITER_CONTINUE;
 }
 
-/* Each subscription holds an ATT buffer until the device answers, and all are sent at once. */
-BUILD_ASSERT(CONFIG_BT_ATT_TX_COUNT >= CONFIG_BT_HOGP_REPORTS_MAX);
+/* Each subscription holds an ATT buffer until the device answers, and all are sent at once, with
+ * the battery discovery's first request behind them. */
+BUILD_ASSERT(CONFIG_BT_ATT_TX_COUNT >= CONFIG_BT_HOGP_REPORTS_MAX + 1);
 
 static void subscribe(struct link *l)
 {
@@ -137,6 +156,7 @@ static void subscribe(struct link *l)
 			return;
 		}
 	}
+	want_discovery(l, DISCOVERY_BATTERY);
 }
 
 static void on_map_part(struct bt_hogp *h, uint8_t err, const uint8_t *data, size_t size,
@@ -191,6 +211,7 @@ static void on_discovered(struct bt_gatt_dm *dm, void *context)
 	int err = bt_hogp_handles_assign(dm, &l->hogp);
 
 	bt_gatt_dm_data_release(dm);
+	next_discovery();
 	if (err) {
 		fail(l, BLE_STAGE_HID_SETUP, err);
 	}
@@ -199,27 +220,126 @@ static void on_discovered(struct bt_gatt_dm *dm, void *context)
 static void on_no_hid_service(struct bt_conn *conn, void *context)
 {
 	ARG_UNUSED(conn);
+	next_discovery();
 	fail(context, BLE_STAGE_DISCOVERY, -ENOENT);
 }
 
 static void on_discovery_error(struct bt_conn *conn, int err, void *context)
 {
 	ARG_UNUSED(conn);
+	next_discovery();
 	fail(context, BLE_STAGE_DISCOVERY, err);
 }
 
-static const struct bt_gatt_dm_cb discovery = {
+static const struct bt_gatt_dm_cb hid_discovery = {
 	.completed = on_discovered,
 	.service_not_found = on_no_hid_service,
 	.error_found = on_discovery_error,
 };
 
-static void discover(struct link *l)
+static void emit_battery(struct bt_bas_client *bas, uint8_t level)
 {
-	int err = bt_gatt_dm_start(l->conn, BT_UUID_HIDS, &discovery, l);
+	struct device_battery b = DEVICE_BATTERY_UNKNOWN;
 
+	if (level != BT_BAS_VAL_INVALID) {
+		b.level = level;
+	}
+	emit(CONTAINER_OF(bas, struct link, bas),
+	     (struct ble_event){.type = BLE_BATTERY, .battery = b});
+}
+
+static void on_battery_read(struct bt_bas_client *bas, uint8_t level, int err)
+{
+	emit_battery(bas, err ? BT_BAS_VAL_INVALID : level);
+}
+
+static void use_battery(struct link *l, struct bt_gatt_dm *dm)
+{
+	int err = bt_bas_handles_assign(dm, &l->bas);
+
+	if (!err) {
+		err = bt_bas_read_battery_level(&l->bas, on_battery_read);
+	}
+	if (!err && bt_bas_notify_supported(&l->bas)) {
+		err = bt_bas_subscribe_battery_level(&l->bas, emit_battery);
+	}
 	if (err) {
-		fail(l, BLE_STAGE_DISCOVERY, err);
+		printk("bluetooth %s battery unread: %d\n", device_kind_name(kind_of(l)), err);
+	}
+}
+
+static void on_battery_found(struct bt_gatt_dm *dm, void *context)
+{
+	struct link *l = context;
+
+	if (bt_gatt_dm_conn_get(dm) == l->conn) {
+		use_battery(l, dm);
+	}
+	bt_gatt_dm_data_release(dm);
+	next_discovery();
+}
+
+static void on_no_battery(struct bt_conn *conn, void *context)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(context);
+	next_discovery();
+}
+
+static void on_battery_error(struct bt_conn *conn, int err, void *context)
+{
+	ARG_UNUSED(conn);
+	printk("bluetooth %s battery discovery failed: %d\n",
+	       device_kind_name(kind_of(context)), err);
+	next_discovery();
+}
+
+static const struct bt_gatt_dm_cb battery_discovery = {
+	.completed = on_battery_found,
+	.service_not_found = on_no_battery,
+	.error_found = on_battery_error,
+};
+
+static int start_discovery(struct link *l, enum discovery what)
+{
+	if (what == DISCOVERY_HID) {
+		return bt_gatt_dm_start(l->conn, BT_UUID_HIDS, &hid_discovery, l);
+	}
+	return bt_gatt_dm_start(l->conn, BT_UUID_BAS, &battery_discovery, l);
+}
+
+/* bt_gatt_dm runs one discovery at a time and refuses a second start with -EALREADY. */
+static void next_discovery(void)
+{
+	for (;;) {
+		struct link *l = NULL;
+		enum discovery what;
+		int err;
+
+		for (int k = 0; k < DEVICE_KINDS; k++) {
+			if (links[k].wanted != DISCOVERY_NONE &&
+			    (!l || links[k].wanted < l->wanted)) {
+				l = &links[k];
+			}
+		}
+		if (!l) {
+			return;
+		}
+		what = l->wanted;
+		err = start_discovery(l, what);
+		if (err == -EALREADY) {
+			return;
+		}
+		l->wanted = DISCOVERY_NONE;
+		if (!err) {
+			return;
+		}
+		if (what == DISCOVERY_HID) {
+			fail(l, BLE_STAGE_DISCOVERY, err);
+		} else {
+			printk("bluetooth %s battery discovery not started: %d\n",
+			       device_kind_name(kind_of(l)), err);
+		}
 	}
 }
 
@@ -235,7 +355,7 @@ static uint8_t on_name(struct bt_conn *conn, uint8_t err, struct bt_gatt_read_pa
 		memcpy(l->name, data, len);
 		l->name[len] = '\0';
 	}
-	discover(l);
+	want_discovery(l, DISCOVERY_HID);
 	return BT_GATT_ITER_STOP;
 }
 
@@ -250,7 +370,7 @@ static void read_name(struct link *l)
 		},
 	};
 	if (bt_gatt_read(l->conn, &l->name_read) != 0) {
-		discover(l);
+		want_discovery(l, DISCOVERY_HID);
 	}
 }
 
@@ -263,6 +383,7 @@ static void connection_ended(struct link *l, uint8_t reason)
 	if (bt_hogp_assign_check(&l->hogp)) {
 		bt_hogp_release(&l->hogp);
 	}
+	l->wanted = DISCOVERY_NONE;
 	bt_conn_unref(l->conn);
 	l->conn = NULL;
 	emit(l, (struct ble_event){.type = BLE_DISCONNECTED, .reason = reason});
@@ -559,6 +680,7 @@ int ble_start(void)
 	}
 	for (int k = 0; !err && k < DEVICE_KINDS; k++) {
 		bt_hogp_init(&links[k].hogp, &hogp_params);
+		bt_bas_client_init(&links[k].bas);
 	}
 	return err;
 }

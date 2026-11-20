@@ -23,6 +23,7 @@ enum ble_event_type {
 	BLE_PAIRED,
 	BLE_MAP_READ,
 	BLE_REPORT,
+	BLE_BATTERY,
 };
 
 enum ble_stage {
@@ -61,6 +62,8 @@ struct ble_event {
 			uint8_t len;
 			uint8_t data[BLE_REPORT_MAX];
 		} report;
+		/* BLE_BATTERY: the level is unknown once it cannot be read. */
+		struct device_battery battery;
 	};
 };
 
