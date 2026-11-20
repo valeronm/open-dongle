@@ -19,6 +19,7 @@ enum nuphy_kind {
 	NUPHY_INVALID,
 	NUPHY_KEEPALIVE,
 	NUPHY_KEYBOARD,
+	NUPHY_MOUSE,
 	NUPHY_CONSUMER,
 	NUPHY_SYSTEM,
 	NUPHY_PAIR_REQUEST,
@@ -39,6 +40,7 @@ struct nuphy_msg {
 	union {
 		uint8_t keyboard[NUPHY_KEYBOARD_LEN];
 		uint16_t usage;
+		struct report_mouse mouse;
 		struct nuphy_ids ids;
 		uint8_t name_chunk[NUPHY_NAME_CHUNK];
 	};

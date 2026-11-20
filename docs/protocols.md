@@ -19,7 +19,7 @@ no documentation of it.
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
 | N-key rollover reports | yes | ignored | 🔴 |
-| Mouse reports | yes | ignored | 🔴 |
+| Mouse reports | yes | yes | ⚪ |
 | Caps Lock and other lock LEDs on the keyboard | yes | yes | ⚪ |
 | Tells the keyboard the PC suspended | yes | yes | ⚪ |
 | Wakes a suspended PC | on the keyboard's hello or any key | the same | ⚪ |

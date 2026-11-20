@@ -14,6 +14,7 @@
 #define TYPE_HELLO 0x35
 #define TYPE_NAME 0x56
 #define TYPE_KEEPALIVE 0x57
+#define TYPE_MOUSE 0x60
 #define TYPE_KEYBOARD 0x61
 #define TYPE_CONSUMER 0x63
 #define TYPE_SYSTEM 0x64
@@ -59,6 +60,16 @@ struct nuphy_msg nuphy_parse(const uint8_t *buf, size_t len)
 		m.kind = NUPHY_KEYBOARD;
 		memcpy(m.keyboard, &buf[2], NUPHY_KEYBOARD_LEN);
 		break;
+	case TYPE_MOUSE:
+		m.kind = NUPHY_MOUSE;
+		m.mouse = (struct report_mouse){
+			.buttons = buf[2],
+			.x = (int8_t)buf[3],
+			.y = (int8_t)buf[4],
+			.wheel = (int8_t)buf[5],
+			.pan = (int8_t)buf[6],
+		};
+		break;
 	case TYPE_CONSUMER:
 	case TYPE_SYSTEM:
 		m.kind = buf[1] == TYPE_CONSUMER ? NUPHY_CONSUMER : NUPHY_SYSTEM;
@@ -93,6 +104,9 @@ bool nuphy_report(const struct nuphy_msg *m, struct report *out)
 	case NUPHY_KEYBOARD:
 		out->kind = REPORT_KEYBOARD;
 		memcpy(out->keyboard, m->keyboard, sizeof(out->keyboard));
+		return true;
+	case NUPHY_MOUSE:
+		*out = (struct report){.kind = REPORT_MOUSE, .mouse = m->mouse};
 		return true;
 	case NUPHY_CONSUMER:
 		*out = (struct report){.kind = REPORT_CONSUMER, .usage = m->usage};

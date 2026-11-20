@@ -24,7 +24,7 @@ code does not show:
 - A pair request carries the ID of the dongle the keyboard was last paired with.
 - The radio module passes a USB suspend message on to the keyboard's main controller, which runs
   QMK.
-- Mouse reports and the NKRO bitmap are valid frames this firmware ignores.
+- The NKRO bitmap is a valid frame this firmware ignores.
 
 ## Pairing
 

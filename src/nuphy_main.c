@@ -167,6 +167,12 @@ static void handle(const struct rx_item *item)
 		return;
 	}
 	if (nuphy_report(&m, &next)) {
+		if (next.kind == REPORT_MOUSE) {
+			/* The keyboard counts the wheel in whole notches. */
+			int wheel = next.mouse.wheel * usb_mouse_wheel_steps();
+
+			next.mouse.wheel = (int8_t)reports_clamp(wheel, -INT8_MAX, INT8_MAX);
+		}
 		core_submit(0, &next, &item->received_us);
 	}
 	if (usb_suspended() && m.kind == NUPHY_HELLO) {
