@@ -15,7 +15,9 @@
 #define BOOTLOADER_DFU_MAGIC 0x57
 #define EXTRA_ID_CONSUMER 1
 #define EXTRA_ID_SYSTEM 2
-#define EXTRA_REPORT_LEN 3
+#define EXTRA_ID_KEYS 3
+#define EXTRA_USAGE_REPORT_LEN 3
+#define EXTRA_REPORT_LEN (1 + REPORT_NKRO_LEN)
 #define ALL_IFACES_READY BIT_MASK(REPORT_IFACES)
 
 USBD_DEVICE_DEFINE(dongle_usbd, DEVICE_DT_GET(DT_NODELABEL(zephyr_udc0)), USB_VID, USB_PID);
@@ -92,6 +94,19 @@ static const uint8_t extra_desc[] = {
 	HID_REPORT_SIZE(16),
 	HID_REPORT_COUNT(1),
 	HID_INPUT(0x00),
+	HID_END_COLLECTION,
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP),
+	HID_USAGE(HID_USAGE_GEN_DESKTOP_KEYBOARD),
+	HID_COLLECTION(HID_COLLECTION_APPLICATION),
+	HID_REPORT_ID(EXTRA_ID_KEYS),
+	HID_USAGE_PAGE(HID_USAGE_GEN_DESKTOP_KEYPAD),
+	HID_USAGE_MIN8(0),
+	HID_USAGE_MAX8(REPORT_NKRO_KEYS - 1),
+	HID_LOGICAL_MIN8(0),
+	HID_LOGICAL_MAX8(1),
+	HID_REPORT_SIZE(1),
+	HID_REPORT_COUNT(REPORT_NKRO_KEYS),
+	HID_INPUT(0x02),
 	HID_END_COLLECTION,
 };
 
@@ -413,21 +428,27 @@ int usb_start(const struct usb_callbacks *cb)
 	return usbd_enable(&dongle_usbd);
 }
 
-int usb_send(const struct report *r)
+int usb_send(const struct report_usb *r)
 {
-	if (r->kind == REPORT_KEYBOARD) {
-		memcpy(keyboard_buf, r->keyboard, REPORT_KEYBOARD_LEN);
+	switch (r->kind) {
+	case REPORT_USB_BOOT:
+		memcpy(keyboard_buf, r->boot, REPORT_KEYBOARD_LEN);
 		return hid_device_submit_report(keyboard_dev, REPORT_KEYBOARD_LEN, keyboard_buf);
-	}
-	if (r->kind == REPORT_MOUSE) {
+	case REPORT_USB_MOUSE: {
 		size_t len = reports_encode_mouse(&r->mouse, atomic_get(&mouse_boot), mouse_buf);
 
 		return hid_device_submit_report(mouse_dev, len, mouse_buf);
 	}
-	extra_buf[0] = r->kind == REPORT_CONSUMER ? EXTRA_ID_CONSUMER : EXTRA_ID_SYSTEM;
-	extra_buf[1] = r->usage & 0xff;
-	extra_buf[2] = r->usage >> 8;
-	return hid_device_submit_report(extra_dev, EXTRA_REPORT_LEN, extra_buf);
+	case REPORT_USB_NKRO:
+		extra_buf[0] = EXTRA_ID_KEYS;
+		memcpy(&extra_buf[1], r->nkro, REPORT_NKRO_LEN);
+		return hid_device_submit_report(extra_dev, EXTRA_REPORT_LEN, extra_buf);
+	default:
+		extra_buf[0] = r->kind == REPORT_USB_CONSUMER ? EXTRA_ID_CONSUMER : EXTRA_ID_SYSTEM;
+		extra_buf[1] = r->usage & 0xff;
+		extra_buf[2] = r->usage >> 8;
+		return hid_device_submit_report(extra_dev, EXTRA_USAGE_REPORT_LEN, extra_buf);
+	}
 }
 
 int usb_wakeup(void)

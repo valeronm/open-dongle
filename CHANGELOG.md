@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- In Bluetooth mode the PC receives every held key, where a seventh key used to make it drop them
+  all.
 - In NuPhy mode the mouse reports a keyboard sends reach the PC.
 - In Unifying and Bluetooth mode a Logitech keyboard's screen brightness keys, such as the MX
   Keys's F1 and F2, work without Logitech's software.

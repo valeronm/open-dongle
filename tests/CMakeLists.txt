@@ -16,12 +16,12 @@ function(suite name)
   add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
-suite(nuphy ../src/nuphy.c)
+suite(nuphy ../src/nuphy.c ../src/reports.c)
 suite(reports ../src/reports.c)
 suite(chanpick ../src/chanpick.c)
 suite(noise ../src/noise.c)
 suite(chanwatch ../src/chanwatch.c ../src/noise.c)
-suite(link ../src/link.c ../src/nuphy.c ../src/pairwin.c)
+suite(link ../src/link.c ../src/nuphy.c ../src/pairwin.c ../src/reports.c)
 suite(diagproto ../src/link.c ../src/nuphy.c ../src/pairwin.c
   ../src/unifying.c ../src/hidpp.c ../src/reports.c ../src/chanwatch.c ../src/noise.c ../src/btlist.c ../src/protocol.c)
 target_compile_definitions(test_diagproto PRIVATE

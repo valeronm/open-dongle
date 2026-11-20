@@ -2,13 +2,40 @@
 #include "reports.h"
 
 static struct reports r;
+static struct report held;
 
-static bool send_key(uint8_t code)
+static void hold_bit(uint8_t usage, bool down)
 {
-	struct report next = {.kind = REPORT_KEYBOARD};
+	if (down) {
+		held.keys[usage / 8] |= 1u << (usage % 8);
+	} else {
+		held.keys[usage / 8] &= ~(1u << (usage % 8));
+	}
+}
 
-	next.keyboard[2] = code;
-	return reports_update(&r, &next, REPORT_UNSTAMPED);
+static unsigned set_key(uint8_t usage, bool down)
+{
+	hold_bit(usage, down);
+	return reports_update(&r, &held, REPORT_UNSTAMPED);
+}
+
+static unsigned press(uint8_t usage)
+{
+	return set_key(usage, true);
+}
+
+static unsigned release(uint8_t usage)
+{
+	return set_key(usage, false);
+}
+
+static unsigned send_key(uint8_t code)
+{
+	held = (struct report){.kind = REPORT_KEYBOARD};
+	if (code == 0) {
+		return reports_update(&r, &held, REPORT_UNSTAMPED);
+	}
+	return press(code);
 }
 
 static void drain(void)
@@ -24,6 +51,7 @@ static void drain(void)
 
 static void before(void)
 {
+	held = (struct report){.kind = REPORT_KEYBOARD};
 	reports_init(&r);
 	reports_set_live(&r, true);
 	drain();
@@ -50,11 +78,11 @@ static void test_quick_tap_keeps_press_and_release_in_order(void)
 	send_key(0x09);
 	send_key(0x00);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.kind, REPORT_KEYBOARD);
-	CHECK_EQ(out.report.keyboard[2], 0x09);
+	CHECK_EQ(out.report.kind, REPORT_USB_BOOT);
+	CHECK_EQ(out.report.boot[2], 0x09);
 	reports_pop(&r, REPORT_IFACE_KEYBOARD);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.keyboard[2], 0x00);
+	CHECK_EQ(out.report.boot[2], 0x00);
 }
 
 static void test_media_report_carries_its_usage(void)
@@ -65,7 +93,7 @@ static void test_media_report_carries_its_usage(void)
 	before();
 	reports_update(&r, &consumer, REPORT_UNSTAMPED);
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.report.kind, REPORT_USB_CONSUMER);
 	CHECK_EQ(out.report.usage, 0x00e9);
 }
 
@@ -83,8 +111,8 @@ static void test_while_not_live_only_the_current_state_survives(void)
 	reports_set_live(&r, true);
 	while (reports_peek(&r, REPORT_IFACE_KEYBOARD, &out)) {
 		keyboards++;
-		CHECK_EQ(out.report.kind, REPORT_KEYBOARD);
-		CHECK_EQ(out.report.keyboard[2], 0x0a);
+		CHECK_EQ(out.report.kind, REPORT_USB_BOOT);
+		CHECK_EQ(out.report.boot[2], 0x0a);
 		reports_pop(&r, REPORT_IFACE_KEYBOARD);
 	}
 	CHECK_EQ(keyboards, 1);
@@ -99,8 +127,8 @@ static void test_release_all_lets_go_of_a_held_key(void)
 	drain();
 	reports_release_all(&r);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.kind, REPORT_KEYBOARD);
-	CHECK_EQ(out.report.keyboard[2], 0x00);
+	CHECK_EQ(out.report.kind, REPORT_USB_BOOT);
+	CHECK_EQ(out.report.boot[2], 0x00);
 }
 
 static void test_release_all_lets_go_of_held_media_and_system_keys(void)
@@ -115,11 +143,11 @@ static void test_release_all_lets_go_of_held_media_and_system_keys(void)
 	drain();
 	reports_release_all(&r);
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.report.kind, REPORT_USB_CONSUMER);
 	CHECK_EQ(out.report.usage, 0);
 	reports_pop(&r, REPORT_IFACE_EXTRA);
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_SYSTEM);
+	CHECK_EQ(out.report.kind, REPORT_USB_SYSTEM);
 	CHECK_EQ(out.report.usage, 0);
 	reports_pop(&r, REPORT_IFACE_EXTRA);
 	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
@@ -130,12 +158,12 @@ static void test_overflow_merges_the_oldest_change(void)
 	struct report_entry out;
 
 	before();
-	for (int i = 1; i <= REPORTS_QUEUE_LEN + 1; i++) {
-		send_key((uint8_t)i);
+	for (int i = 0; i <= REPORTS_QUEUE_LEN; i++) {
+		send_key((uint8_t)(REPORT_KEY_FIRST + i));
 	}
 	CHECK_EQ(r.merges, 1);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.keyboard[2], 2);
+	CHECK_EQ(out.report.boot[2], REPORT_KEY_FIRST + 1);
 }
 
 static void test_consumer_report_does_not_hold_up_the_keyboard(void)
@@ -147,10 +175,10 @@ static void test_consumer_report_does_not_hold_up_the_keyboard(void)
 	reports_update(&r, &consumer, REPORT_UNSTAMPED);
 	send_key(0x09);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.kind, REPORT_KEYBOARD);
-	CHECK_EQ(out.report.keyboard[2], 0x09);
+	CHECK_EQ(out.report.kind, REPORT_USB_BOOT);
+	CHECK_EQ(out.report.boot[2], 0x09);
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.report.kind, REPORT_USB_CONSUMER);
 	CHECK_EQ(out.report.usage, 0x00e9);
 }
 
@@ -167,24 +195,28 @@ static void test_going_live_queues_each_kind_on_its_interface(void)
 	reports_update(&r, &system, REPORT_UNSTAMPED);
 	reports_set_live(&r, true);
 	CHECK(reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
-	CHECK_EQ(out.report.kind, REPORT_KEYBOARD);
-	CHECK_EQ(out.report.keyboard[2], 0x09);
+	CHECK_EQ(out.report.kind, REPORT_USB_BOOT);
+	CHECK_EQ(out.report.boot[2], 0x09);
 	reports_pop(&r, REPORT_IFACE_KEYBOARD);
 	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_CONSUMER);
+	CHECK_EQ(out.report.kind, REPORT_USB_CONSUMER);
 	CHECK_EQ(out.report.usage, 0x00e9);
 	reports_pop(&r, REPORT_IFACE_EXTRA);
 	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
-	CHECK_EQ(out.report.kind, REPORT_SYSTEM);
+	CHECK_EQ(out.report.kind, REPORT_USB_SYSTEM);
 	CHECK_EQ(out.report.usage, 0x0081);
+	reports_pop(&r, REPORT_IFACE_EXTRA);
+	CHECK(reports_peek(&r, REPORT_IFACE_EXTRA, &out));
+	CHECK_EQ(out.report.kind, REPORT_USB_NKRO);
 	reports_pop(&r, REPORT_IFACE_EXTRA);
 	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 }
 
 static void test_a_key_modifier_or_media_usage_counts_as_held(void)
 {
-	struct report shift = {.kind = REPORT_KEYBOARD, .keyboard = {0x02}};
+	static const uint8_t no_keys[REPORT_KEY_SLOTS];
+	struct report shift = reports_held_keys(0x02, no_keys);
 	struct report volume = {.kind = REPORT_CONSUMER, .usage = 0xe9};
 
 	before();
@@ -228,7 +260,7 @@ static void test_mouse_reports_go_to_their_own_interface(void)
 	CHECK(!reports_peek(&r, REPORT_IFACE_KEYBOARD, &out));
 	CHECK(!reports_peek(&r, REPORT_IFACE_EXTRA, &out));
 	CHECK(reports_peek(&r, REPORT_IFACE_MOUSE, &out));
-	CHECK_EQ(out.report.kind, REPORT_MOUSE);
+	CHECK_EQ(out.report.kind, REPORT_USB_MOUSE);
 	CHECK_EQ(out.report.mouse.x, 3);
 	CHECK_EQ(out.report.mouse.y, -2);
 }
@@ -442,8 +474,174 @@ static void test_equal_resolutions_pass_the_wheel_through(void)
 	CHECK_EQ(reports_scale_wheel(&carry, -3, 1, 1), -3);
 }
 
+static const uint8_t asdfjkl[] = {0x04, 0x16, 0x07, 0x09, 0x0d, 0x0e, 0x0f};
+
+static bool nkro_has(const struct report_usb *u, uint8_t usage)
+{
+	return u->nkro[usage / 8] & (1u << (usage % 8));
+}
+
+static bool last_on(enum report_iface iface, struct report_usb *out)
+{
+	struct report_entry e;
+	bool any = false;
+
+	while (reports_peek(&r, iface, &e)) {
+		*out = e.report;
+		any = true;
+		reports_pop(&r, iface);
+	}
+	return any;
+}
+
+static void press_asdfjkl(void)
+{
+	for (size_t i = 0; i < sizeof(asdfjkl); i++) {
+		press(asdfjkl[i]);
+	}
+}
+
+static void test_a_seventh_key_goes_to_the_nkro_report(void)
+{
+	static const uint8_t six[REPORT_KEYBOARD_LEN] = {0, 0, 0x04, 0x16, 0x07, 0x09, 0x0d, 0x0e};
+	struct report_usb u;
+
+	before();
+	for (size_t i = 0; i < 6; i++) {
+		press(asdfjkl[i]);
+	}
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_MEM(u.boot, six, sizeof(six));
+	CHECK(!last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK_EQ(press(0x0f), 1u << REPORT_IFACE_EXTRA);
+	CHECK(!last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK(last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK_EQ(u.kind, REPORT_USB_NKRO);
+	CHECK(nkro_has(&u, 0x0f));
+	CHECK(!nkro_has(&u, 0x04));
+}
+
+static void test_a_freed_slot_waits_for_a_new_key(void)
+{
+	static const uint8_t hole[REPORT_KEYBOARD_LEN] = {0, 0, 0x04, 0, 0x07, 0x09, 0x0d, 0x0e};
+	struct report_usb u;
+
+	before();
+	press_asdfjkl();
+	drain();
+	CHECK_EQ(release(0x16), 1u << REPORT_IFACE_KEYBOARD);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_MEM(u.boot, hole, sizeof(hole));
+	CHECK(!last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK_EQ(press(0x05), 1u << REPORT_IFACE_KEYBOARD);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_EQ(u.boot[3], 0x05);
+}
+
+static void test_keys_pressed_together_fill_slots_in_usage_order(void)
+{
+	static const uint8_t six[REPORT_KEYBOARD_LEN] = {0, 0, 0x04, 0x07, 0x09, 0x0d, 0x0e, 0x0f};
+	struct report_usb u;
+
+	before();
+	for (size_t i = 0; i < sizeof(asdfjkl); i++) {
+		hold_bit(asdfjkl[i], true);
+	}
+	CHECK_EQ(reports_update(&r, &held, REPORT_UNSTAMPED),
+		 (1u << REPORT_IFACE_KEYBOARD) | (1u << REPORT_IFACE_EXTRA));
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_MEM(u.boot, six, sizeof(six));
+	CHECK(last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK(nkro_has(&u, 0x16));
+	CHECK(!nkro_has(&u, 0x0f));
+}
+
+static void test_modifiers_go_to_the_boot_report_only(void)
+{
+	struct report_usb u;
+
+	before();
+	press(0xe1);
+	press(0x04);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_EQ(u.boot[0], 0x02);
+	CHECK_EQ(u.boot[2], 0x04);
+	CHECK_EQ(u.boot[3], 0);
+	CHECK(!last_on(REPORT_IFACE_EXTRA, &u));
+}
+
+static void test_a_reserved_key_takes_only_a_boot_slot(void)
+{
+	struct report_usb u;
+
+	before();
+	CHECK_EQ(press(0xe8), 1u << REPORT_IFACE_KEYBOARD);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_EQ(u.boot[2], 0xe8);
+	for (size_t i = 0; i < 5; i++) {
+		press(asdfjkl[i]);
+	}
+	drain();
+	CHECK_EQ(press(0xe9), 0);
+	CHECK(!last_on(REPORT_IFACE_EXTRA, &u));
+}
+
+static void test_release_all_empties_both_reports(void)
+{
+	static const uint8_t no_boot[REPORT_KEYBOARD_LEN];
+	static const uint8_t no_nkro[REPORT_NKRO_LEN];
+	struct report_usb u;
+
+	before();
+	press_asdfjkl();
+	drain();
+	reports_release_all(&r);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_MEM(u.boot, no_boot, sizeof(no_boot));
+	CHECK(last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK_EQ(u.kind, REPORT_USB_NKRO);
+	CHECK_MEM(u.nkro, no_nkro, sizeof(no_nkro));
+}
+
+static void test_going_live_resends_both_reports(void)
+{
+	struct report_usb u;
+
+	before();
+	press_asdfjkl();
+	reports_set_live(&r, false);
+	reports_set_live(&r, true);
+	CHECK(last_on(REPORT_IFACE_KEYBOARD, &u));
+	CHECK_EQ(u.boot[2], 0x04);
+	CHECK(last_on(REPORT_IFACE_EXTRA, &u));
+	CHECK_EQ(u.kind, REPORT_USB_NKRO);
+	CHECK(nkro_has(&u, 0x0f));
+}
+
+static void test_boot_slots_become_held_keys(void)
+{
+	static const uint8_t slots[REPORT_KEY_SLOTS] = {0x04, 0x01, 0x00, 0x16, 0, 0};
+	struct report k = reports_held_keys(0x02, slots);
+
+	CHECK_EQ(k.kind, REPORT_KEYBOARD);
+	CHECK(reports_key_held(&k, 0xe1));
+	CHECK(!reports_key_held(&k, 0xe0));
+	CHECK(reports_key_held(&k, 0x04));
+	CHECK(reports_key_held(&k, 0x16));
+	CHECK(!reports_key_held(&k, 0x01));
+	CHECK(!reports_key_held(&k, 0x00));
+}
+
 int main(void)
 {
+	RUN(test_a_seventh_key_goes_to_the_nkro_report);
+	RUN(test_a_freed_slot_waits_for_a_new_key);
+	RUN(test_keys_pressed_together_fill_slots_in_usage_order);
+	RUN(test_modifiers_go_to_the_boot_report_only);
+	RUN(test_a_reserved_key_takes_only_a_boot_slot);
+	RUN(test_release_all_empties_both_reports);
+	RUN(test_going_live_resends_both_reports);
+	RUN(test_boot_slots_become_held_keys);
 	RUN(test_a_wheel_in_notches_is_multiplied_for_a_high_resolution_host);
 	RUN(test_a_finer_wheel_carries_what_does_not_make_a_whole_step);
 	RUN(test_equal_resolutions_pass_the_wheel_through);

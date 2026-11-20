@@ -115,11 +115,13 @@ static void lock_reports(void)
 	k_mutex_lock(&reports_lock, K_FOREVER);
 }
 
-static void unlock_reports(bool wake_senders)
+#define ALL_IFACES ((1u << REPORT_IFACES) - 1)
+
+static void unlock_reports(unsigned iface_mask)
 {
 	k_mutex_unlock(&reports_lock);
-	if (wake_senders) {
-		for (int iface = 0; iface < REPORT_IFACES; iface++) {
+	for (int iface = 0; iface < REPORT_IFACES; iface++) {
+		if (iface_mask & (1u << iface)) {
 			k_sem_give(&reports_ready[iface]);
 		}
 	}
@@ -130,26 +132,25 @@ bool core_submit(uint8_t slot, const struct report *r, const uint32_t *received_
 	const struct report_stamp stamp =
 		received_us ? (struct report_stamp){.slot = slot, .received_us = *received_us}
 			    : REPORT_UNSTAMPED;
-	bool changed;
+	unsigned changed;
 
 	lock_reports();
 	changed = reports_update(&reports, r, stamp);
-	unlock_reports(false);
+	unlock_reports(changed);
 	if (changed) {
-		k_sem_give(&reports_ready[reports_iface(r->kind)]);
 		last_input_ms[slot] = k_uptime_get();
 	}
 	if (changed && usb_suspended()) {
 		usb_wakeup();
 	}
-	return changed;
+	return changed != 0;
 }
 
 void core_release_keys(void)
 {
 	lock_reports();
 	reports_release_all(&reports);
-	unlock_reports(true);
+	unlock_reports(ALL_IFACES);
 }
 
 uint32_t core_usb_retries(void)
@@ -308,7 +309,7 @@ static bool keys_held(void)
 
 	lock_reports();
 	held = reports_any_held(&reports);
-	unlock_reports(false);
+	unlock_reports(0);
 	return held;
 }
 
@@ -432,7 +433,7 @@ static void clear(const struct diag_request *req)
 	lock_reports();
 	reports.merges = 0;
 	memset(reports.latency, 0, sizeof(reports.latency));
-	unlock_reports(false);
+	unlock_reports(0);
 	atomic_clear(&rx_dropped);
 	atomic_clear(&usb_retries);
 	memset(counts, 0, sizeof(counts));
@@ -547,7 +548,7 @@ static void usb_thread(void *a, void *b, void *c)
 		if (have) {
 			reports_pop(&reports, iface);
 		}
-		unlock_reports(false);
+		unlock_reports(0);
 		if (!have) {
 			k_sem_take(&reports_ready[iface], K_FOREVER);
 			continue;
@@ -559,7 +560,7 @@ static void usb_thread(void *a, void *b, void *c)
 		if (err == 0) {
 			lock_reports();
 			reports_delivered(&reports, &e, clock_now_us());
-			unlock_reports(false);
+			unlock_reports(0);
 		}
 	}
 }
@@ -575,7 +576,7 @@ static void on_usb_live(void)
 {
 	lock_reports();
 	reports_set_live(&reports, usb_live());
-	unlock_reports(true);
+	unlock_reports(ALL_IFACES);
 }
 
 static void on_usb_leds(uint8_t leds)
@@ -623,7 +624,7 @@ void core_fill_status(struct diag_status *st, uint8_t slot)
 	lock_reports();
 	merges = reports.merges;
 	l = reports.latency[slot];
-	unlock_reports(false);
+	unlock_reports(0);
 	*st = (struct diag_status){
 		.uptime_ms = (uint64_t)k_uptime_get(),
 		.boot = boot_info,

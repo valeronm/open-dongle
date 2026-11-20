@@ -2,11 +2,6 @@
 
 #include "hidkeys.h"
 
-#define MODIFIER_FIRST 0xe0
-#define MODIFIER_LAST 0xe7
-#define KEY_FIRST 0x04
-#define KEY_ROLLOVER 0x01
-#define KEY_SLOTS 6
 #define NO_USAGE (-1)
 
 void hidkeys_reset(struct hidkeys *k)
@@ -66,7 +61,7 @@ static void keys_down(const struct hidmap_field *f, const uint8_t *data, uint8_t
 	for (uint8_t i = 0; i < f->count; i++) {
 		int32_t usage = usage_at(f, data, i);
 
-		if (usage >= KEY_FIRST && usage <= UINT8_MAX) {
+		if (usage >= REPORT_KEY_FIRST && usage <= UINT8_MAX) {
 			down[usage / 8] |= 1u << (usage % 8);
 		}
 	}
@@ -86,26 +81,10 @@ static uint16_t first_usage(const struct hidmap_field *f, const uint8_t *data)
 
 static void keyboard_report(const struct hidkeys *k, struct report *out)
 {
-	uint8_t slots = 0;
-
 	*out = (struct report){.kind = REPORT_KEYBOARD};
-	for (uint32_t byte = 0; byte < sizeof(k->sources[0].down); byte++) {
-		uint8_t down = 0;
-
-		for (uint8_t i = 0; i < k->count; i++) {
-			down |= k->sources[i].down[byte];
-		}
-		for (uint32_t usage = byte * 8; down; usage++, down >>= 1) {
-			if (!(down & 1)) {
-				continue;
-			}
-			if (usage >= MODIFIER_FIRST && usage <= MODIFIER_LAST) {
-				out->keyboard[0] |= 1u << (usage - MODIFIER_FIRST);
-			} else if (slots < KEY_SLOTS) {
-				out->keyboard[2 + slots++] = (uint8_t)usage;
-			} else {
-				memset(&out->keyboard[2], KEY_ROLLOVER, KEY_SLOTS);
-			}
+	for (uint8_t i = 0; i < k->count; i++) {
+		for (size_t byte = 0; byte < REPORT_KEYS_LEN; byte++) {
+			out->keys[byte] |= k->sources[i].down[byte];
 		}
 	}
 }

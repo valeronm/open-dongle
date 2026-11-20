@@ -287,16 +287,6 @@ static void counter_block(const uint8_t *frame, uint8_t block[UNIFYING_AES_BLOCK
 	memcpy(&block[sizeof(head) + 4], tail, sizeof(tail));
 }
 
-static bool is_release(const struct report *r)
-{
-	uint8_t keys = 0;
-
-	for (size_t i = 0; i < sizeof(r->keyboard); i++) {
-		keys |= r->keyboard[i];
-	}
-	return keys == 0;
-}
-
 static bool beyond_window(const struct unifying_link *l, uint64_t counter)
 {
 	return counter >= l->next_counter + UNIFYING_COUNTER_WINDOW;
@@ -337,7 +327,7 @@ static void type(struct unifying_link *l, const struct report *r, uint64_t next_
 {
 	l->synced = true;
 	l->next_counter = next_counter;
-	l->keyboard_down = !is_release(r);
+	l->keyboard_down = !reports_keys_empty(r);
 	*out = *r;
 }
 
@@ -347,7 +337,7 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 {
 	uint8_t block[UNIFYING_AES_BLOCK_LEN], stream[UNIFYING_AES_BLOCK_LEN];
 	uint8_t p[REPORT_KEYBOARD_LEN];
-	struct report r = {.kind = REPORT_KEYBOARD};
+	struct report r;
 	bool attack = now_ms < l->attack_until_ms;
 	struct classified c;
 	uint64_t counter;
@@ -380,9 +370,8 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 		l->refused++;
 		return 0;
 	}
-	r.keyboard[0] = p[0];
-	memcpy(&r.keyboard[2], &p[1], sizeof(p) - 2);
-	c = classify(l, counter, is_release(&r), attack);
+	r = reports_held_keys(p[0], &p[1]);
+	c = classify(l, counter, reports_keys_empty(&r), attack);
 	if (c.verdict == REFUSE) {
 		l->refused++;
 	}

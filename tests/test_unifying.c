@@ -822,14 +822,15 @@ static void test_keystroke_report_is_the_decrypted_modifier_and_keys(void)
 		 {0x00, 0x00, 0x4f, 0x00, 0x00, 0x00, 0x00, 0x00}},
 	};
 	struct unifying_link l;
-	struct report r;
+	struct report r, want;
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		unifying_link_reset(&l);
 		sync_at(&l, 1);
 		CHECK(receive_keystroke(&l, 1, cases[i].plain, &r));
 		CHECK_EQ(r.kind, REPORT_KEYBOARD);
-		CHECK_MEM(r.keyboard, cases[i].want, REPORT_KEYBOARD_LEN);
+		want = reports_held_keys(cases[i].want[0], &cases[i].want[2]);
+		CHECK_MEM(r.keys, want.keys, REPORT_KEYS_LEN);
 		CHECK(l.keyboard_down);
 	}
 }
@@ -961,10 +962,10 @@ static void test_under_attack_a_consecutive_pair_types_the_first(void)
 	CHECK(!receive_keystroke_at(&l, 1001, press_a, ATTACK_START + 10, &r));
 	CHECK(receive_keystroke_at(&l, 1002, press_b, ATTACK_START + 20, &r));
 	CHECK_EQ(r.kind, REPORT_KEYBOARD);
-	CHECK_EQ(r.keyboard[2], 0x04);
+	CHECK(reports_key_held(&r, 0x04));
 	CHECK_EQ(l.next_counter, 1002);
 	CHECK(receive_keystroke_at(&l, 1003, press_a, ATTACK_START + 30, &r));
-	CHECK_EQ(r.keyboard[2], 0x05);
+	CHECK(reports_key_held(&r, 0x05));
 	CHECK_EQ(l.next_counter, 1003);
 }
 
@@ -1001,7 +1002,7 @@ static void test_under_attack_a_pair_ending_at_the_window_edge_types_the_first(v
 	CHECK(!receive_keystroke_at(&l, 1001 + UNIFYING_COUNTER_WINDOW - 1, press_a,
 				    ATTACK_START + 10, &r));
 	CHECK(receive_keystroke_at(&l, 1001 + UNIFYING_COUNTER_WINDOW, press_b, ATTACK_START + 20, &r));
-	CHECK_EQ(r.keyboard[2], 0x04);
+	CHECK(reports_key_held(&r, 0x04));
 	CHECK_EQ(l.next_counter, 1001 + UNIFYING_COUNTER_WINDOW);
 }
 
@@ -1025,7 +1026,7 @@ static void test_a_frame_pending_when_the_attack_ends_is_dropped(void)
 	start_attack(&l);
 	CHECK(!receive_keystroke_at(&l, 1001, press_a, ATTACK_START + 10, &r));
 	CHECK(receive_keystroke_at(&l, 1002, press_b, ATTACK_START + UNIFYING_ATTACK_MS, &r));
-	CHECK_EQ(r.keyboard[2], 0x05);
+	CHECK(reports_key_held(&r, 0x05));
 	CHECK_EQ(l.next_counter, 1003);
 }
 
@@ -1041,16 +1042,16 @@ static void test_a_forged_frame_after_a_marker_failure_does_not_raise_the_counte
 
 static void test_under_attack_a_press_confirmed_by_its_release_types_both(void)
 {
-	static const uint8_t no_keys[REPORT_KEYBOARD_LEN] = {0};
+	static const uint8_t no_keys[REPORT_KEYS_LEN] = {0};
 	struct unifying_link l;
 	struct report out[UNIFYING_KEYSTROKE_REPORTS];
 
 	start_attack(&l);
 	CHECK_EQ(receive_keystrokes_at(&l, 1001, press_a, ATTACK_START + 10, out), 0);
 	CHECK_EQ(receive_keystrokes_at(&l, 1002, release, ATTACK_START + 20, out), 2);
-	CHECK_EQ(out[0].keyboard[2], 0x04);
+	CHECK(reports_key_held(&out[0], 0x04));
 	CHECK_EQ(out[1].kind, REPORT_KEYBOARD);
-	CHECK_MEM(out[1].keyboard, no_keys, REPORT_KEYBOARD_LEN);
+	CHECK_MEM(out[1].keys, no_keys, REPORT_KEYS_LEN);
 	CHECK_EQ(l.next_counter, 1003);
 	CHECK(!l.keyboard_down);
 	CHECK_EQ(receive_keystrokes_at(&l, 1004, press_a, ATTACK_START + 30, out), 0);
@@ -1087,11 +1088,11 @@ static void test_a_first_press_confirmed_by_the_next_counter_types_both(void)
 	unifying_link_reset(&l);
 	CHECK_EQ(receive_keystrokes_at(&l, 500, press_a, 0, out), 0);
 	CHECK_EQ(receive_keystrokes_at(&l, 501, press_b, 0, out), 2);
-	CHECK_EQ(out[0].keyboard[2], 0x04);
-	CHECK_EQ(out[1].keyboard[2], 0x05);
+	CHECK(reports_key_held(&out[0], 0x04));
+	CHECK(reports_key_held(&out[1], 0x05));
 	CHECK_EQ(l.next_counter, 502);
 	CHECK_EQ(receive_keystrokes_at(&l, 502, press_a, 0, out), 1);
-	CHECK_EQ(out[0].keyboard[2], 0x04);
+	CHECK(reports_key_held(&out[0], 0x04));
 }
 
 static void test_a_first_release_after_reset_is_typed_at_once(void)
@@ -1166,7 +1167,7 @@ static void test_after_a_reconnect_a_counter_below_the_old_one_is_confirmed_by_t
 	CHECK(!l.synced);
 	CHECK_EQ(receive_keystrokes_at(&l, 0x69c4de07, press_a, 0, out), 0);
 	CHECK_EQ(receive_keystrokes_at(&l, 0x69c4de08, release, 0, out), 2);
-	CHECK_EQ(out[0].keyboard[2], 0x04);
+	CHECK(reports_key_held(&out[0], 0x04));
 	CHECK_EQ(l.next_counter, 0x69c4de09);
 }
 
@@ -1828,7 +1829,7 @@ static void test_a_session_types_a_keystroke_from_the_device_pipe(void)
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, f, sizeof(f), 0, 20, nonce, fake_aes, &out);
 	CHECK_EQ(out.reports, 1);
 	CHECK_EQ(out.report[0].kind, REPORT_KEYBOARD);
-	CHECK_EQ(out.report[0].keyboard[2], 0x04);
+	CHECK(reports_key_held(&out.report[0], 0x04));
 }
 
 static void hear(struct unifying_session *s, uint64_t now, struct unifying_out *out)

@@ -220,7 +220,7 @@ static void test_report_messages_convert_to_reports(void)
 
 	CHECK(nuphy_report(&key, &out));
 	CHECK_EQ(out.kind, REPORT_KEYBOARD);
-	CHECK_MEM(out.keyboard, key.keyboard, REPORT_KEYBOARD_LEN);
+	CHECK(reports_key_held(&out, 0x09));
 	CHECK(nuphy_report(&consumer, &out));
 	CHECK_EQ(out.kind, REPORT_CONSUMER);
 	CHECK_EQ(out.usage, 0x00e9);

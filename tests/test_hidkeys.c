@@ -35,12 +35,15 @@ static size_t send(const struct hidmap *m, uint8_t id, const char *text, struct 
 
 static void check_keyboard(const struct report *r, uint8_t modifiers, const char *slots)
 {
-	uint8_t want[REPORT_KEYBOARD_LEN] = {modifiers};
+	uint8_t keys[REPORT_KEY_SLOTS];
+	struct report want;
 
-	CHECK_EQ(hex(slots, &want[2]), 6);
+	CHECK_EQ(hex(slots, keys), REPORT_KEY_SLOTS);
+	want = reports_held_keys(modifiers, keys);
 	CHECK_EQ(r->kind, REPORT_KEYBOARD);
-	CHECK_MEM(r->keyboard, want, sizeof(want));
+	CHECK_MEM(r->keys, want.keys, REPORT_KEYS_LEN);
 }
+
 
 static void air75_letter_and_release(void)
 {
@@ -117,7 +120,7 @@ static void replay(const char *name, const struct hidmap *m)
 		for (size_t i = 0; i < n; i++) {
 			if (out[i].kind == REPORT_KEYBOARD) {
 				last = out[i];
-				pressed += last.keyboard[2] != 0;
+				pressed += !reports_keys_empty(&last);
 			}
 		}
 	}
@@ -149,15 +152,18 @@ static void bitmap_report_merges_with_the_array_report(void)
 	check_keyboard(&out[0], 0, "040000000000");
 }
 
-static void seven_keys_report_rollover(void)
+static void seven_keys_from_two_reports_are_all_held(void)
 {
+	static const uint8_t held[] = {0x04, 0x16, 0x09, 0x0d, 0x0e, 0x07, 0x0f};
 	struct report out[REPORT_KINDS];
 
 	hidkeys_reset(&keys);
-	send(&air75, 1, "02000405060708090a", out);
-	check_keyboard(&out[0], 0x02, "040506070809");
-	CHECK_EQ(send(&air75, 2, "00000400000000000000000000000000", out), 1);
-	check_keyboard(&out[0], 0x02, "010101010101");
+	send(&air75, 1, "00000416090d0e07", out);
+	CHECK_EQ(send(&air75, 2, "00008000000000000000000000000000", out), 1);
+	for (size_t i = 0; i < sizeof(held); i++) {
+		CHECK(reports_key_held(&out[0], held[i]));
+	}
+	CHECK(!reports_key_held(&out[0], 0x01));
 }
 
 static void out_of_range_usages_are_dropped(void)
@@ -283,7 +289,7 @@ int main(void)
 	RUN(replay_air75_fixture);
 	RUN(replay_mx_keys_fixture);
 	RUN(bitmap_report_merges_with_the_array_report);
-	RUN(seven_keys_report_rollover);
+	RUN(seven_keys_from_two_reports_are_all_held);
 	RUN(out_of_range_usages_are_dropped);
 	RUN(array_values_below_four_are_not_keys);
 	RUN(a_short_report_is_ignored);

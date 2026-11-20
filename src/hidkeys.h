@@ -14,7 +14,7 @@ struct hidkeys {
 	/* The keys each keyboard report ID holds down, one bit per usage. */
 	struct {
 		uint8_t report_id;
-		uint8_t down[32];
+		uint8_t down[REPORT_KEYS_LEN];
 	} sources[HIDKEYS_SOURCES];
 	uint8_t count;
 };

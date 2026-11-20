@@ -11,7 +11,7 @@
 		compatible = "zephyr,hid-device";
 		label = "HID media";
 		protocol-code = "none";
-		in-report-size = <3>;
+		in-report-size = <29>;
 		in-polling-period-us = <1000>;
 	};
 

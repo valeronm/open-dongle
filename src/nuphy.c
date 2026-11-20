@@ -102,8 +102,7 @@ bool nuphy_report(const struct nuphy_msg *m, struct report *out)
 {
 	switch (m->kind) {
 	case NUPHY_KEYBOARD:
-		out->kind = REPORT_KEYBOARD;
-		memcpy(out->keyboard, m->keyboard, sizeof(out->keyboard));
+		*out = reports_held_keys(m->keyboard[0], &m->keyboard[2]);
 		return true;
 	case NUPHY_MOUSE:
 		*out = (struct report){.kind = REPORT_MOUSE, .mouse = m->mouse};

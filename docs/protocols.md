@@ -141,6 +141,7 @@ tells them apart by the kind the device advertises.
 | | PC's Bluetooth | SpareDongle |  |
 |---|---|---|---|
 | Keyboard keys (6KRO) | yes | yes | ⚪ |
+| More than six held keys | yes | yes | ⚪ |
 | Media and system keys | yes | yes | ⚪ |
 | Vendor reports, such as keys set up by Logitech Options | yes | ignored | 🔴 |
 | Mice | yes | one, beside the keyboard | ⚪ |
