@@ -486,10 +486,17 @@ fn other_protocols(running: Protocol) -> impl Iterator<Item = Protocol> {
     Protocol::ALL.into_iter().filter(move |p| *p != running)
 }
 
+fn protocol_key(protocol: Protocol) -> char {
+    match protocol {
+        Protocol::Nuphy => 'n',
+        Protocol::Unifying => 'u',
+        Protocol::Bluetooth => 'b',
+    }
+}
+
 fn choice_question(running: Protocol) -> String {
     let choices: Vec<String> = other_protocols(running)
-        .zip(1..)
-        .map(|(p, n)| format!("{n} {}", p.name()))
+        .map(|p| format!("{} {}", protocol_key(p), p.name()))
         .collect();
     format!(
         "Switch to which protocol? {}  (any other key cancels)",
@@ -499,17 +506,15 @@ fn choice_question(running: Protocol) -> String {
 
 fn chosen(running: Protocol, key: KeyCode) -> Option<Protocol> {
     let KeyCode::Char(c) = key else { return None };
-    let n = c.to_digit(10)? as usize;
-    other_protocols(running).nth(n.checked_sub(1)?)
+    other_protocols(running).find(|p| protocol_key(*p) == c)
 }
 
-const PASSKEY_QUESTION: &str =
-    "Pair how? 1 with a passkey  2 without a passkey  (any other key cancels)";
+const PASSKEY_QUESTION: &str = "Pair how? p with a passkey  n no passkey  (any other key cancels)";
 
 fn chosen_no_passkey(key: KeyCode) -> Option<bool> {
     match key {
-        KeyCode::Char('1') => Some(false),
-        KeyCode::Char('2') => Some(true),
+        KeyCode::Char('p') => Some(false),
+        KeyCode::Char('n') => Some(true),
         _ => None,
     }
 }
@@ -2151,9 +2156,9 @@ mod tests {
         s.handle(KeyCode::Char('p'), Drawn::default());
         assert_eq!(
             texts(&s.help(200)),
-            ["Switch to which protocol? 1 NuPhy  2 Bluetooth  (any other key cancels)"]
+            ["Switch to which protocol? n NuPhy  b Bluetooth  (any other key cancels)"]
         );
-        assert!(s.handle(KeyCode::Char('2'), Drawn::default()).is_none());
+        assert!(s.handle(KeyCode::Char('b'), Drawn::default()).is_none());
         assert!(matches!(
             s.prompt,
             Some(Prompt::Switch(Protocol::Bluetooth))
@@ -2170,7 +2175,7 @@ mod tests {
         let mut app = app_with(status_of(Protocol::Nuphy));
         let s = session(&mut app);
         s.handle(KeyCode::Char('p'), Drawn::default());
-        assert!(s.handle(KeyCode::Char('3'), Drawn::default()).is_none());
+        assert!(s.handle(KeyCode::Char('n'), Drawn::default()).is_none());
         assert!(s.prompt.is_none() && s.choosing.is_none());
     }
 
@@ -2250,9 +2255,9 @@ mod tests {
         assert_eq!(sent.get(), None);
         assert_eq!(
             footer(&mut app),
-            "Pair how? 1 with a passkey  2 without a passkey  (any other key cancels)"
+            "Pair how? p with a passkey  n no passkey  (any other key cancels)"
         );
-        press(&mut app, '2');
+        press(&mut app, 'n');
         assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
         assert_eq!(
             footer(&mut app),
@@ -2262,6 +2267,9 @@ mod tests {
         press(&mut app, 'x');
         assert!(footer(&mut app).starts_with("a pair"));
         assert_eq!(sent.get(), Some((Command::Pair as u8, 1)));
+        press(&mut app, 'a');
+        press(&mut app, 'p');
+        assert_eq!(sent.get(), Some((Command::Pair as u8, 0)));
     }
 
     fn app_moving_from(status: Status) -> (App<Fake>, std::rc::Rc<std::cell::Cell<Option<u32>>>) {
