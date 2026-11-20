@@ -67,9 +67,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: spare-dongle
-      # The firmware links the diagnostic protocol's Rust library.
+      # The firmware links the diagnostic protocol's Rust library. The toolchain image has wget but
+      # no curl.
       - run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+          wget -qO- https://sh.rustup.rs |
             sh -s -- -y --profile minimal --default-toolchain "${{ needs.check.outputs.rust }}" \
               --target thumbv7em-none-eabi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
