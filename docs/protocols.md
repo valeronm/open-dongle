@@ -78,15 +78,15 @@ configuring the receiver and its devices.
 | Encrypted keystrokes | yes[^newlin] | yes | ⚪ |
 | Media keys | yes | yes | ⚪ |
 | Power and sleep keys | yes[^dj] | not forwarded | 🔴 |
-| Keys enabled over HID++, such as the MX Keys's F1 | with Logitech Options or Solaar[^solaar-1374] | not sent[^no-frame] | 🔴 |
+| Screen brightness on the MX Keys's F1 and F2 | with Logitech Options or Solaar,[^solaar-1374] or in the keyboard's macOS mode | yes[^brightness] | 🟢 |
 | Caps Lock LED on the keyboard | yes[^dj] | yes[^led] | ⚪ |
 | Logitech Options and Solaar | yes[^solaar] | no | 🔴 |
 | Keyboard name, serial and type | through HID++ | shown by the tool | ⚪ |
 | Pairing | on request from Logitech's software | after plugging in or on request | 🟢 |
 
 Pairing a new keyboard replaces the one SpareDongle had. Both pair a keyboard that is switched off
-and on while pairing is open.[^solaar-pair][^mx-pairing] SpareDongle does not implement HID++, so
-Logitech's software cannot see it.
+and on while pairing is open.[^solaar-pair][^mx-pairing] SpareDongle speaks HID++ only to divert
+the brightness keys, so Logitech's software cannot see it.
 
 SpareDongle refuses a keystroke that fails decryption or carries a counter used since the keyboard
 last connected. Before the keyboard's counter is known, and for 5 s after a failed decryption, it
@@ -126,6 +126,9 @@ the link key, then read and type keystrokes.[^mengs-1]
 | Keyboard keys sent by a paired mouse | some refused[^rqr-10] | no mice pair | ⚪ |
 | Link key read over USB (CVE-2019-13055) | refused on RQR24[^rqr-10][^logi-advisory] | no command returns it | ⚪ |
 | Firmware | Logitech-signed only[^mengs-2] | any image, see [Firmware updates](#firmware-updates) | 🔴 |
+
+The keyboard sends the brightness keys SpareDongle diverts unencrypted, so anyone in radio range
+can change the screen brightness, as with the media keys.
 
 ## Bluetooth LE
 
@@ -218,8 +221,8 @@ Unifying link key.
     "If the device is already turned on, turn it off and on again."
 [^mx-pairing]: [Pairing](unifying.md#pairing): an MX Keys paired with a genuine receiver only when
     switched off and on.
-[^no-frame]: [After pairing](unifying.md#after-pairing): F1 sent no frame of any type to
-    SpareDongle.
+[^brightness]: [HID++](unifying.md#hid): SpareDongle diverts the brightness keys itself, as
+    Solaar does.
 [^media]: [After pairing](unifying.md#after-pairing), seen on air from an MX Keys.
 [^led]: [After pairing](unifying.md#after-pairing), seen on air with an MX Keys.
 [^bastille-11]: Bastille, [advisory 11](https://github.com/BastilleResearch/mousejack/blob/master/doc/advisories/bastille-11.logitech.public.txt): the C-U0007 on

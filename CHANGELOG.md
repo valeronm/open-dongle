@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- In Unifying mode a Logitech keyboard's screen brightness keys, such as the MX Keys's F1 and F2,
+  work without Logitech's software.
+- The events record each time the dongle diverts a Unifying keyboard's keys, or what stopped it;
+  the 0.4.0 tool shows the event as unknown.
+
 ## [0.4.0] - 2026-11-19
 
 - In Bluetooth mode the dongle connects a mouse beside the keyboard, or either alone, and stores up

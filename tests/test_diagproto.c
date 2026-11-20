@@ -370,7 +370,8 @@ static void test_event_type_numbers_match_fixture(void)
 			       HISTORY_PAIRING_CLOSED, HISTORY_PAIRING_TIMEOUT,
 			       HISTORY_RECONNECT, HISTORY_ATTACK, HISTORY_BT_CONNECTED,
 			       HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
-			       HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST, HISTORY_BT_FORGOTTEN};
+			       HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST, HISTORY_BT_FORGOTTEN,
+			       HISTORY_KEYS_DIVERTED};
 	uint8_t want[sizeof(got) + 1];
 	size_t want_len = load_fixture("event-types.hex", want, sizeof(want));
 

@@ -1207,7 +1207,7 @@ static void test_a_reconnect_releases_held_keys(void)
 	CHECK(!unifying_link_reconnect(&l, 0x07, connect_10, sizeof(connect_10)));
 	unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r);
 	CHECK(unifying_link_reconnect(&l, 0x07, connect_10, sizeof(connect_10)));
-	CHECK(!l.media_down);
+	CHECK_EQ(l.media_usage, 0);
 }
 
 static void test_a_reconnect_with_no_key_held_releases_nothing(void)
@@ -1302,7 +1302,7 @@ static void test_media_frames_carry_the_usage_in_bytes_2_and_3(void)
 	CHECK(unifying_media_report(&l, media_volume_up, sizeof(media_volume_up), &r));
 	CHECK_EQ(r.kind, REPORT_CONSUMER);
 	CHECK_EQ(r.usage, 0x00e9);
-	CHECK(l.media_down);
+	CHECK(l.media_usage != 0);
 	CHECK(unifying_media_report(&l, media_volume_down, sizeof(media_volume_down), &r));
 	CHECK_EQ(r.usage, 0x00ea);
 	CHECK(unifying_media_report(&l, media_mute, sizeof(media_mute), &r));
@@ -1310,7 +1310,7 @@ static void test_media_frames_carry_the_usage_in_bytes_2_and_3(void)
 	CHECK(unifying_media_report(&l, media_release, sizeof(media_release), &r));
 	CHECK_EQ(r.kind, REPORT_CONSUMER);
 	CHECK_EQ(r.usage, 0);
-	CHECK(!l.media_down);
+	CHECK_EQ(l.media_usage, 0);
 }
 
 static void test_a_media_frame_with_a_bad_checksum_or_another_type_is_refused(void)
@@ -1329,7 +1329,7 @@ static void test_a_media_frame_with_a_bad_checksum_or_another_type_is_refused(vo
 	f[1] = 0xc3;
 	seal(f, sizeof(f));
 	CHECK(!unifying_media_report(&l, f, sizeof(f) - 1, &r));
-	CHECK(!l.media_down);
+	CHECK_EQ(l.media_usage, 0);
 }
 
 static void test_the_led_frame_carries_the_led_bits(void)
@@ -1475,11 +1475,11 @@ static void test_a_restored_record_pairs_the_device(void)
 	CHECK_EQ(q.attempt.state, UNIFYING_IDLE);
 }
 
-static void check_due(struct unifying_led *led, uint32_t taken, uint8_t want)
+static void check_due(const struct unifying_led *led, uint8_t want)
 {
 	uint8_t leds = 0xff;
 
-	CHECK(unifying_led_due(led, true, taken, &leds));
+	CHECK(unifying_led_due(led, true, &leds));
 	CHECK_EQ(leds, want);
 }
 
@@ -1488,7 +1488,7 @@ static void test_no_led_frame_is_due_before_a_change_or_resend(void)
 	struct unifying_led led = {0};
 	uint8_t leds;
 
-	CHECK(!unifying_led_due(&led, true, 0, &leds));
+	CHECK(!unifying_led_due(&led, true, &leds));
 }
 
 static void test_an_led_change_is_sent_at_once(void)
@@ -1497,10 +1497,9 @@ static void test_an_led_change_is_sent_at_once(void)
 	uint8_t leds;
 
 	unifying_led_want(&led, 0x02);
-	check_due(&led, 7, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
-	CHECK(!unifying_led_due(&led, true, 7, &leds));
-	CHECK(!unifying_led_due(&led, true, 8, &leds));
+	check_due(&led, 0x02);
+	unifying_led_sent(&led, 0x02);
+	CHECK(!unifying_led_due(&led, true, &leds));
 }
 
 static void test_the_first_led_state_is_sent_even_when_it_is_zero(void)
@@ -1508,49 +1507,19 @@ static void test_the_first_led_state_is_sent_even_when_it_is_zero(void)
 	struct unifying_led led = {0};
 
 	unifying_led_want(&led, 0x00);
-	check_due(&led, 0, 0x00);
+	check_due(&led, 0x00);
 }
 
-static void test_an_led_change_while_one_is_outstanding_waits_until_it_is_taken(void)
+static void test_changes_back_to_the_sent_state_send_nothing_more(void)
 {
 	struct unifying_led led = {0};
 	uint8_t leds;
 
 	unifying_led_want(&led, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
-	unifying_led_want(&led, 0x00);
-	unifying_led_want(&led, 0x03);
-	CHECK(!unifying_led_due(&led, true, 7, &leds));
-	check_due(&led, 8, 0x03);
-	unifying_led_sent(&led, 0x03, 8);
-	CHECK(!unifying_led_due(&led, true, 9, &leds));
-}
-
-static void test_changes_back_to_the_outstanding_state_send_nothing_more(void)
-{
-	struct unifying_led led = {0};
-	uint8_t leds;
-
-	unifying_led_want(&led, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
+	unifying_led_sent(&led, 0x02);
 	unifying_led_want(&led, 0x00);
 	unifying_led_want(&led, 0x02);
-	CHECK(!unifying_led_due(&led, true, 8, &leds));
-}
-
-static void test_resends_while_outstanding_are_sent_once_after_it_is_taken(void)
-{
-	struct unifying_led led = {0};
-	uint8_t leds;
-
-	unifying_led_want(&led, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
-	unifying_led_resend(&led);
-	unifying_led_resend(&led);
-	CHECK(!unifying_led_due(&led, true, 7, &leds));
-	check_due(&led, 8, 0x02);
-	unifying_led_sent(&led, 0x02, 8);
-	CHECK(!unifying_led_due(&led, true, 9, &leds));
+	CHECK(!unifying_led_due(&led, true, &leds));
 }
 
 static void test_a_resend_sends_the_wanted_state(void)
@@ -1558,7 +1527,7 @@ static void test_a_resend_sends_the_wanted_state(void)
 	struct unifying_led led = {0};
 
 	unifying_led_resend(&led);
-	check_due(&led, 0, 0x00);
+	check_due(&led, 0x00);
 }
 
 static void test_an_led_frame_not_queued_stays_due(void)
@@ -1566,23 +1535,8 @@ static void test_an_led_frame_not_queued_stays_due(void)
 	struct unifying_led led = {0};
 
 	unifying_led_want(&led, 0x02);
-	check_due(&led, 0, 0x02);
-	check_due(&led, 0, 0x02);
-}
-
-static void test_a_dropped_led_frame_is_sent_again(void)
-{
-	struct unifying_led led = {0};
-	uint8_t leds;
-
-	unifying_led_want(&led, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
-	unifying_led_dropped(&led);
-	check_due(&led, 7, 0x02);
-	unifying_led_sent(&led, 0x02, 7);
-	CHECK(!unifying_led_due(&led, true, 8, &leds));
-	unifying_led_dropped(&led);
-	CHECK(!unifying_led_due(&led, true, 8, &leds));
+	check_due(&led, 0x02);
+	check_due(&led, 0x02);
 }
 
 static void test_no_led_frame_is_due_without_a_paired_device(void)
@@ -1591,8 +1545,8 @@ static void test_no_led_frame_is_due_without_a_paired_device(void)
 	uint8_t leds;
 
 	unifying_led_want(&led, 0x02);
-	CHECK(!unifying_led_due(&led, false, 0, &leds));
-	check_due(&led, 0, 0x02);
+	CHECK(!unifying_led_due(&led, false, &leds));
+	check_due(&led, 0x02);
 }
 
 static void session_paired(struct unifying_session *s)
@@ -1877,6 +1831,488 @@ static void test_a_session_types_a_keystroke_from_the_device_pipe(void)
 	CHECK_EQ(out.report[0].keyboard[2], 0x04);
 }
 
+static void hear(struct unifying_session *s, uint64_t now, struct unifying_out *out)
+{
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
+			       -60, now, nonce, fake_aes, out);
+}
+
+static uint64_t silence_after(const struct unifying_session *s, uint64_t heard)
+{
+	return heard + 2 * (uint64_t)s->link.keepalive_ms;
+}
+
+static const uint8_t find_request[] = {0x00, 0x10, 0x07, 0x00, 0x01, 0x1b, 0x04, 0x00, 0x00, 0xc9};
+
+static void hidpp_frame(uint8_t f[UNIFYING_FRAME_MAX], uint8_t type, uint8_t feature,
+			uint8_t function, uint8_t p0, uint8_t p1, uint8_t p2)
+{
+	memset(f, 0, UNIFYING_FRAME_MAX);
+	f[1] = type;
+	f[2] = 0x07;
+	f[3] = feature;
+	f[4] = function;
+	f[5] = p0;
+	f[6] = p1;
+	f[7] = p2;
+	seal(f, UNIFYING_FRAME_MAX);
+}
+
+static void hidpp(uint8_t f[UNIFYING_FRAME_MAX], uint8_t feature, uint8_t function, uint8_t p0,
+		  uint8_t p1, uint8_t p2)
+{
+	hidpp_frame(f, 0x51, feature, function, p0, p1, p2);
+}
+
+static void divert_request(uint8_t f[UNIFYING_FRAME_MAX], uint8_t cid)
+{
+	hidpp_frame(f, 0x11, 0x08, 0x31, 0x00, cid, 0x03);
+}
+
+static void divert_reply(uint8_t f[UNIFYING_FRAME_MAX], uint8_t cid)
+{
+	hidpp(f, 0x08, 0x31, 0x00, cid, 0x03);
+}
+
+static void divert_refusal(uint8_t f[UNIFYING_FRAME_MAX])
+{
+	hidpp(f, 0xff, 0x08, 0x31, 0x02, 0x00);
+}
+
+static void session_feed(struct unifying_session *s, const uint8_t *f, size_t len, uint64_t now,
+			 struct unifying_out *out)
+{
+	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, f, len, 0, now, nonce, fake_aes, out);
+}
+
+static void session_heard(struct unifying_session *s)
+{
+	struct unifying_out out;
+
+	session_paired(s);
+	hear(s, 10, &out);
+}
+
+static void session_found_the_feature(struct unifying_session *s)
+{
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_heard(s);
+	unifying_session_tick(s, 20, false, 0, 0, &out);
+	hidpp(f, 0x00, 0x01, 0x08, 0x00, 0x04);
+	session_feed(s, f, sizeof(f), 30, &out);
+}
+
+static void session_diverted(struct unifying_session *s)
+{
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_found_the_feature(s);
+	unifying_session_tick(s, 40, false, 0, 0, &out);
+	divert_reply(f, 0xc7);
+	session_feed(s, f, sizeof(f), 50, &out);
+	unifying_session_tick(s, 60, false, 0, 0, &out);
+	divert_reply(f, 0xc8);
+	session_feed(s, f, sizeof(f), 70, &out);
+}
+
+static void check_hidpp(const struct unifying_out *out, const uint8_t *want, size_t len)
+{
+	CHECK_EQ(out->hidpp_len, len);
+	CHECK(memcmp(out->hidpp, want, len) == 0);
+}
+
+static void check_end(const struct unifying_out *out, enum history_divert outcome,
+		      uint8_t diverted, uint8_t refused, uint16_t cid)
+{
+	CHECK(out->divert.ended);
+	CHECK_EQ(out->divert.outcome, outcome);
+	CHECK_EQ(out->divert.diverted, diverted);
+	CHECK_EQ(out->divert.refused, refused);
+	CHECK_EQ(out->divert.cid, cid);
+}
+
+static void tick_queue(struct unifying_session *s, uint64_t now, uint32_t taken,
+		       struct unifying_out *out)
+{
+	unifying_session_tick(s, now, false, 0, taken, out);
+	if (out->send_led) {
+		unifying_session_led_queued(s, out->leds, taken);
+	}
+	if (out->hidpp_len != 0) {
+		unifying_session_hidpp_queued(s, taken);
+	}
+}
+
+static uint64_t run_out_retries(struct unifying_session *s, uint64_t now, uint32_t *taken,
+				const uint8_t *want, size_t len)
+{
+	uint64_t retry = 2 * (uint64_t)s->link.keepalive_ms;
+	struct unifying_out out;
+
+	for (int i = 0; i < UNIFYING_DIVERT_TRIES; i++) {
+		tick_queue(s, now, *taken, &out);
+		check_hidpp(&out, want, len);
+		CHECK(!out.divert.ended);
+		tick_queue(s, now + 1, ++*taken, &out);
+		CHECK_EQ(out.hidpp_len, 0);
+		tick_queue(s, now + retry, *taken, &out);
+		CHECK_EQ(out.hidpp_len, 0);
+		now += retry + 1;
+	}
+	return now;
+}
+
+static void test_a_heard_keyboard_is_asked_where_its_reprogrammable_controls_are(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_heard(&s);
+	unifying_session_tick(&s, 20, false, 0, 0, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
+}
+
+static void test_the_brightness_keys_are_diverted_in_turn_and_reported_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+	uint8_t want[UNIFYING_FRAME_MAX];
+
+	session_found_the_feature(&s);
+	unifying_session_tick(&s, 40, false, 0, 0, &out);
+	divert_request(want, 0xc7);
+	check_hidpp(&out, want, sizeof(want));
+	CHECK_EQ(want[UNIFYING_FRAME_MAX - 1], 0xe5);
+	divert_reply(f, 0xc7);
+	session_feed(&s, f, sizeof(f), 50, &out);
+	CHECK(!out.divert.ended);
+	unifying_session_tick(&s, 60, false, 0, 0, &out);
+	divert_request(want, 0xc8);
+	check_hidpp(&out, want, sizeof(want));
+	divert_reply(f, 0xc8);
+	session_feed(&s, f, sizeof(f), 70, &out);
+	check_end(&out, HISTORY_DIVERT_FINISHED, 2, 0, 0);
+	unifying_session_tick(&s, 80, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	CHECK(!out.divert.ended);
+	unifying_session_tick(&s, 10000, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_an_unanswered_lookup_is_sent_again_then_given_up(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t now;
+
+	uint32_t taken = 0;
+
+	session_heard(&s);
+	now = run_out_retries(&s, 20, &taken, find_request, sizeof(find_request));
+	unifying_session_tick(&s, now, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0);
+	unifying_session_tick(&s, now + 100000, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	CHECK(!out.divert.ended);
+}
+
+static void test_an_unanswered_divert_reports_its_control(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t want[UNIFYING_FRAME_MAX];
+	uint64_t now;
+
+	uint32_t taken = 0;
+
+	session_found_the_feature(&s);
+	divert_request(want, 0xc7);
+	now = run_out_retries(&s, 40, &taken, want, sizeof(want));
+	unifying_session_tick(&s, now, false, 0, 0, &out);
+	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0x00c7);
+}
+
+static void test_a_keyboard_without_reprogrammable_controls_is_reported_and_left_alone(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_heard(&s);
+	unifying_session_tick(&s, 20, false, 0, 0, &out);
+	hidpp(f, 0x00, 0x01, 0x00, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 30, &out);
+	check_end(&out, HISTORY_DIVERT_NO_FEATURE, 0, 0, 0);
+	unifying_session_tick(&s, 40, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_a_refused_divert_is_counted_and_moves_on_to_the_other_key(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+	uint8_t want[UNIFYING_FRAME_MAX];
+
+	session_found_the_feature(&s);
+	unifying_session_tick(&s, 40, false, 0, 0, &out);
+	divert_refusal(f);
+	session_feed(&s, f, sizeof(f), 50, &out);
+	unifying_session_tick(&s, 60, false, 0, 0, &out);
+	divert_request(want, 0xc8);
+	check_hidpp(&out, want, sizeof(want));
+	divert_reply(f, 0xc8);
+	session_feed(&s, f, sizeof(f), 70, &out);
+	check_end(&out, HISTORY_DIVERT_FINISHED, 1, 1, 0);
+}
+
+static void test_diverted_brightness_keys_type_the_brightness_usages(void)
+{
+	static const struct {
+		uint8_t cid;
+		uint16_t usage;
+	} steps[] = {{0xc7, UNIFYING_BRIGHTNESS_DOWN},
+		     {0x00, 0x0000},
+		     {0xc8, UNIFYING_BRIGHTNESS_UP},
+		     {0x00, 0x0000}};
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+		hidpp(f, 0x08, 0x00, 0x00, steps[i].cid, 0x00);
+		session_feed(&s, f, sizeof(f), 100 + i, &out);
+		CHECK_EQ(out.reports, 1);
+		CHECK_EQ(out.report[0].kind, REPORT_CONSUMER);
+		CHECK_EQ(out.report[0].usage, steps[i].usage);
+	}
+}
+
+static void test_an_fn_event_types_nothing(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	hidpp(f, 0x08, 0x00, 0x00, 0x34, 0x00);
+	session_feed(&s, f, sizeof(f), 100, &out);
+	CHECK_EQ(out.reports, 0);
+	hidpp(f, 0x08, 0x00, 0x00, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 110, &out);
+	CHECK_EQ(out.reports, 0);
+}
+
+static void test_a_brightness_event_before_the_feature_is_found_types_nothing(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_heard(&s);
+	hidpp(f, 0x08, 0x00, 0x00, 0xc7, 0x00);
+	session_feed(&s, f, sizeof(f), 20, &out);
+	CHECK_EQ(out.reports, 0);
+}
+
+static void test_a_connect_frame_starts_the_divert_over(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_diverted(&s);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 100,
+			       nonce, fake_aes, &out);
+	tick_queue(&s, 110, 0, &out);
+	CHECK(out.send_led);
+	tick_queue(&s, 111, 1, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
+}
+
+static void test_no_divert_request_goes_out_during_a_pairing_attempt(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_heard(&s);
+	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 15);
+	request_1(f, 0xe1, 0x05);
+	unifying_session_frame(&s, UNIFYING_PIPE_PAIRING, f, sizeof(f), 0, 16, nonce, fake_aes,
+			       &out);
+	unifying_session_tick(&s, 20, false, 0, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_an_led_change_waits_until_the_queued_frame_is_taken(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_tick(&s, 0, true, 0x02, 7, &out);
+	CHECK(out.send_led);
+	unifying_session_led_queued(&s, out.leds, 7);
+	unifying_session_tick(&s, 1, true, 0x00, 7, &out);
+	unifying_session_tick(&s, 2, true, 0x03, 7, &out);
+	CHECK(!out.send_led);
+	unifying_session_tick(&s, 3, false, 0x03, 8, &out);
+	CHECK(out.send_led);
+	CHECK_EQ(out.leds, 0x03);
+	unifying_session_led_queued(&s, out.leds, 8);
+	unifying_session_tick(&s, 4, false, 0x03, 9, &out);
+	CHECK(!out.send_led);
+}
+
+static void test_resends_while_a_frame_is_queued_are_sent_once_after_it_is_taken(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_tick(&s, 0, true, 0x02, 7, &out);
+	unifying_session_led_queued(&s, out.leds, 7);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 1,
+			       nonce, fake_aes, &out);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 2,
+			       nonce, fake_aes, &out);
+	unifying_session_tick(&s, 3, false, 0x02, 7, &out);
+	CHECK(!out.send_led);
+	unifying_session_tick(&s, 4, false, 0x02, 8, &out);
+	CHECK(out.send_led);
+	unifying_session_led_queued(&s, out.leds, 8);
+	unifying_session_tick(&s, 5, false, 0x02, 9, &out);
+	CHECK(!out.send_led);
+}
+
+static void test_a_dropped_led_frame_is_sent_again(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_tick(&s, 0, true, 0x02, 7, &out);
+	unifying_session_led_queued(&s, out.leds, 7);
+	unifying_session_replies_dropped(&s);
+	unifying_session_tick(&s, 1, false, 0x02, 7, &out);
+	CHECK(out.send_led);
+	unifying_session_led_queued(&s, out.leds, 7);
+	unifying_session_tick(&s, 2, false, 0x02, 8, &out);
+	CHECK(!out.send_led);
+	unifying_session_replies_dropped(&s);
+	unifying_session_tick(&s, 3, false, 0x02, 8, &out);
+	CHECK(!out.send_led);
+}
+
+static void test_a_divert_request_waits_behind_a_queued_led_frame(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_heard(&s);
+	unifying_session_tick(&s, 20, true, 0x02, 0, &out);
+	CHECK(out.send_led);
+	CHECK_EQ(out.hidpp_len, 0);
+	unifying_session_led_queued(&s, out.leds, 0);
+	tick_queue(&s, 21, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	tick_queue(&s, 22, 1, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
+}
+
+static void test_a_request_the_sleeping_keyboard_never_takes_is_not_sent_again(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_heard(&s);
+	tick_queue(&s, 20, 0, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
+	tick_queue(&s, 20 + 100000, 0, &out);
+	CHECK_EQ(out.hidpp_len, 0);
+	CHECK(!out.divert.ended);
+}
+
+static void test_a_dropped_request_is_sent_again_without_counting_a_try(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint32_t taken = 0;
+	uint64_t now;
+
+	session_heard(&s);
+	tick_queue(&s, 20, taken, &out);
+	unifying_session_replies_dropped(&s);
+	now = run_out_retries(&s, 21, &taken, find_request, sizeof(find_request));
+	tick_queue(&s, now, taken, &out);
+	check_end(&out, HISTORY_DIVERT_UNANSWERED, 0, 0, 0);
+}
+
+static void test_a_wake_looks_the_feature_up_once(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint64_t silent;
+
+	session_diverted(&s);
+	silent = silence_after(&s, 70) + 1;
+	unifying_session_tick(&s, silent, false, 0, 0, &out);
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
+			       silent + 10, nonce, fake_aes, &out);
+	tick_queue(&s, silent + 11, 0, &out);
+	CHECK(out.send_led);
+	tick_queue(&s, silent + 12, 1, &out);
+	check_hidpp(&out, find_request, sizeof(find_request));
+	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
+			       silent + 13, nonce, fake_aes, &out);
+	tick_queue(&s, silent + 14, 2, &out);
+	CHECK(out.send_led);
+	hear(&s, silent + 15, &out);
+	CHECK_EQ(out.heard, UNIFYING_HEARD_WOKE);
+	tick_queue(&s, silent + 16, 3, &out);
+	CHECK(!out.send_led);
+	CHECK_EQ(out.hidpp_len, 0);
+}
+
+static void test_releasing_a_brightness_key_leaves_a_held_media_key_down(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	session_feed(&s, media_volume_up, sizeof(media_volume_up), 100, &out);
+	CHECK_EQ(out.report[0].usage, 0x00e9);
+	hidpp(f, 0x08, 0x00, 0x00, 0xc7, 0x00);
+	session_feed(&s, f, sizeof(f), 110, &out);
+	CHECK_EQ(out.report[0].usage, UNIFYING_BRIGHTNESS_DOWN);
+	hidpp(f, 0x08, 0x00, 0x00, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 120, &out);
+	CHECK_EQ(out.reports, 1);
+	CHECK_EQ(out.report[0].usage, 0x00e9);
+	session_feed(&s, media_release, sizeof(media_release), 130, &out);
+	CHECK_EQ(out.report[0].usage, 0);
+}
+
+static void test_a_held_brightness_key_is_released_by_the_silence(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	hidpp(f, 0x08, 0x00, 0x00, 0xc7, 0x00);
+	session_feed(&s, f, sizeof(f), 100, &out);
+	unifying_session_tick(&s, silence_after(&s, 100) + 1, false, 0, 0, &out);
+	CHECK(out.release_all);
+}
+
 static void session_holding_a_key(struct unifying_session *s)
 {
 	struct unifying_out out;
@@ -1921,17 +2357,6 @@ static void test_a_session_releases_a_held_key_on_a_connect_frame_only(void)
 	unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0, 40,
 			       nonce, fake_aes, &out);
 	CHECK(out.release_all);
-}
-
-static void hear(struct unifying_session *s, uint64_t now, struct unifying_out *out)
-{
-	unifying_session_frame(s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
-			       -60, now, nonce, fake_aes, out);
-}
-
-static uint64_t silence_after(const struct unifying_session *s, uint64_t heard)
-{
-	return heard + 2 * (uint64_t)s->link.keepalive_ms;
 }
 
 static void test_the_first_frame_is_first_contact_counted_from_the_start(void)
@@ -2441,12 +2866,9 @@ int main(void)
 	RUN(test_no_led_frame_is_due_before_a_change_or_resend);
 	RUN(test_an_led_change_is_sent_at_once);
 	RUN(test_the_first_led_state_is_sent_even_when_it_is_zero);
-	RUN(test_an_led_change_while_one_is_outstanding_waits_until_it_is_taken);
-	RUN(test_changes_back_to_the_outstanding_state_send_nothing_more);
-	RUN(test_resends_while_outstanding_are_sent_once_after_it_is_taken);
+	RUN(test_changes_back_to_the_sent_state_send_nothing_more);
 	RUN(test_a_resend_sends_the_wanted_state);
 	RUN(test_an_led_frame_not_queued_stays_due);
-	RUN(test_a_dropped_led_frame_is_sent_again);
 	RUN(test_no_led_frame_is_due_without_a_paired_device);
 	RUN(test_a_session_without_a_record_is_not_paired);
 	RUN(test_a_session_answers_pairing_on_the_frames_pipe);
@@ -2466,6 +2888,26 @@ int main(void)
 	RUN(test_a_move_needs_a_paired_keyboard_and_pairing_closed);
 	RUN(test_a_move_works_on_a_silent_paired_keyboard);
 	RUN(test_a_session_types_a_keystroke_from_the_device_pipe);
+	RUN(test_a_heard_keyboard_is_asked_where_its_reprogrammable_controls_are);
+	RUN(test_the_brightness_keys_are_diverted_in_turn_and_reported_once);
+	RUN(test_an_unanswered_lookup_is_sent_again_then_given_up);
+	RUN(test_an_unanswered_divert_reports_its_control);
+	RUN(test_a_keyboard_without_reprogrammable_controls_is_reported_and_left_alone);
+	RUN(test_a_refused_divert_is_counted_and_moves_on_to_the_other_key);
+	RUN(test_diverted_brightness_keys_type_the_brightness_usages);
+	RUN(test_an_fn_event_types_nothing);
+	RUN(test_a_brightness_event_before_the_feature_is_found_types_nothing);
+	RUN(test_a_connect_frame_starts_the_divert_over);
+	RUN(test_no_divert_request_goes_out_during_a_pairing_attempt);
+	RUN(test_a_held_brightness_key_is_released_by_the_silence);
+	RUN(test_an_led_change_waits_until_the_queued_frame_is_taken);
+	RUN(test_resends_while_a_frame_is_queued_are_sent_once_after_it_is_taken);
+	RUN(test_a_dropped_led_frame_is_sent_again);
+	RUN(test_a_divert_request_waits_behind_a_queued_led_frame);
+	RUN(test_a_request_the_sleeping_keyboard_never_takes_is_not_sent_again);
+	RUN(test_a_dropped_request_is_sent_again_without_counting_a_try);
+	RUN(test_a_wake_looks_the_feature_up_once);
+	RUN(test_releasing_a_brightness_key_leaves_a_held_media_key_down);
 	RUN(test_a_session_releases_a_held_key_once_after_twice_the_keep_alive);
 	RUN(test_a_session_releases_a_held_key_on_a_connect_frame_only);
 	RUN(test_the_first_frame_is_first_contact_counted_from_the_start);

@@ -19,6 +19,18 @@
 #define KEEPALIVE_LEN 5
 #define SET_KEEPALIVE_LEN 10
 #define CONNECT_SHORT_LEN 10
+#define REPORT_HIDPP_SHORT 0x10
+#define REPORT_HIDPP_LONG 0x11
+#define HIDPP_SHORT_LEN 10
+#define HIDPP_ROOT 0x00
+#define HIDPP_ERROR 0xff
+#define HIDPP_REPROG_CONTROLS 0x1b04
+/* A function number in the high nibble, the software ID 1 in the low one; events carry ID 0. */
+#define HIDPP_GET_FEATURE 0x01
+#define HIDPP_SET_CID_REPORTING 0x31
+#define HIDPP_DIVERTED_EVENT 0x00
+/* The divert bit and the bit that says it is valid; the persist bits stay clear. */
+#define HIDPP_DIVERT 0x03
 
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
 const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
@@ -260,7 +272,7 @@ bool unifying_is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_
 bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, const uint8_t *frame,
 			     size_t len)
 {
-	bool held = l->keyboard_down || l->media_down;
+	bool held = l->keyboard_down || l->media_usage != 0 || l->divert_usage != 0;
 
 	if (!unifying_is_connect_frame(frame, len, device_octet)) {
 		return false;
@@ -269,7 +281,8 @@ bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, cons
 	l->next_counter = 0;
 	l->has_candidate = false;
 	l->keyboard_down = false;
-	l->media_down = false;
+	l->media_usage = 0;
+	l->divert_usage = 0;
 	return held;
 }
 
@@ -395,14 +408,176 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 	return n;
 }
 
+/* The usage that changed wins; a released one gives way to the other source's held usage. */
+static struct report consumer_report(uint16_t changed, uint16_t other)
+{
+	return (struct report){.kind = REPORT_CONSUMER, .usage = changed != 0 ? changed : other};
+}
+
 bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t len,
 			   struct report *out)
 {
 	if (!frame_is(frame, len, MEDIA_FRAME_LEN, REPORT_MEDIA)) {
 		return false;
 	}
-	*out = (struct report){.kind = REPORT_CONSUMER, .usage = frame[2] | frame[3] << 8};
-	l->media_down = out->usage != 0;
+	l->media_usage = frame[2] | frame[3] << 8;
+	*out = consumer_report(l->media_usage, l->divert_usage);
+	return true;
+}
+
+/* Logitech's control IDs mean the same key on every device; one a keyboard lacks is refused. */
+static const struct {
+	uint16_t cid;
+	uint16_t usage;
+} diverted[] = {
+	{0x00c7, UNIFYING_BRIGHTNESS_DOWN},
+	{0x00c8, UNIFYING_BRIGHTNESS_UP},
+};
+
+#define DIVERTED_COUNT (sizeof(diverted) / sizeof(diverted[0]))
+
+static bool is_hidpp(const uint8_t *frame, size_t len)
+{
+	return frame_is(frame, len, HIDPP_SHORT_LEN, REPORT_HIDPP_SHORT) ||
+	       frame_is(frame, len, UNIFYING_FRAME_MAX, REPORT_HIDPP_LONG);
+}
+
+static uint16_t diverted_usage(uint16_t cid)
+{
+	for (size_t i = 0; i < DIVERTED_COUNT; i++) {
+		if (cid != 0 && diverted[i].cid == cid) {
+			return diverted[i].usage;
+		}
+	}
+	return 0;
+}
+
+void unifying_divert_start(struct unifying_divert *d)
+{
+	if (d->step != UNIFYING_DIVERT_FIND) {
+		*d = (struct unifying_divert){.step = UNIFYING_DIVERT_FIND};
+	}
+}
+
+static void divert_end(struct unifying_divert *d, enum history_divert outcome,
+		       uint16_t cid)
+{
+	d->step = UNIFYING_DIVERT_IDLE;
+	d->end.ended = true;
+	d->end.outcome = outcome;
+	d->end.cid = cid;
+}
+
+static void divert_next(struct unifying_divert *d)
+{
+	d->tries = 0;
+	d->awaiting = false;
+	if (d->step == UNIFYING_DIVERT_FIND) {
+		d->step = UNIFYING_DIVERT_CONTROL;
+		d->control_index = 0;
+	} else if (++d->control_index >= DIVERTED_COUNT) {
+		divert_end(d, HISTORY_DIVERT_FINISHED, 0);
+	}
+}
+
+size_t unifying_divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
+			       uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX])
+{
+	size_t len;
+
+	if (d->step == UNIFYING_DIVERT_IDLE ||
+	    (d->awaiting && now_ms - d->taken_ms < retry_ms)) {
+		return 0;
+	}
+	if (d->tries >= UNIFYING_DIVERT_TRIES) {
+		divert_end(d, HISTORY_DIVERT_UNANSWERED,
+			   d->step == UNIFYING_DIVERT_CONTROL ? diverted[d->control_index].cid : 0);
+		return 0;
+	}
+	memset(out, 0, UNIFYING_FRAME_MAX);
+	out[2] = device_index;
+	if (d->step == UNIFYING_DIVERT_FIND) {
+		len = HIDPP_SHORT_LEN;
+		out[1] = REPORT_HIDPP_SHORT;
+		out[3] = HIDPP_ROOT;
+		out[4] = HIDPP_GET_FEATURE;
+		out[5] = HIDPP_REPROG_CONTROLS >> 8;
+		out[6] = HIDPP_REPROG_CONTROLS & 0xff;
+	} else {
+		uint16_t cid = diverted[d->control_index].cid;
+
+		len = UNIFYING_FRAME_MAX;
+		out[1] = REPORT_HIDPP_LONG;
+		out[3] = d->feature;
+		out[4] = HIDPP_SET_CID_REPORTING;
+		out[5] = (uint8_t)(cid >> 8);
+		out[6] = (uint8_t)cid;
+		out[7] = HIDPP_DIVERT;
+	}
+	return seal(out, len);
+}
+
+void unifying_divert_taken(struct unifying_divert *d, uint64_t now_ms)
+{
+	if (d->step != UNIFYING_DIVERT_IDLE) {
+		d->tries++;
+		d->awaiting = true;
+		d->taken_ms = now_ms;
+	}
+}
+
+/* A reply to the request in flight moves on to the next one, whether it succeeded or failed. */
+static bool divert_reply(struct unifying_divert *d, const uint8_t *frame)
+{
+	bool error = frame[3] == HIDPP_ERROR;
+	uint8_t feature = error ? frame[4] : frame[3];
+	uint8_t function = error ? frame[5] : frame[4];
+
+	if (d->step == UNIFYING_DIVERT_FIND && feature == HIDPP_ROOT &&
+	    function == HIDPP_GET_FEATURE) {
+		d->feature = error ? 0 : frame[5];
+		if (d->feature == 0) {
+			divert_end(d, HISTORY_DIVERT_NO_FEATURE, 0);
+		} else {
+			divert_next(d);
+		}
+		return true;
+	}
+	if (d->step == UNIFYING_DIVERT_CONTROL && feature == d->feature &&
+	    function == HIDPP_SET_CID_REPORTING &&
+	    (error || (frame[5] << 8 | frame[6]) == diverted[d->control_index].cid)) {
+		if (error) {
+			d->end.refused++;
+		} else {
+			d->end.diverted++;
+		}
+		divert_next(d);
+		return true;
+	}
+	return false;
+}
+
+bool unifying_divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
+			size_t len, struct report *out)
+{
+	uint16_t usage = 0;
+
+	if (!is_hidpp(frame, len) || divert_reply(d, frame)) {
+		return false;
+	}
+	if (d->feature == 0 || frame[3] != d->feature || frame[4] != HIDPP_DIVERTED_EVENT ||
+	    len != UNIFYING_FRAME_MAX) {
+		return false;
+	}
+	/* The event lists up to four held controls. */
+	for (size_t i = 5; i < 13 && usage == 0; i += 2) {
+		usage = diverted_usage((uint16_t)(frame[i] << 8 | frame[i + 1]));
+	}
+	if (usage == l->divert_usage) {
+		return false;
+	}
+	l->divert_usage = usage;
+	*out = consumer_report(usage, l->media_usage);
 	return true;
 }
 
@@ -427,34 +602,20 @@ void unifying_led_resend(struct unifying_led *led)
 	led->resend = true;
 }
 
-bool unifying_led_due(struct unifying_led *led, bool has_device, uint32_t taken_count,
-		      uint8_t *leds)
+bool unifying_led_due(const struct unifying_led *led, bool has_device, uint8_t *leds)
 {
-	if (taken_count != led->taken_count) {
-		led->outstanding = false;
-	}
-	if (!has_device || led->outstanding || !(led->resend || led->wanted != led->sent)) {
+	if (!has_device || !(led->resend || led->wanted != led->sent)) {
 		return false;
 	}
 	*leds = led->wanted;
 	return true;
 }
 
-void unifying_led_sent(struct unifying_led *led, uint8_t leds, uint32_t taken_count)
+void unifying_led_sent(struct unifying_led *led, uint8_t leds)
 {
-	led->taken_count = taken_count;
 	led->sent = leds;
 	led->has_sent = true;
 	led->resend = false;
-	led->outstanding = true;
-}
-
-void unifying_led_dropped(struct unifying_led *led)
-{
-	if (led->outstanding) {
-		led->outstanding = false;
-		led->resend = true;
-	}
 }
 
 static uint16_t keepalive_timeout(const uint8_t *frame, size_t len)
@@ -482,12 +643,13 @@ void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t l
 
 bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms)
 {
-	bool silent = (l->keyboard_down || l->media_down) &&
+	bool silent = (l->keyboard_down || l->media_usage != 0 || l->divert_usage != 0) &&
 		      now_ms - l->last_ms > 2 * (uint64_t)l->keepalive_ms;
 
 	if (silent) {
 		l->keyboard_down = false;
-		l->media_down = false;
+		l->media_usage = 0;
+		l->divert_usage = 0;
 	}
 	return silent;
 }
@@ -520,6 +682,14 @@ static bool quiet_too_long(const struct unifying_session *s, uint64_t now_ms)
 	return now_ms - since >= 2 * (uint64_t)s->link.keepalive_ms;
 }
 
+static void take_divert_end(struct unifying_session *s, struct unifying_out *out)
+{
+	if (s->divert.end.ended) {
+		out->divert = s->divert.end;
+		s->divert.end.ended = false;
+	}
+}
+
 void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
 			   const uint8_t *record, uint64_t now_ms)
 {
@@ -544,6 +714,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
+		unifying_divert_start(&s->divert);
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
 		uint32_t refused = s->link.refused;
@@ -555,6 +726,10 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		} else if (s->silent) {
 			out->heard = s->connect_in_silence ? UNIFYING_HEARD_WOKE : UNIFYING_HEARD_AGAIN;
 			out->down_ms = (uint32_t)(now_ms - s->silent_since_ms);
+		}
+		/* The keyboard forgets a divert whenever it reconnects, which a silence can hide. */
+		if (out->heard != UNIFYING_HEARD_NONE) {
+			unifying_divert_start(&s->divert);
 		}
 		/* Requests 2 and 3 of a pairing attempt arrive on this pipe too. */
 		if (!attempting(&s->pairing) && unifying_checksum_ok(frame, len)) {
@@ -571,7 +746,8 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 			out->reports = unifying_keystroke(&s->link, s->pairing.device.key, frame, len,
 							  now_ms, aes, out->report);
 			if (out->reports == 0 &&
-			    unifying_media_report(&s->link, frame, len, &out->report[0])) {
+			    (unifying_media_report(&s->link, frame, len, &out->report[0]) ||
+			     unifying_divert_rx(&s->divert, &s->link, frame, len, &out->report[0]))) {
 				out->reports = 1;
 			}
 		}
@@ -579,6 +755,9 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		out->attack_started = !attack && now_ms < s->link.attack_until_ms;
 	} else if (pipe == UNIFYING_PIPE_RECEIVER) {
 		out->reconnected = unifying_is_connect_frame(frame, len, s->receiver.device_octet);
+		if (out->reconnected) {
+			unifying_divert_start(&s->divert);
+		}
 		s->connect_in_silence |= out->reconnected && s->silent;
 		out->release_all = unifying_link_reconnect(&s->link, s->receiver.device_octet, frame,
 							   len);
@@ -588,6 +767,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	if (!unifying_pairing_window_open(&s->pairing, now_ms) && s->deaf_until_ms > now_ms) {
 		s->deaf_until_ms = now_ms;
 	}
+	take_divert_end(s, out);
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,
@@ -613,8 +793,24 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 	if (leds_changed) {
 		unifying_led_want(&s->led, host_leds);
 	}
-	out->send_led = unifying_led_due(&s->led, unifying_has_device(&s->pairing), taken_count,
-					 &out->leds);
+	if (s->queue.frame != UNIFYING_QUEUED_NONE && taken_count != s->queue.taken_count) {
+		if (s->queue.frame == UNIFYING_QUEUED_HIDPP) {
+			unifying_divert_taken(&s->divert, now_ms);
+		}
+		s->queue.frame = UNIFYING_QUEUED_NONE;
+	}
+	if (s->queue.frame == UNIFYING_QUEUED_NONE) {
+		out->send_led = unifying_led_due(&s->led, unifying_has_device(&s->pairing),
+						 &out->leds);
+	}
+	/* The ACK payloads of a pairing attempt share the queue. */
+	if (s->queue.frame == UNIFYING_QUEUED_NONE && !out->send_led &&
+	    unifying_has_device(&s->pairing) && !attempting(&s->pairing)) {
+		out->hidpp_len = unifying_divert_request(&s->divert, s->receiver.device_octet,
+							 now_ms, 2U * s->link.keepalive_ms,
+							 out->hidpp);
+	}
+	take_divert_end(s, out);
 	out->attempt_expired = unifying_pairing_expired(&s->pairing, now_ms);
 	if (out->attempt_expired) {
 		_Static_assert(UNIFYING_ANSWERED_1 == 1 && UNIFYING_ANSWERED_2 == 2,
@@ -636,12 +832,21 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 
 void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count)
 {
-	unifying_led_sent(&s->led, leds, taken_count);
+	unifying_led_sent(&s->led, leds);
+	s->queue = (struct unifying_queue){.frame = UNIFYING_QUEUED_LED, .taken_count = taken_count};
+}
+
+void unifying_session_hidpp_queued(struct unifying_session *s, uint32_t taken_count)
+{
+	s->queue = (struct unifying_queue){.frame = UNIFYING_QUEUED_HIDPP, .taken_count = taken_count};
 }
 
 void unifying_session_replies_dropped(struct unifying_session *s)
 {
-	unifying_led_dropped(&s->led);
+	if (s->queue.frame == UNIFYING_QUEUED_LED) {
+		unifying_led_resend(&s->led);
+	}
+	s->queue.frame = UNIFYING_QUEUED_NONE;
 }
 
 void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_cause cause,

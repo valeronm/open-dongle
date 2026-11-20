@@ -108,6 +108,14 @@ static uint8_t link_up_kind(enum unifying_heard h)
 	}
 }
 
+static void log_divert(const struct unifying_divert_end *end)
+{
+	if (end->ended) {
+		core_log(HISTORY_KEYS_DIVERTED, 0, end->outcome, end->diverted, end->refused,
+			 end->cid);
+	}
+}
+
 static void apply_frame(const struct unifying_out *out, const struct rx_item *item)
 {
 	if (item->pipe == UNIFYING_PIPE_DEVICE) {
@@ -151,6 +159,7 @@ static void apply_frame(const struct unifying_out *out, const struct rx_item *it
 	if (out->release_all) {
 		core_release_keys();
 	}
+	log_divert(&out->divert);
 }
 
 static void apply_tick(const struct unifying_out *out)
@@ -160,6 +169,16 @@ static void apply_tick(const struct unifying_out *out)
 	}
 	if (out->send_led) {
 		queue_leds(out->leds);
+	}
+	if (out->hidpp_len != 0) {
+		uint32_t taken = radio_replies_taken();
+		int err = radio_reply(UNIFYING_PIPE_DEVICE, out->hidpp, out->hidpp_len);
+
+		if (err) {
+			printk("queueing HID++ request failed: %d\n", err);
+		} else {
+			unifying_session_hidpp_queued(&session, taken);
+		}
 	}
 	if (out->went_silent) {
 		core_log_input_lost(HISTORY_LINK_LOST, 0, (uint8_t)session.rssi, out->silent_ms);
@@ -174,6 +193,7 @@ static void apply_tick(const struct unifying_out *out)
 	if (out->set_channel) {
 		core_set_channel(out->channel);
 	}
+	log_divert(&out->divert);
 }
 
 static struct radio_config unifying_radio(const uint8_t device[UNIFYING_ADDRESS_LEN],

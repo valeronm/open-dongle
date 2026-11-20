@@ -31,7 +31,8 @@ each gap or loss event records the noise on the link's channel. Both are read be
 packets. A NuPhy keyboard's home channel is the first of its three. In Unifying mode the minute's
 noise is recorded only while pairing is closed, because while pairing is open the dongle steps
 across channels. A Unifying keyboard's silence is logged but not counted as a link loss, because an
-idle MX Keys sleeps after a few minutes.
+idle MX Keys sleeps after a few minutes. Each time a Unifying keyboard connects or wakes, an event
+records how many keys the dongle diverted over HID++, or what stopped it.
 
 ## Pairing and channels
 

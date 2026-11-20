@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "chanmove.h"
+#include "history.h"
 #include "pairwin.h"
 #include "reports.h"
 
@@ -157,7 +158,9 @@ struct unifying_link {
 	uint16_t keepalive_ms;
 	uint64_t last_ms;
 	bool keyboard_down;
-	bool media_down;
+	/* Media frames and diverted controls each hold a consumer usage; a report carries one. */
+	uint16_t media_usage;
+	uint16_t divert_usage;
 	uint32_t refused;
 };
 
@@ -195,16 +198,75 @@ size_t unifying_keystroke(struct unifying_link *l, const uint8_t key[UNIFYING_KE
 bool unifying_media_report(struct unifying_link *l, const uint8_t *frame, size_t len,
 			   struct report *out);
 
+#define UNIFYING_DIVERT_TRIES 3
+#define UNIFYING_BRIGHTNESS_DOWN 0x70
+#define UNIFYING_BRIGHTNESS_UP 0x6f
+
+enum unifying_divert_step {
+	UNIFYING_DIVERT_IDLE,
+	UNIFYING_DIVERT_FIND,
+	UNIFYING_DIVERT_CONTROL,
+};
+
+struct unifying_divert_end {
+	bool ended;
+	enum history_divert outcome;
+	uint8_t diverted;
+	uint8_t refused;
+	/* The control left unanswered; 0 when the feature lookup was. */
+	uint16_t cid;
+};
+
+/*
+ * Diverts the HID++ controls in unifying.c's table over feature 0x1B04 for the keyboard's session
+ * only, since a persistent divert would also silence them on the keyboard's other hosts.
+ */
+struct unifying_divert {
+	enum unifying_divert_step step;
+	/* The index of feature 0x1B04; 0 until the keyboard names it. */
+	uint8_t feature;
+	uint8_t control_index;
+	/* Requests the keyboard took without answering. */
+	uint8_t tries;
+	bool awaiting;
+	uint64_t taken_ms;
+	/* Set once when a run ends. */
+	struct unifying_divert_end end;
+};
+
+/*
+ * Forgets the feature index and starts over from finding it, unless a lookup is already under way,
+ * since one connect brings several frames that each call this.
+ */
+void unifying_divert_start(struct unifying_divert *d);
+
+/*
+ * Returns the length of the HID++ request to queue as the next ACK payload, written to out, or 0.
+ * Call it only while no other frame of the dongle's waits in the queue. A request the keyboard took
+ * and left unanswered for retry_ms is sent again, up to UNIFYING_DIVERT_TRIES takes, after which
+ * nothing more is sent until the next unifying_divert_start.
+ */
+size_t unifying_divert_request(struct unifying_divert *d, uint8_t device_index, uint64_t now_ms,
+			       uint32_t retry_ms, uint8_t out[UNIFYING_FRAME_MAX]);
+
+/* The keyboard took the request last returned by unifying_divert_request. */
+void unifying_divert_taken(struct unifying_divert *d, uint64_t now_ms);
+
+/*
+ * Takes the keyboard's HID++ replies and its diverted-button events. Returns true with a consumer
+ * report in *out for an event that presses or releases a brightness key; the events are
+ * unencrypted.
+ */
+bool unifying_divert_rx(struct unifying_divert *d, struct unifying_link *l, const uint8_t *frame,
+			size_t len, struct report *out);
+
 size_t unifying_led_frame(uint8_t leds, uint8_t out[UNIFYING_LED_FRAME_LEN]);
 
-/* At most one LED frame waits in the ESB payload queue, which pairing replies share. */
 struct unifying_led {
 	uint8_t wanted;
 	uint8_t sent;
 	bool has_sent;
 	bool resend;
-	bool outstanding;
-	uint32_t taken_count;
 };
 
 void unifying_led_want(struct unifying_led *led, uint8_t leds);
@@ -212,21 +274,28 @@ void unifying_led_want(struct unifying_led *led, uint8_t leds);
 void unifying_led_resend(struct unifying_led *led);
 
 /*
- * Returns true, with *leds to send, while a device is paired, no LED frame is outstanding, and
- * either a resend is requested or the wanted state differs from the last one sent. An outstanding
- * frame counts as taken once taken_count differs from the count given to unifying_led_sent.
+ * Returns true, with *leds to send, while a device is paired and either a resend is requested or
+ * the wanted state differs from the last one queued.
  */
-bool unifying_led_due(struct unifying_led *led, bool has_device, uint32_t taken_count,
-		      uint8_t *leds);
+bool unifying_led_due(const struct unifying_led *led, bool has_device, uint8_t *leds);
+
+void unifying_led_sent(struct unifying_led *led, uint8_t leds);
+
+enum unifying_queued {
+	UNIFYING_QUEUED_NONE,
+	UNIFYING_QUEUED_LED,
+	UNIFYING_QUEUED_HIDPP,
+};
 
 /*
- * Records leds as queued; taken_count is sampled before queueing, as the frame can be taken at
- * once.
+ * At most one of the dongle's own frames waits in the device pipe's ESB payload queue, which pairing
+ * replies share; it counts as taken once the taken count moves past taken_count, which is sampled
+ * before queueing, as the frame can be taken at once.
  */
-void unifying_led_sent(struct unifying_led *led, uint8_t leds, uint32_t taken_count);
-
-/* An outstanding frame that left the queue untaken is sent again. */
-void unifying_led_dropped(struct unifying_led *led);
+struct unifying_queue {
+	enum unifying_queued frame;
+	uint32_t taken_count;
+};
 
 void unifying_record_of(const struct unifying_pairing *p, uint8_t out[UNIFYING_RECORD_LEN]);
 
@@ -260,6 +329,8 @@ struct unifying_session {
 	struct unifying_pairing pairing;
 	struct unifying_link link;
 	struct unifying_led led;
+	struct unifying_divert divert;
+	struct unifying_queue queue;
 	struct unifying_sweep sweep;
 	uint8_t channel;
 	bool heard;
@@ -294,6 +365,9 @@ struct unifying_out {
 	bool release_all;
 	bool send_led;
 	uint8_t leds;
+	size_t hidpp_len;
+	uint8_t hidpp[UNIFYING_FRAME_MAX];
+	struct unifying_divert_end divert;
 	bool attempt_expired;
 	bool set_channel;
 	uint8_t channel;
@@ -330,8 +404,9 @@ void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool led
 enum chanmove_result unifying_session_move(struct unifying_session *s, uint8_t channel,
 					   uint64_t now_ms);
 
-/* taken_count is sampled before the LED frame was queued. */
 void unifying_session_led_queued(struct unifying_session *s, uint8_t leds, uint32_t taken_count);
+
+void unifying_session_hidpp_queued(struct unifying_session *s, uint32_t taken_count);
 
 /* The replies queued on the radio were dropped. */
 void unifying_session_replies_dropped(struct unifying_session *s);

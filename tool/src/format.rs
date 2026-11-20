@@ -727,6 +727,16 @@ pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String 
                 event_device(e, stored)
             )
         }
+        EventKind::KeysDiverted => match (e.a, e.value) {
+            (1, _) => "keyboard has no keys to divert over HID++".into(),
+            (2, 0) => "keyboard did not answer the HID++ feature lookup".into(),
+            (2, cid) => format!("keyboard did not answer the HID++ divert of control {cid:#06x}"),
+            _ => format!(
+                "{} of {} keys diverted over HID++",
+                e.b,
+                u16::from(e.b) + u16::from(e.c)
+            ),
+        },
         EventKind::Unknown(t) => format!("unknown event {t}"),
     }
 }
@@ -1365,6 +1375,26 @@ mod tests {
         assert_eq!(
             d(event(EventKind::Attack, 0, 0, 0, 0)),
             "forged keystroke, attack mode for 5 s"
+        );
+        assert_eq!(
+            d(event(EventKind::KeysDiverted, 0, 2, 0, 0)),
+            "2 of 2 keys diverted over HID++"
+        );
+        assert_eq!(
+            d(event(EventKind::KeysDiverted, 0, 1, 1, 0)),
+            "1 of 2 keys diverted over HID++"
+        );
+        assert_eq!(
+            d(event(EventKind::KeysDiverted, 1, 0, 0, 0)),
+            "keyboard has no keys to divert over HID++"
+        );
+        assert_eq!(
+            d(event(EventKind::KeysDiverted, 2, 0, 0, 0)),
+            "keyboard did not answer the HID++ feature lookup"
+        );
+        assert_eq!(
+            d(event(EventKind::KeysDiverted, 2, 1, 0, 0xc8)),
+            "keyboard did not answer the HID++ divert of control 0x00c8"
         );
     }
 
