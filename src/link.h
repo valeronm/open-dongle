@@ -27,7 +27,9 @@ struct link_out {
 	uint8_t reply_pipe;
 	uint8_t reply_len;
 	uint8_t reply_buf[NUPHY_FRAME_MAX];
-	bool save_channels;
+	bool save_pairing;
+	/* The paired keyboard sent a name other than the one in the record. */
+	bool save_name;
 	bool lost;
 	bool up;
 	bool moved;
@@ -47,10 +49,21 @@ enum offer_kind {
 	OFFER_FORCED,
 };
 
+/* The flash record is these bytes in this order. */
+struct link_record {
+	uint8_t own[LINK_OWN_CHANNELS];
+	uint8_t keyboard_id[NUPHY_ID_LEN];
+	/* Padded with zeros. */
+	uint8_t name[NUPHY_NAME_MAX];
+};
+
 struct link {
 	enum link_state state;
 	uint8_t dongle_id[NUPHY_ID_LEN];
+	/* The keyboard the last pairing confirmed; zero where it is unknown. */
 	uint8_t keyboard_id[NUPHY_ID_LEN];
+	/* The keyboard whose pair request the pairing in progress answers. */
+	uint8_t requester_id[NUPHY_ID_LEN];
 	/* Empty until the paired keyboard sends its name. */
 	struct nuphy_name keyboard_name;
 	uint8_t own[LINK_OWN_CHANNELS];
@@ -78,12 +91,14 @@ struct link {
 };
 
 /*
- * own is the three channels from the last pairing, or NULL for a dongle that never paired; channels
+ * record is what link_record_of gave, or NULL for a dongle that never paired; channels
  * link_channels_allowed refuses count as never paired.
  */
-void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint8_t *own,
-	       uint32_t now_ms, struct link_out *out);
-void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
+void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN],
+	       const struct link_record *record, uint32_t now_ms, struct link_out *out);
+void link_record_of(const struct link *l, struct link_record *out);
+/* False for a packet the dongle drops: no report in it reaches the host. */
+bool link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out);
 /* After a call sets start_survey, the caller must call link_on_survey or link_survey_failed. */
 void link_on_survey(struct link *l, const uint8_t channels[LINK_OWN_CHANNELS], uint32_t now_ms,

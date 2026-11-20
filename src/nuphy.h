@@ -82,7 +82,8 @@ struct nuphy_name {
 	uint8_t held;
 };
 
-void nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK]);
+/* True when a whole name arrived that differs from the one held. */
+bool nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK]);
 
 /* Each builder writes one ACK-payload frame to out (NUPHY_FRAME_MAX bytes) and returns its length. */
 size_t nuphy_pair_reply(uint8_t *out, uint8_t seq, const uint8_t dongle_id[NUPHY_ID_LEN],

@@ -146,6 +146,19 @@ static void test_a_chunk_with_no_name_started_is_dropped(void)
 	CHECK_MEM(n.name, air75_name, sizeof(air75_name));
 }
 
+static void test_only_a_whole_new_name_counts_as_a_change(void)
+{
+	struct nuphy_name n = {0};
+
+	CHECK(!nuphy_name_add(&n, nuphy_parse(name_1, sizeof(name_1)).name_chunk));
+	CHECK(!nuphy_name_add(&n, nuphy_parse(name_2, sizeof(name_2)).name_chunk));
+	CHECK(nuphy_name_add(&n, nuphy_parse(name_3, sizeof(name_3)).name_chunk));
+	add(&n, name_1, sizeof(name_1));
+	add(&n, name_2, sizeof(name_2));
+	CHECK(!nuphy_name_add(&n, nuphy_parse(name_3, sizeof(name_3)).name_chunk));
+	CHECK_MEM(n.name, air75_name, sizeof(air75_name));
+}
+
 static void test_a_name_character_outside_ascii_becomes_a_question_mark(void)
 {
 	static const uint8_t expected[NUPHY_NAME_MAX] = "A?";
@@ -320,6 +333,7 @@ int main(void)
 	RUN(test_the_chunks_of_a_string_descriptor_make_the_name);
 	RUN(test_a_first_chunk_starts_the_name_over);
 	RUN(test_a_chunk_with_no_name_started_is_dropped);
+	RUN(test_only_a_whole_new_name_counts_as_a_change);
 	RUN(test_a_name_character_outside_ascii_becomes_a_question_mark);
 	RUN(test_bad_checksum_or_length_is_invalid);
 	RUN(test_status_frame);

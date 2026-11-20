@@ -81,21 +81,30 @@ static void reply_status(struct link *l, uint32_t now_ms, struct link_out *out)
 static void reply_pairing(struct link *l, struct link_out *out)
 {
 	reply(l, 0, out);
-	out->reply_len = nuphy_pair_reply(out->reply_buf, l->seq, l->dongle_id, l->keyboard_id,
+	out->reply_len = nuphy_pair_reply(out->reply_buf, l->seq, l->dongle_id, l->requester_id,
 					  l->offered);
 }
 
-void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN], const uint8_t *own,
-	       uint32_t now_ms, struct link_out *out)
+void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN],
+	       const struct link_record *record, uint32_t now_ms, struct link_out *out)
 {
 	memset(l, 0, sizeof(*l));
 	memcpy(l->dongle_id, dongle_id, NUPHY_ID_LEN);
-	if (own != NULL && link_channels_allowed(own)) {
-		set_own(l, own);
+	if (record != NULL && link_channels_allowed(record->own)) {
+		set_own(l, record->own);
+		memcpy(l->keyboard_id, record->keyboard_id, NUPHY_ID_LEN);
+		memcpy(l->keyboard_name.name, record->name, NUPHY_NAME_MAX);
 	} else {
 		list_channels(l);
 	}
 	go_idle(l, now_ms, out);
+}
+
+void link_record_of(const struct link *l, struct link_record *out)
+{
+	memcpy(out->own, l->own, LINK_OWN_CHANNELS);
+	memcpy(out->keyboard_id, l->keyboard_id, NUPHY_ID_LEN);
+	memcpy(out->name, l->keyboard_name.name, NUPHY_NAME_MAX);
 }
 
 static bool next_offer_ready(const struct link *l, uint32_t now_ms)
@@ -119,13 +128,13 @@ static bool attempting(const struct link *l)
 static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32_t now_ms,
 			       struct link_out *out)
 {
-	bool same_keyboard = memcmp(m->ids.keyboard, l->keyboard_id, NUPHY_ID_LEN) == 0;
+	bool same_keyboard = memcmp(m->ids.keyboard, l->requester_id, NUPHY_ID_LEN) == 0;
 	if (attempting(l) && same_keyboard) {
 		l->last_rx_ms = now_ms;
 	}
 	if (m->kind == NUPHY_PAIR_REQUEST) {
 		if (l->state == LINK_STATE_IDLE && link_pairing_open(l, now_ms)) {
-			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
+			memcpy(l->requester_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
 			if (next_offer_ready(l, now_ms)) {
 				offer(l, out);
@@ -141,9 +150,10 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_STATE_PAIRING && same_keyboard &&
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		set_own(l, l->offered);
+		memcpy(l->keyboard_id, l->requester_id, NUPHY_ID_LEN);
 		l->keyboard_name = (struct nuphy_name){0};
 		pairwin_close(&l->window);
-		out->save_channels = true;
+		out->save_pairing = true;
 		l->state = LINK_STATE_CONFIRMED;
 		/* The keyboard addresses pipe 1 once this confirm is acknowledged. */
 		reply_status(l, now_ms, out);
@@ -169,19 +179,23 @@ static void move_home(struct link *l, uint32_t now_ms, struct link_out *out)
 	reply_status(l, now_ms, out);
 }
 
-void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
+bool link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out)
 {
 	if (m->kind == NUPHY_INVALID) {
-		return;
+		return false;
 	}
 	if (pipe == 0) {
 		on_pairing_message(l, m, now_ms, out);
-		return;
+		return true;
+	}
+	/* A keyboard keeps the dongle ID of a forgotten pairing. */
+	if (pipe != 1 || !l->own_known) {
+		return false;
 	}
 	/* Pipe 1 carries no keyboard ID, so a pairing cannot tell the keyboard it pairs from another. */
-	if (pipe != 1 || l->state == LINK_STATE_SURVEY || l->state == LINK_STATE_PAIRING) {
-		return;
+	if (l->state == LINK_STATE_SURVEY || l->state == LINK_STATE_PAIRING) {
+		return true;
 	}
 	if (link_connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {
 		out->gap_ms = now_ms - l->last_rx_ms;
@@ -189,7 +203,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 	}
 	l->last_rx_ms = now_ms;
 	if (m->kind == NUPHY_NAME) {
-		nuphy_name_add(&l->keyboard_name, m->name_chunk);
+		out->save_name = nuphy_name_add(&l->keyboard_name, m->name_chunk);
 	}
 	switch (l->state) {
 	case LINK_STATE_CONFIRMED:
@@ -207,9 +221,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		move_home(l, now_ms, out);
 		break;
 	case LINK_STATE_IDLE:
-		/* A keyboard heard on the pairing channel stays there until a send fails. */
-		l->state = (on_pairing_channel(l) && l->own_known) ? LINK_STATE_MOVING_HOME
-								   : LINK_STATE_CONNECTED;
+		l->state = on_pairing_channel(l) ? LINK_STATE_MOVING_HOME : LINK_STATE_CONNECTED;
 		out->up = true;
 		pairwin_link_up(&l->window);
 		reply_status(l, now_ms, out);
@@ -220,6 +232,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 	default:
 		break;
 	}
+	return true;
 }
 
 void link_on_survey(struct link *l, const uint8_t channels[LINK_OWN_CHANNELS], uint32_t now_ms,

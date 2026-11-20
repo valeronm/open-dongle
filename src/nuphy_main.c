@@ -78,14 +78,19 @@ static void apply(const struct link_out *out)
 	if (out->reply) {
 		radio_reply(out->reply_pipe, out->reply_buf, out->reply_len);
 	}
-	if (out->save_channels) {
-		int err = store_save_channels(link.own);
+	if (out->save_pairing || out->save_name) {
+		struct link_record record;
+		int err;
 
-		printk("paired, channels %u %u %u saved: %d\n", link.own[0], link.own[1],
-		       link.own[2], err);
-		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_PAIRED,
-						 .PAIRED = {.own = {link.own[0], link.own[1], link.own[2]},
-							    .store_err = err}});
+		link_record_of(&link, &record);
+		err = store_save_nuphy(&record, sizeof(record));
+		printk("nuphy record saved: %d\n", err);
+		if (out->save_pairing) {
+			core_log(0, (struct diag_detail){
+					    .tag = DIAG_DETAIL_PAIRED,
+					    .PAIRED = {.own = {link.own[0], link.own[1], link.own[2]},
+						       .store_err = err}});
+		}
 	}
 	if (out->lost) {
 		uint32_t gap = k_uptime_get_32() - link.last_rx_ms;
@@ -158,13 +163,15 @@ static void handle(const struct rx_item *item)
 		core_count(CORE_INVALID);
 		return;
 	}
+	if (!link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out)) {
+		return;
+	}
 	core_packet(0);
 	if (item->pipe == 1) {
 		keyboard_rssi = item->rssi;
 	}
 	heard = true;
 	last_packet_ms = k_uptime_get_32();
-	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	if (out.gap_ms > 0) {
 		core_gap(0);
 		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_LINK_GAP,
@@ -326,15 +333,15 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	uint32_t raw = NRF_FICR->DEVICEID[0] ^ NRF_FICR->DEVICEID[1];
 	uint32_t last_counters = 0;
 	uint8_t id[4];
-	uint8_t own[LINK_OWN_CHANNELS];
+	struct link_record record;
 	uint8_t forced[LINK_OWN_CHANNELS];
 	struct link_out out = {0};
-	bool paired;
+	bool stored;
 
 	core_start_history(&loop);
 	memcpy(id, &raw, sizeof(id));
-	paired = store_err == 0 && store_load_channels(own);
-	link_init(&link, id, paired ? own : NULL, k_uptime_get_32(), &out);
+	stored = store_err == 0 && store_load_nuphy(&record, sizeof(record));
+	link_init(&link, id, stored ? &record : NULL, k_uptime_get_32(), &out);
 	link_open_pairing(&link, PAIRWIN_BOOT, k_uptime_get_32());
 	core_log_pairing_opened(&link.window);
 	if (store_err == 0 && store_load_forced(forced) && !link_force_channels(&link, forced)) {
@@ -354,7 +361,7 @@ FUNC_NORETURN void nuphy_run(int store_err)
 	memcpy(rc.base1, id, sizeof(rc.base1));
 	core_start_radio(&rc);
 	printk("spare-dongle id %02x%02x%02x%02x %s, store %d, reset cause 0x%x\n", id[0], id[1],
-	       id[2], id[3], paired ? "paired" : "never paired", store_err, core_reset_cause());
+	       id[2], id[3], link.own_known ? "paired" : "never paired", store_err, core_reset_cause());
 
 	for (;;) {
 		struct rx_item item;

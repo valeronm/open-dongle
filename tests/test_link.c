@@ -5,12 +5,14 @@
 static const uint8_t dongle_id[4] = {0x26, 0xc1, 0x21, 0x59};
 static const uint8_t keyboard_id[4] = {0x70, 0x15, 0xa3, 0x29};
 static const uint8_t previous_id[4] = {0x96, 0xbe, 0x5c, 0x89};
+static const uint8_t stored_id[4] = {0x11, 0x22, 0x33, 0x44};
 static const uint8_t home[3] = {26, 30, 34};
 static const uint8_t surveyed[3] = {30, 40, 60};
 
 static struct link l;
 static struct link_out out;
 static uint32_t last_ms;
+static bool accepted;
 
 static struct nuphy_msg pairing(enum nuphy_kind kind, const uint8_t *dongle)
 {
@@ -23,9 +25,15 @@ static struct nuphy_msg pairing(enum nuphy_kind kind, const uint8_t *dongle)
 
 static void init(const uint8_t *own)
 {
+	struct link_record record = {0};
+
 	out = (struct link_out){0};
 	last_ms = 0;
-	link_init(&l, dongle_id, own, 0, &out);
+	if (own != NULL) {
+		memcpy(record.own, own, LINK_OWN_CHANNELS);
+		memcpy(record.keyboard_id, stored_id, NUPHY_ID_LEN);
+	}
+	link_init(&l, dongle_id, own == NULL ? NULL : &record, 0, &out);
 	link_open_pairing(&l, PAIRWIN_BOOT, 0);
 }
 
@@ -33,7 +41,7 @@ static void deliver(const struct nuphy_msg *m, uint8_t pipe, uint32_t now)
 {
 	out = (struct link_out){0};
 	last_ms = now;
-	link_on_message(&l, m, pipe, now, &out);
+	accepted = link_on_message(&l, m, pipe, now, &out);
 }
 
 static void message(enum nuphy_kind kind, uint8_t pipe, uint32_t now)
@@ -167,7 +175,7 @@ static void test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed(
 	expect_pair_reply(2);
 
 	deliver(&confirm, 0, 2080);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 	CHECK_MEM(l.own, surveyed, 3);
 	expect_status(3, 0);
 
@@ -205,6 +213,45 @@ static void test_the_paired_keyboard_sends_its_name_on_pipe_1(void)
 	CHECK_MEM(l.keyboard_name.name, expected, sizeof(expected));
 }
 
+static void test_a_new_name_from_the_paired_keyboard_is_saved(void)
+{
+	static const uint8_t expected[NUPHY_NAME_MAX] = "NuPhy Air75 V2";
+	struct link_record record;
+
+	init(home);
+	send_name(1, 10);
+	CHECK(out.save_name);
+	link_record_of(&l, &record);
+	CHECK_MEM(record.name, expected, sizeof(expected));
+}
+
+static void test_the_same_name_again_is_not_saved(void)
+{
+	init(home);
+	send_name(1, 10);
+	send_name(1, 20);
+	CHECK(!out.save_name);
+}
+
+static void test_a_name_heard_before_any_pairing_is_not_saved(void)
+{
+	init(NULL);
+	send_name(1, 10);
+	CHECK(!out.save_name);
+}
+
+static void test_a_rebooted_dongle_knows_the_saved_name(void)
+{
+	static const uint8_t expected[NUPHY_NAME_MAX] = "NuPhy Air75 V2";
+	struct link_record record;
+
+	init(home);
+	send_name(1, 10);
+	link_record_of(&l, &record);
+	link_init(&l, dongle_id, &record, 0, &out);
+	CHECK_MEM(l.keyboard_name.name, expected, sizeof(expected));
+}
+
 static void test_a_confirmed_pairing_forgets_the_name(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -217,8 +264,55 @@ static void test_a_confirmed_pairing_forgets_the_name(void)
 	deliver(&request, 0, 1250);
 	survey(surveyed, 2000);
 	deliver(&confirm, 0, 2040);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 	CHECK_MEM(l.keyboard_name.name, no_name, sizeof(no_name));
+}
+
+static void test_a_rebooted_dongle_keeps_the_keyboard_pairing_confirmed(void)
+{
+	init(home);
+	CHECK_MEM(l.keyboard_id, stored_id, 4);
+}
+
+static void test_the_record_is_the_paired_channels_then_the_keyboard(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+	struct link_record record;
+
+	init(NULL);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	deliver(&confirm, 0, 1640);
+	link_record_of(&l, &record);
+	CHECK_MEM(record.own, surveyed, sizeof(record.own));
+	CHECK_MEM(record.keyboard_id, keyboard_id, sizeof(record.keyboard_id));
+}
+
+static void test_a_confirmed_pairing_replaces_the_keyboard(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+	struct nuphy_msg confirm = pairing(NUPHY_PAIR_CONFIRM, dongle_id);
+
+	init(home);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	deliver(&confirm, 0, 1640);
+	CHECK(out.save_pairing);
+	CHECK_MEM(l.keyboard_id, keyboard_id, 4);
+}
+
+static void test_an_unconfirmed_pairing_keeps_the_paired_keyboard(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	deliver(&request, 0, 10);
+	survey(surveyed, 1600);
+	CHECK_MEM(l.keyboard_id, stored_id, 4);
+	tick(2600);
+	CHECK(out.pairing_expired);
+	CHECK_MEM(l.keyboard_id, stored_id, 4);
 }
 
 static void test_confirm_for_another_dongle_is_ignored(void)
@@ -231,11 +325,11 @@ static void test_confirm_for_another_dongle_is_ignored(void)
 	deliver(&request, 0, 10);
 	survey(surveyed, 1600);
 	deliver(&confirm, 0, 1640);
-	CHECK(!out.save_channels);
+	CHECK(!out.save_pairing);
 	CHECK(!l.own_known);
 
 	deliver(&ours, 0, 1680);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 }
 
 static void pairing_times_out_after_a_survey(void)
@@ -258,7 +352,7 @@ static void test_a_request_soon_after_a_survey_reuses_its_channels(void)
 	CHECK(!out.start_survey);
 	expect_pair_reply(2);
 	deliver(&confirm, 0, 3040);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 	CHECK_MEM(l.own, surveyed, 3);
 }
 
@@ -472,23 +566,32 @@ static void test_silence_after_the_move_home_starts_loses_the_link(void)
 	CHECK(out.lost);
 }
 
-static void test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongle_stays(void)
+static void test_a_never_paired_dongle_drops_a_keyboard_that_has_its_id(void)
 {
 	hear_keyboard_on_the_pairing_channel(NULL);
-	CHECK(out.up);
-	CHECK(!out.set_channel);
+	CHECK(!accepted);
+	CHECK(!out.up);
+	CHECK(!out.reply);
+	CHECK(!link_connected(&l));
 	CHECK_EQ(led(), LINK_LED_PAIRING);
 }
 
-static void test_a_keyboard_connecting_to_a_never_paired_dongle_leaves_pairing_open(void)
+static void test_a_paired_dongle_takes_its_keyboard(void)
+{
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK(accepted);
+	CHECK(out.up);
+}
+
+static void test_a_keyboard_dropped_by_a_never_paired_dongle_can_still_pair(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
 
 	init(NULL);
 	message(NUPHY_KEEPALIVE, 1, 10);
-	CHECK(out.up);
-	tick(1010);
 	deliver(&request, 0, 100000);
+	CHECK(accepted);
 	CHECK(out.start_survey);
 }
 
@@ -717,7 +820,7 @@ static void test_forced_channels_are_offered_without_a_survey_and_become_home(vo
 	expect_pair_reply_offering(1, forced);
 
 	deliver(&confirm, 0, 490);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 	CHECK_MEM(l.own, forced, 3);
 
 	message(NUPHY_KEEPALIVE, 1, 530);
@@ -758,7 +861,7 @@ static void test_channels_forced_during_a_pairing_do_not_change_what_it_saves(vo
 	survey(surveyed, 1600);
 	CHECK(link_force_channels(&l, forced));
 	deliver(&confirm, 0, 1640);
-	CHECK(out.save_channels);
+	CHECK(out.save_pairing);
 	CHECK_MEM(l.own, surveyed, 3);
 }
 
@@ -982,6 +1085,10 @@ int main(void)
 	RUN(test_paired_idle_alternates_home_with_channel_2);
 	RUN(test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed);
 	RUN(test_confirm_for_another_dongle_is_ignored);
+	RUN(test_a_rebooted_dongle_keeps_the_keyboard_pairing_confirmed);
+	RUN(test_the_record_is_the_paired_channels_then_the_keyboard);
+	RUN(test_a_confirmed_pairing_replaces_the_keyboard);
+	RUN(test_an_unconfirmed_pairing_keeps_the_paired_keyboard);
 	RUN(test_a_request_soon_after_a_survey_reuses_its_channels);
 	RUN(test_a_request_10_s_after_a_survey_surveys_again);
 	RUN(test_failed_survey_returns_to_idle);
@@ -1001,7 +1108,8 @@ int main(void)
 	RUN(test_a_confirmed_pairing_does_not_report_the_link_up);
 	RUN(test_a_keyboard_heard_on_the_pairing_channel_is_moved_home);
 	RUN(test_silence_after_the_move_home_starts_loses_the_link);
-	RUN(test_a_keyboard_heard_on_the_pairing_channel_of_a_never_paired_dongle_stays);
+	RUN(test_a_never_paired_dongle_drops_a_keyboard_that_has_its_id);
+	RUN(test_a_paired_dongle_takes_its_keyboard);
 	RUN(test_a_250_ms_silence_while_connected_is_a_gap);
 	RUN(test_a_radio_pause_is_not_a_gap);
 	RUN(test_the_packet_that_brings_the_link_up_is_not_a_gap);
@@ -1015,7 +1123,7 @@ int main(void)
 	RUN(test_forcing_during_a_forced_pairing_does_not_change_what_it_saves);
 	RUN(test_pairing_channels_repeats_and_out_of_range_channels_are_refused);
 	RUN(test_a_dongle_with_nothing_forced_reports_no_forced_channels);
-	RUN(test_a_keyboard_connecting_to_a_never_paired_dongle_leaves_pairing_open);
+	RUN(test_a_keyboard_dropped_by_a_never_paired_dongle_can_still_pair);
 	RUN(test_a_paired_dongle_answers_a_request_in_its_first_30_s);
 	RUN(test_a_paired_dongle_ignores_a_request_after_its_first_30_s);
 	RUN(test_the_keyboard_connecting_closes_pairing_opened_at_boot);
@@ -1032,6 +1140,10 @@ int main(void)
 	RUN(test_a_pairing_with_no_confirm_expires);
 	RUN(test_the_paired_keyboard_sends_its_name_on_pipe_1);
 	RUN(test_a_confirmed_pairing_forgets_the_name);
+	RUN(test_a_new_name_from_the_paired_keyboard_is_saved);
+	RUN(test_the_same_name_again_is_not_saved);
+	RUN(test_a_name_heard_before_any_pairing_is_not_saved);
+	RUN(test_a_rebooted_dongle_knows_the_saved_name);
 	RUN(test_a_requested_move_holds_through_a_loss);
 	RUN(test_a_requested_move_takes_any_of_the_keyboards_channels);
 	RUN(test_a_requested_move_works_on_a_silent_paired_link);

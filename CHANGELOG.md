@@ -23,6 +23,10 @@
   `b` for Bluetooth, and Bluetooth pairing with `p` for a passkey and `n` for none, instead of `1`
   and `2`.
 - In NuPhy mode `devices` names the keyboard as `status` does, without "Dongle" at the end.
+- In NuPhy mode the dongle remembers the paired keyboard's ID and name across restarts for
+  `status` and `devices`.
+- In NuPhy mode a dongle with no keyboard paired ignores keyboards until one pairs, so a keyboard
+  paired before this update has to pair again once with Fn+4.
 - The tool shows a legacy Bluetooth pairing in red even when a passkey was typed.
 - The tool shows a device's battery level and whether it is charging, as far as the device
   reports them, in `status` and in the title of the live view's device box.

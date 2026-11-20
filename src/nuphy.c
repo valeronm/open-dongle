@@ -156,29 +156,34 @@ static void trim_dongle(uint8_t *name, size_t len)
 	}
 }
 
-void nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK])
+bool nuphy_name_add(struct nuphy_name *n, const uint8_t chunk[NUPHY_NAME_CHUNK])
 {
-	uint8_t *out = n->name;
+	uint8_t name[NUPHY_NAME_MAX] = {0};
+	uint8_t *out = name;
 
 	if (starts_descriptor(chunk)) {
 		n->held = 0;
 	} else if (n->held == 0) {
-		return;
+		return false;
 	}
 	memcpy(&n->block[n->held], chunk, NUPHY_NAME_CHUNK);
 	n->held += NUPHY_NAME_CHUNK;
 	if (n->held < n->block[0]) {
-		return;
+		return false;
 	}
 
-	memset(n->name, 0, sizeof(n->name));
 	for (size_t i = NUPHY_NAME_HEADER; i < n->block[0]; i += 2) {
 		uint16_t unit = le16(&n->block[i]);
 
 		*out++ = unit >= 0x20 && unit <= 0x7e ? (uint8_t)unit : '?';
 	}
-	trim_dongle(n->name, (size_t)(out - n->name));
+	trim_dongle(name, (size_t)(out - name));
 	n->held = 0;
+	if (memcmp(name, n->name, sizeof(name)) == 0) {
+		return false;
+	}
+	memcpy(n->name, name, sizeof(name));
+	return true;
 }
 
 /* The keyboard drops an ACK payload whose sequence byte is 0. */
