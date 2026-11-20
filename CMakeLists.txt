@@ -16,6 +16,11 @@ set_property(SOURCE src/core.c APPEND PROPERTY COMPILE_DEFINITIONS
 target_sources(app PRIVATE
   src/main.c src/core.c src/nuphy_main.c src/unifying_main.c src/radio.c src/noise.c src/usb.c
   src/indicator.c src/nuphy.c src/unifying.c src/protocol.c src/reports.c src/chanpick.c
-  src/link.c src/store.c src/diag.c src/diagproto.c src/history.c src/pairwin.c src/chanwatch.c
+  src/link.c src/store.c src/diag.c src/history.c src/pairwin.c src/chanwatch.c
   src/ble.c src/bluetooth_main.c src/hidmap.c src/hidkeys.c src/hidpp.c
   src/btpolicy.c src/btlist.c src/bootinfo.c)
+
+include(ffi/diagwire.cmake)
+# CONFIG_FPU is off, so the firmware uses the soft-float ABI.
+diagwire_build(thumbv7em-none-eabi)
+target_link_libraries(app PRIVATE diagwire)

@@ -1,0 +1,14 @@
+[workspace]
+members = ["tool", "wire", "ffi"]
+default-members = ["tool", "wire"]
+resolver = "3"
+
+# The C library the firmware and the host tests link: a panic stops the program, since nothing
+# unwinds across C.
+[profile.ffi]
+inherits = "release"
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true

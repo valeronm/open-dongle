@@ -63,7 +63,7 @@ void chanwatch_round(struct chanwatch *w, const int8_t *dbm, uint8_t home, uint6
 	decay(w, now_ms);
 	for (size_t i = 0; i < w->count; i++) {
 		if (w->channels[i] != home) {
-			w->weight[i][noise_bucket(dbm[i])] += 1.0f;
+			w->weight[i][diag_noise_bucket(dbm[i])] += 1.0f;
 		}
 	}
 }
@@ -95,7 +95,7 @@ uint8_t chanwatch_threshold_bucket(int8_t weakest_dbm)
 {
 	int t = weakest_dbm - CHANWATCH_MARGIN_DB;
 
-	return noise_bucket((int8_t)(t < NOISE_BUSY_DBM ? NOISE_BUSY_DBM : t));
+	return diag_noise_bucket((int8_t)(t < NOISE_BUSY_DBM ? NOISE_BUSY_DBM : t));
 }
 
 float chanwatch_share(const struct chanwatch *w, size_t i, uint8_t from)
@@ -179,4 +179,28 @@ void chanwatch_decide(struct chanwatch *w, uint8_t home, uint8_t threshold_bucke
 		.to_share = chanwatch_share_hundredths(best_share),
 	};
 	w->move_waiting = true;
+}
+
+uint32_t chanwatch_hold_left(const struct chanwatch *w, uint64_t now_ms)
+{
+	return w->hold_until_ms > now_ms ? (uint32_t)(w->hold_until_ms - now_ms) : 0;
+}
+
+size_t chanwatch_report(const struct chanwatch *w, uint8_t threshold_bucket,
+			struct diag_watch_channel out[CHANWATCH_MAX])
+{
+	for (size_t i = 0; i < w->count; i++) {
+		out[i] = (struct diag_watch_channel){
+			.channel = w->channels[i],
+			.enough = chanwatch_enough(w, i),
+			.counted = threshold_bucket == CHANWATCH_NO_THRESHOLD
+					   ? 0
+					   : chanwatch_share_hundredths(
+						     chanwatch_share(w, i, threshold_bucket)),
+		};
+		for (int b = 0; b < NOISE_BUCKETS; b++) {
+			out[i].buckets[b] = (uint32_t)(w->weight[i][b] + 0.5f);
+		}
+	}
+	return w->count;
 }

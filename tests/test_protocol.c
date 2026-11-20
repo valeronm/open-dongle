@@ -37,9 +37,9 @@ static void test_an_arg_names_a_protocol_or_none(void)
 
 static void test_only_the_2g4_protocols_run_esb(void)
 {
-	CHECK(protocol_has_esb(PROTOCOL_NUPHY));
-	CHECK(protocol_has_esb(PROTOCOL_UNIFYING));
-	CHECK(!protocol_has_esb(PROTOCOL_BLUETOOTH));
+	CHECK(diag_protocol_has_esb(PROTOCOL_NUPHY));
+	CHECK(diag_protocol_has_esb(PROTOCOL_UNIFYING));
+	CHECK(!diag_protocol_has_esb(PROTOCOL_BLUETOOTH));
 }
 
 int main(void)

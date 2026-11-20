@@ -7,6 +7,7 @@ description = "Flash and inspect the SpareDongle firmware"
 repository = "https://github.com/valeronm/spare-dongle"
 
 [dependencies]
+diagwire = { path = "../wire" }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }

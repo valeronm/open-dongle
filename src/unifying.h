@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "chanmove.h"
+#include "diagwire.h"
 #include "hidpp.h"
 #include "history.h"
 #include "pairwin.h"
@@ -16,7 +17,6 @@
 #define UNIFYING_NONCE_LEN 4
 #define UNIFYING_PAIRING_TIMEOUT_MS 5000
 #define UNIFYING_ADDRESS_LEN 5
-#define UNIFYING_PAIRING_CHANNELS 11
 #define UNIFYING_SWEEP_DWELL_MS 20
 #define UNIFYING_AES_BLOCK_LEN 16
 #define UNIFYING_KEEPALIVE_DEFAULT_MS 1100
@@ -31,8 +31,6 @@
 
 /* Addresses are written in the order the Unifying sources print them, the device octet last. */
 extern const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN];
-/* A paired MX Keys searches only these after an unacknowledged packet. */
-extern const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS];
 
 /* What the receiver hands out in Pairing Response 1; base and wpid also enter the key. */
 struct unifying_receiver {
@@ -256,12 +254,6 @@ bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms);
 #define UNIFYING_PIPE_PAIRING 0
 #define UNIFYING_PIPE_DEVICE 1
 #define UNIFYING_PIPE_RECEIVER 2
-
-enum unifying_status {
-	UNIFYING_NOT_PAIRED,
-	UNIFYING_CONNECTED,
-	UNIFYING_SILENT,
-};
 
 struct unifying_session {
 	struct unifying_receiver receiver;

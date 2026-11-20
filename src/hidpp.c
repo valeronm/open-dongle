@@ -84,7 +84,7 @@ static bool wanted(const struct hidpp *x, enum hidpp_step step)
 {
 	switch (step) {
 	case HIDPP_FIND_CONTROLS:
-		return x->kind == DEVICE_KEYBOARD && !x->controls_known;
+		return x->kind == DEVICE_KIND_KEYBOARD && !x->controls_known;
 	case HIDPP_DIVERT:
 		return x->controls != 0;
 	case HIDPP_FIND_BATTERY:
@@ -94,7 +94,7 @@ static bool wanted(const struct hidpp *x, enum hidpp_step step)
 	case HIDPP_READ_BATTERY:
 		return x->battery != 0;
 	case HIDPP_FIND_WHEEL:
-		return x->kind == DEVICE_MOUSE && !x->wheel_known;
+		return x->kind == DEVICE_KIND_MOUSE && !x->wheel_known;
 	case HIDPP_READ_WHEEL:
 		return x->wheel != 0 && x->wheel_multiplier == 0;
 	case HIDPP_SET_WHEEL:
@@ -118,22 +118,23 @@ static void hidpp_advance(struct hidpp *x)
 
 static void divert_end(struct hidpp *x, enum history_divert outcome, uint16_t cid)
 {
-	x->event = (struct hidpp_event){.pending = true,
-					.type = HISTORY_KEYS_DIVERTED,
-					.a = outcome,
-					.b = x->diverted,
-					.c = x->refused,
-					.value = cid};
+	x->event = (struct hidpp_event){
+		.pending = true,
+		.detail = {.tag = DIAG_DETAIL_KEYS_DIVERTED,
+			   .KEYS_DIVERTED = {.outcome = outcome,
+					     .diverted = x->diverted,
+					     .refused = x->refused,
+					     .control = cid}}};
 }
 
 static void wheel_end(struct hidpp *x, enum history_wheel outcome)
 {
 	x->event = (struct hidpp_event){
 		.pending = true,
-		.type = HISTORY_WHEEL_SET,
-		.a = outcome,
-		.b = outcome == HISTORY_WHEEL_HIRES ? x->wheel_multiplier : 0,
-	};
+		.detail = {.tag = DIAG_DETAIL_WHEEL_SET,
+			   .WHEEL_SET = {.outcome = outcome,
+					 .steps = outcome == HISTORY_WHEEL_HIRES ? x->wheel_multiplier
+										 : 0}}};
 }
 
 void hidpp_init(struct hidpp *x, enum device_kind kind)
@@ -266,15 +267,15 @@ static void read_battery(struct device_battery *b, const struct hidpp_msg *m)
 
 	b->level = m->params[0] != 0 ? m->params[0] : DEVICE_NO_BATTERY;
 	if (status == 0) {
-		b->charging = DEVICE_DISCHARGING;
+		b->charging = DEVICE_CHARGING_DISCHARGING;
 	} else if (status == 3) {
-		b->charging = DEVICE_CHARGED;
+		b->charging = DEVICE_CHARGING_CHARGED;
 	} else if (status == 1 || status == 2 || status == 4) {
-		b->charging = DEVICE_CHARGING;
+		b->charging = DEVICE_CHARGING_CHARGING;
 	} else if (status <= 7) {
-		b->charging = DEVICE_BATTERY_FAULT;
+		b->charging = DEVICE_CHARGING_BATTERY_FAULT;
 	} else {
-		b->charging = DEVICE_CHARGE_UNKNOWN;
+		b->charging = DEVICE_CHARGING_UNKNOWN;
 	}
 }
 

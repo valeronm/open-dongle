@@ -171,16 +171,12 @@ static struct history_totals totals(void)
 	return t;
 }
 
-static void log_event(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c,
-		      uint32_t value)
+static void log_event(uint8_t slot, struct diag_detail d)
 {
-	history_event(&history, &(struct history_event){.time_ms = k_uptime_get(),
-							.type = type,
-							.slot = slot,
-							.a = a,
-							.b = b,
-							.c = c,
-							.value = value});
+	struct history_event e = diag_event(slot, &d);
+
+	e.time_ms = k_uptime_get();
+	history_event(&history, &e);
 }
 
 static void take_noise(void)
@@ -213,7 +209,8 @@ void core_start_history(const struct core_loop *l)
 		last_input_ms[s] = -1;
 	}
 	history_init(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_BOOT, DEVICE_NO_SLOT, 0, 0, 0, boot_info.reset_cause);
+	log_event(DEVICE_NO_SLOT,
+		  (struct diag_detail){.tag = DIAG_DETAIL_BOOT, .BOOT = {.reset_cause = boot_info.reset_cause}});
 }
 
 void core_count(enum core_counter c)
@@ -236,21 +233,23 @@ void core_link_lost(uint8_t slot)
 	link_losses[slot]++;
 }
 
-void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint32_t value)
+void core_log(uint8_t slot, struct diag_detail d)
 {
 	take_noise();
-	log_event(type, slot, a, b, c, value);
+	log_event(slot, d);
 }
 
 void core_log_pairing_opened(const struct pairwin *w)
 {
-	core_log(HISTORY_PAIRING_OPENED, DEVICE_NO_SLOT, w->cause, w->until_paired, 0, 0);
+	core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_PAIRING_OPENED,
+					      .PAIRING_OPENED = {.cause = w->cause,
+								 .until_paired = w->until_paired}});
 }
 
 void core_log_pairing_closed(void)
 {
 	printk("pairing closed\n");
-	core_log(HISTORY_PAIRING_CLOSED, DEVICE_NO_SLOT, 0, 0, 0, 0);
+	core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_PAIRING_CLOSED});
 }
 
 void core_rssi(uint8_t slot, int8_t dbm)
@@ -259,13 +258,11 @@ void core_rssi(uint8_t slot, int8_t dbm)
 	history_rssi(&history, slot, dbm);
 }
 
-void core_log_input_lost(uint8_t type, uint8_t slot, uint8_t a, uint32_t value)
+uint16_t core_since_input_s(uint8_t slot)
 {
 	int64_t last = last_input_ms[slot];
-	uint8_t low, high;
 
-	history_since_input(last < 0 ? -1 : k_uptime_get() - last, &low, &high);
-	core_log(type, slot, a, low, high, value);
+	return diag_since_input_s(last < 0 ? -1 : k_uptime_get() - last);
 }
 
 /* The noise watch runs only under ESB, whose protocols have one slot. */
@@ -285,7 +282,7 @@ static void scan(void)
 	size_t n;
 	int home;
 
-	if (!protocol_has_esb(active) || now - last_scan_ms < SCAN_PERIOD_MS) {
+	if (!diag_protocol_has_esb(active) || now - last_scan_ms < SCAN_PERIOD_MS) {
 		return;
 	}
 	last_scan_ms = now;
@@ -315,24 +312,30 @@ static bool keys_held(void)
 	return held;
 }
 
-static enum diag_error apply_move(uint8_t to, uint8_t reason, uint32_t value, uint8_t *from)
+static enum diag_error apply_move(uint8_t to, uint8_t reason, const struct chanwatch_move *m,
+				  uint8_t *from)
 {
 	enum chanmove_result result = loop->move(to, from);
 
 	if (result == CHANMOVE_NOT_A_CHANNEL) {
-		return DIAG_ERR_BAD_CHANNELS;
+		return DIAG_ERROR_BAD_CHANNELS;
 	}
 	if (result == CHANMOVE_NOT_MOVABLE) {
-		return DIAG_ERR_NOT_MOVABLE;
+		return DIAG_ERROR_NOT_MOVABLE;
 	}
 	if (to == *from) {
 		return 0;
 	}
 	if (core_set_channel(to) != 0) {
-		return DIAG_ERR_RADIO;
+		return DIAG_ERROR_RADIO;
 	}
 	chanwatch_hold(&watch, (uint64_t)k_uptime_get());
-	core_log(HISTORY_LINK_MOVED, DEVICE_NO_SLOT, *from, to, reason, value);
+	core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_LINK_MOVED,
+					      .LINK_MOVED = {.from = *from,
+							     .to = to,
+							     .reason = reason,
+							     .home_share = m ? m->home_share : 0,
+							     .to_share = m ? m->to_share : 0}});
 	return 0;
 }
 
@@ -344,8 +347,7 @@ static void poll_noise_move(void)
 	if (!watch.move_waiting || keys_held() || !chanwatch_take_move(&watch, &m)) {
 		return;
 	}
-	apply_move(m.to, HISTORY_MOVED_FOR_NOISE, (uint32_t)m.home_share << 16 | m.to_share,
-		   &from);
+	apply_move(m.to, HISTORY_MOVED_FOR_NOISE, &m, &from);
 }
 
 static void poll_move_request(void)
@@ -359,12 +361,12 @@ static void poll_move_request(void)
 	if (keys_held()) {
 		if (k_uptime_get() >= request_wait_until) {
 			request_waiting = false;
-			diag_reply_error(&waiting_request, DIAG_ERR_KEY_HELD, 0);
+			diag_reply_error(&waiting_request, DIAG_ERROR_KEY_HELD, 0);
 		}
 		return;
 	}
 	request_waiting = false;
-	err = apply_move((uint8_t)waiting_request.arg, HISTORY_MOVED_ON_REQUEST, 0, &from);
+	err = apply_move((uint8_t)waiting_request.arg, HISTORY_MOVED_ON_REQUEST, NULL, &from);
 	if (err != 0) {
 		diag_reply_error(&waiting_request, err, 0);
 	} else {
@@ -380,8 +382,9 @@ void core_poll(void)
 	usb_seen_live |= usb_live();
 	if (suspended != usb_was_suspended) {
 		if (usb_seen_live) {
-			core_log(suspended ? HISTORY_USB_SUSPEND : HISTORY_USB_RESUME,
-				 DEVICE_NO_SLOT, 0, 0, 0, 0);
+			core_log(DEVICE_NO_SLOT,
+				 (struct diag_detail){.tag = suspended ? DIAG_DETAIL_USB_SUSPEND
+							     : DIAG_DETAIL_USB_RESUME});
 		}
 		usb_was_suspended = suspended;
 	}
@@ -397,7 +400,7 @@ int core_set_channel(uint8_t channel)
 {
 	int err;
 
-	if (!protocol_has_esb(active)) {
+	if (!diag_protocol_has_esb(active)) {
 		return -ENOTSUP;
 	}
 	take_noise();
@@ -412,7 +415,7 @@ const struct chan_survey *core_survey(void)
 {
 	static struct chan_survey survey;
 
-	if (!protocol_has_esb(active)) {
+	if (!diag_protocol_has_esb(active)) {
 		return NULL;
 	}
 	take_noise();
@@ -437,7 +440,7 @@ static void clear(const struct diag_request *req)
 	memset(gaps, 0, sizeof(gaps));
 	memset(link_losses, 0, sizeof(link_losses));
 	history_clear(&history, k_uptime_get(), &(struct history_totals){0});
-	log_event(HISTORY_CLEAR, DEVICE_NO_SLOT, 0, 0, 0, 0);
+	log_event(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_CLEAR});
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 
@@ -445,15 +448,21 @@ static bool slot_asked(const struct diag_request *req, uint8_t *slot)
 {
 	*slot = req->data[0];
 	if (*slot >= loop->slot_count) {
-		diag_reply_error(req, DIAG_ERR_NO_SUCH_DEVICE, 0);
+		diag_reply_error(req, DIAG_ERROR_NO_SUCH_DEVICE, 0);
 		return false;
 	}
 	return true;
 }
 
+/* Requests are served one at a time, so their pages share one buffer. */
+static union {
+	struct history_minute minutes[DIAG_MINUTES_PER_PAGE];
+	struct history_event events[DIAG_EVENTS_PER_PAGE];
+	struct diag_watch_channel watch[CHANWATCH_MAX];
+} page;
+
 static void serve_minutes(const struct diag_request *req, uint8_t *payload)
 {
-	static struct history_minute page[DIAG_MINUTES_PER_PAGE];
 	uint32_t first;
 	uint8_t slot;
 	size_t n;
@@ -461,18 +470,19 @@ static void serve_minutes(const struct diag_request *req, uint8_t *payload)
 	if (!slot_asked(req, &slot)) {
 		return;
 	}
-	n = history_minutes(&history, req->arg, &first, page, ARRAY_SIZE(page));
-	diag_reply(req, payload, diag_encode_minutes(payload, first, page, n, slot),
+	n = history_minutes(&history, req->arg, &first, page.minutes, ARRAY_SIZE(page.minutes));
+	diag_reply(req, payload,
+		   diag_encode_minutes(payload, DIAG_PAYLOAD_MAX, first, page.minutes, n, slot),
 		   DIAG_AFTER_NONE);
 }
 
 static void serve_events(const struct diag_request *req, uint8_t *payload)
 {
-	static struct history_event page[DIAG_EVENTS_PER_PAGE];
 	uint32_t first;
-	size_t n = history_events(&history, req->arg, &first, page, ARRAY_SIZE(page));
+	size_t n = history_events(&history, req->arg, &first, page.events, ARRAY_SIZE(page.events));
 
-	diag_reply(req, payload, diag_encode_events(payload, first, page, n), DIAG_AFTER_NONE);
+	diag_reply(req, payload, diag_encode_events(payload, DIAG_PAYLOAD_MAX, first, page.events, n),
+		   DIAG_AFTER_NONE);
 }
 
 static void serve_noise(const struct diag_request *req, uint8_t *payload)
@@ -483,23 +493,30 @@ static void serve_noise(const struct diag_request *req, uint8_t *payload)
 	core_release_keys();
 	survey = core_survey();
 	if (survey == NULL) {
-		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		diag_reply_error(req, DIAG_ERROR_RADIO, 0);
 		return;
 	}
 	loop->radio_resumed();
-	log_event(HISTORY_NOISE, DEVICE_NO_SLOT, 0, 0, 0, 0);
-	diag_reply(req, payload, diag_encode_noise(payload, survey), DIAG_AFTER_NONE);
+	log_event(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_NOISE});
+	diag_reply(req, payload,
+		   diag_encode_noise(payload, DIAG_PAYLOAD_MAX, CHAN_FIRST, CHAN_SAMPLES,
+				     &survey->dbm[0][0], CHAN_COUNT * CHAN_SAMPLES),
+		   DIAG_AFTER_NONE);
 }
 
 static void serve_watch(const struct diag_request *req, uint8_t *payload)
 {
 	int home = loop->home();
+	uint8_t threshold = threshold_bucket();
+	const struct diag_watch_head head = {
+		.home = home == CHANMOVE_NO_HOME ? 0 : (uint8_t)home,
+		.threshold = threshold,
+		.paused = loop->movable() == CHANMOVE_NO_HOME,
+		.hold_left_ms = chanwatch_hold_left(&watch, (uint64_t)k_uptime_get()),
+	};
+	size_t n = chanwatch_report(&watch, threshold, page.watch);
 
-	diag_reply(req, payload,
-		   diag_encode_watch(payload, &watch,
-				     home == CHANMOVE_NO_HOME ? 0 : (uint8_t)home, threshold_bucket(),
-				     loop->movable() == CHANMOVE_NO_HOME,
-				     (uint64_t)k_uptime_get()),
+	diag_reply(req, payload, diag_encode_watch(payload, DIAG_PAYLOAD_MAX, &head, page.watch, n),
 		   DIAG_AFTER_NONE);
 }
 
@@ -647,7 +664,7 @@ static void serve_status(const struct diag_request *req, uint8_t *payload)
 	}
 	core_fill_status(&st, slot);
 	loop->fill_status(&st, slot);
-	diag_reply(req, payload, diag_encode_status(payload, &st), DIAG_AFTER_NONE);
+	diag_reply(req, payload, diag_encode_status(payload, DIAG_PAYLOAD_MAX, &st), DIAG_AFTER_NONE);
 }
 
 static void serve_protocol(const struct diag_request *req)
@@ -661,7 +678,7 @@ static void serve_protocol(const struct diag_request *req)
 		return;
 	}
 	if (!protocol_from_arg(req->arg, &want)) {
-		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
+		diag_reply_error(req, DIAG_ERROR_UNKNOWN_COMMAND, 0);
 		return;
 	}
 	if (want == active) {
@@ -675,7 +692,7 @@ static void serve_protocol(const struct diag_request *req)
 	err = store_save_protocol(want);
 	if (err) {
 		printk("saving the protocol failed: %d\n", err);
-		diag_reply_error(req, DIAG_ERR_STORE, 0);
+		diag_reply_error(req, DIAG_ERROR_STORE, 0);
 		return;
 	}
 	reply[1] = 1;
@@ -685,7 +702,7 @@ static void serve_protocol(const struct diag_request *req)
 static void serve_move(const struct diag_request *req)
 {
 	if (req->arg > UINT8_MAX) {
-		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS, 0);
+		diag_reply_error(req, DIAG_ERROR_BAD_CHANNELS, 0);
 		return;
 	}
 	waiting_request = *req;
@@ -694,44 +711,50 @@ static void serve_move(const struct diag_request *req)
 	poll_move_request();
 }
 
+static uint8_t payload[DIAG_PAYLOAD_MAX];
+
+void core_reply_devices(const struct diag_request *req, const struct diag_device *d, size_t n)
+{
+	diag_reply(req, payload, diag_encode_devices(payload, sizeof(payload), d, n),
+		   DIAG_AFTER_NONE);
+}
+
 bool core_take_request(struct diag_request *out)
 {
-	static uint8_t payload[DIAG_PAYLOAD_MAX];
-
 	while (diag_take_request(out)) {
 		if (!diag_command_answered(out->command, active)) {
-			diag_reply_error(out, DIAG_ERR_WRONG_PROTOCOL, active);
+			diag_reply_error(out, DIAG_ERROR_WRONG_PROTOCOL, active);
 			continue;
 		}
 		switch (out->command) {
-		case DIAG_STATUS:
+		case DIAG_COMMAND_STATUS:
 			serve_status(out, payload);
 			break;
-		case DIAG_PROTOCOL:
+		case DIAG_COMMAND_PROTOCOL:
 			serve_protocol(out);
 			break;
-		case DIAG_REBOOT:
+		case DIAG_COMMAND_REBOOT:
 			diag_reply(out, NULL, 0, DIAG_AFTER_REBOOT);
 			break;
-		case DIAG_BOOTLOADER:
+		case DIAG_COMMAND_BOOTLOADER:
 			diag_reply(out, NULL, 0, DIAG_AFTER_BOOTLOADER);
 			break;
-		case DIAG_HISTORY:
+		case DIAG_COMMAND_HISTORY:
 			serve_minutes(out, payload);
 			break;
-		case DIAG_EVENTS:
+		case DIAG_COMMAND_EVENTS:
 			serve_events(out, payload);
 			break;
-		case DIAG_NOISE:
+		case DIAG_COMMAND_NOISE:
 			serve_noise(out, payload);
 			break;
-		case DIAG_CLEAR:
+		case DIAG_COMMAND_CLEAR:
 			clear(out);
 			break;
-		case DIAG_MOVE:
+		case DIAG_COMMAND_MOVE:
 			serve_move(out);
 			break;
-		case DIAG_WATCH:
+		case DIAG_COMMAND_WATCH:
 			serve_watch(out, payload);
 			break;
 		default:

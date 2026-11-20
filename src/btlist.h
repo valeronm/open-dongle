@@ -6,8 +6,9 @@
 #include <stdint.h>
 
 #include "btpolicy.h"
+#include "device.h"
 
-#define BTLIST_NAME_LEN 24
+#define BTLIST_NAME_LEN DIAG_NAME_MAX
 
 struct btlist_entry {
 	uint8_t addr[BTPOLICY_ADDR_LEN];
@@ -44,5 +45,14 @@ bool btlist_has_kind(const struct btlist *l, enum device_kind kind);
 const struct btlist_entry *btlist_latest(const struct btlist *l, enum device_kind kind);
 /* DEVICE_NO_KIND for an address not in the list. */
 enum device_kind btlist_kind(const struct btlist *l, const uint8_t *addr);
+
+/* secure tells whether the entry paired with LE Secure Connections. */
+uint8_t btlist_pairing(const struct btlist_entry *e, bool secure);
+
+/* connected[s] is the address of the device ready in slot s, or NULL; secure tells whether the
+ * device at an address paired with LE Secure Connections. Returns the number of devices written. */
+size_t btlist_devices(const struct btlist *l, const uint8_t *const connected[DEVICE_SLOTS],
+		      bool (*secure)(const uint8_t addr[BTPOLICY_ADDR_LEN]),
+		      struct diag_device out[BTPOLICY_STORED_MAX]);
 
 #endif

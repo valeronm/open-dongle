@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "diagproto.h"
+#include "diagwire.h"
 #include "reports.h"
 
 /* Callbacks run in the USB stack's thread or the system workqueue, never in an interrupt. */

@@ -6,9 +6,9 @@ enum device_kind btpolicy_kind_of(uint16_t appearance)
 {
 	switch (appearance) {
 	case BTPOLICY_APPEARANCE_KEYBOARD:
-		return DEVICE_KEYBOARD;
+		return DEVICE_KIND_KEYBOARD;
 	case BTPOLICY_APPEARANCE_MOUSE:
-		return DEVICE_MOUSE;
+		return DEVICE_KIND_MOUSE;
 	default:
 		return DEVICE_NO_KIND;
 	}
@@ -106,7 +106,7 @@ enum btpolicy_pairing btpolicy_paired(struct btpolicy *p, enum device_kind kind,
 {
 	struct btpolicy_slot *s = &p->slots[kind];
 
-	if (kind == DEVICE_KEYBOARD && p->window_open && p->passkey_demanded && !passkey_used) {
+	if (kind == DEVICE_KIND_KEYBOARD && p->window_open && p->passkey_demanded && !passkey_used) {
 		refuse_peer(p, s->peer);
 		return BTPOLICY_PAIRING_FORGOTTEN;
 	}

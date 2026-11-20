@@ -13,11 +13,10 @@
 /* The keyboard pairs on channel 2 and only rarely visits its other pairing channels, 50 and 80. */
 #define PAIRING_CHANNEL 2
 static const uint8_t pairing_channels[] = {PAIRING_CHANNEL, 50, 80};
-const uint8_t link_fixed_channels[LINK_FIXED_CHANNELS] = {16, 22, 44, 48, 58, 72, 78};
 
 bool link_connected(const struct link *l)
 {
-	return l->state == LINK_CONNECTED || l->state == LINK_MOVING_HOME;
+	return l->state == LINK_STATE_CONNECTED || l->state == LINK_STATE_MOVING_HOME;
 }
 
 static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
@@ -29,8 +28,8 @@ static void set_channel(struct link *l, uint8_t channel, struct link_out *out)
 
 static void list_channels(struct link *l)
 {
-	memcpy(l->channels, link_fixed_channels, sizeof(link_fixed_channels));
-	l->channel_count = sizeof(link_fixed_channels);
+	memcpy(l->channels, diag_nuphy_fixed_channels, sizeof(diag_nuphy_fixed_channels));
+	l->channel_count = sizeof(diag_nuphy_fixed_channels);
 	for (size_t i = 0; l->own_known && i < sizeof(l->own); i++) {
 		if (memchr(l->channels, l->own[i], l->channel_count) == NULL) {
 			l->channels[l->channel_count++] = l->own[i];
@@ -54,12 +53,12 @@ static bool on_pairing_channel(const struct link *l)
 
 static uint8_t own_slot_channel(const struct link *l)
 {
-	return l->own_known ? l->home : link_fixed_channels[l->fixed_next];
+	return l->own_known ? l->home : diag_nuphy_fixed_channels[l->fixed_next];
 }
 
 static void go_idle(struct link *l, uint32_t now_ms, struct link_out *out)
 {
-	l->state = LINK_IDLE;
+	l->state = LINK_STATE_IDLE;
 	l->suspend_sent = false;
 	l->slot_start_ms = now_ms;
 	set_channel(l, own_slot_channel(l), out);
@@ -108,13 +107,13 @@ static bool next_offer_ready(const struct link *l, uint32_t now_ms)
 static void offer(struct link *l, struct link_out *out)
 {
 	memcpy(l->offered, l->next_offer, sizeof(l->offered));
-	l->state = LINK_PAIRING;
+	l->state = LINK_STATE_PAIRING;
 	reply_pairing(l, out);
 }
 
 static bool attempting(const struct link *l)
 {
-	return l->state == LINK_SURVEY || l->state == LINK_PAIRING || l->state == LINK_CONFIRMED;
+	return l->state == LINK_STATE_SURVEY || l->state == LINK_STATE_PAIRING || l->state == LINK_STATE_CONFIRMED;
 }
 
 static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32_t now_ms,
@@ -125,27 +124,27 @@ static void on_pairing_message(struct link *l, const struct nuphy_msg *m, uint32
 		l->last_rx_ms = now_ms;
 	}
 	if (m->kind == NUPHY_PAIR_REQUEST) {
-		if (l->state == LINK_IDLE && link_pairing_open(l, now_ms)) {
+		if (l->state == LINK_STATE_IDLE && link_pairing_open(l, now_ms)) {
 			memcpy(l->keyboard_id, m->ids.keyboard, NUPHY_ID_LEN);
 			l->last_rx_ms = now_ms;
 			if (next_offer_ready(l, now_ms)) {
 				offer(l, out);
 			} else {
-				l->state = LINK_SURVEY;
+				l->state = LINK_STATE_SURVEY;
 				out->start_survey = true;
 			}
-		} else if (l->state == LINK_PAIRING && same_keyboard) {
+		} else if (l->state == LINK_STATE_PAIRING && same_keyboard) {
 			reply_pairing(l, out);
 		}
 		return;
 	}
-	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_PAIRING && same_keyboard &&
+	if (m->kind == NUPHY_PAIR_CONFIRM && l->state == LINK_STATE_PAIRING && same_keyboard &&
 	    memcmp(m->ids.dongle, l->dongle_id, NUPHY_ID_LEN) == 0) {
 		set_own(l, l->offered);
 		l->keyboard_name = (struct nuphy_name){0};
 		pairwin_close(&l->window);
 		out->save_channels = true;
-		l->state = LINK_CONFIRMED;
+		l->state = LINK_STATE_CONFIRMED;
 		/* The keyboard addresses pipe 1 once this confirm is acknowledged. */
 		reply_status(l, now_ms, out);
 	}
@@ -165,7 +164,7 @@ static void on_connected_message(struct link *l, uint32_t now_ms, struct link_ou
 
 static void move_home(struct link *l, uint32_t now_ms, struct link_out *out)
 {
-	l->state = LINK_CONNECTED;
+	l->state = LINK_STATE_CONNECTED;
 	set_channel(l, l->home, out);
 	reply_status(l, now_ms, out);
 }
@@ -181,7 +180,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		return;
 	}
 	/* Pipe 1 carries no keyboard ID, so a pairing cannot tell the keyboard it pairs from another. */
-	if (pipe != 1 || l->state == LINK_SURVEY || l->state == LINK_PAIRING) {
+	if (pipe != 1 || l->state == LINK_STATE_SURVEY || l->state == LINK_STATE_PAIRING) {
 		return;
 	}
 	if (link_connected(l) && now_ms - l->last_rx_ms >= GAP_MS) {
@@ -193,11 +192,11 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		nuphy_name_add(&l->keyboard_name, m->name_chunk);
 	}
 	switch (l->state) {
-	case LINK_CONFIRMED:
+	case LINK_STATE_CONFIRMED:
 		/* This packet's ACK carried the status queued on entering this state. */
 		move_home(l, now_ms, out);
 		break;
-	case LINK_MOVING_HOME:
+	case LINK_STATE_MOVING_HOME:
 		/* A keyboard follows a move only after taking a status, which its hello shows. */
 		if (m->kind != NUPHY_HELLO) {
 			on_connected_message(l, now_ms, out);
@@ -207,15 +206,15 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 		out->moved_from = l->channel;
 		move_home(l, now_ms, out);
 		break;
-	case LINK_IDLE:
+	case LINK_STATE_IDLE:
 		/* A keyboard heard on the pairing channel stays there until a send fails. */
-		l->state = (on_pairing_channel(l) && l->own_known) ? LINK_MOVING_HOME
-								   : LINK_CONNECTED;
+		l->state = (on_pairing_channel(l) && l->own_known) ? LINK_STATE_MOVING_HOME
+								   : LINK_STATE_CONNECTED;
 		out->up = true;
 		pairwin_link_up(&l->window);
 		reply_status(l, now_ms, out);
 		break;
-	case LINK_CONNECTED:
+	case LINK_STATE_CONNECTED:
 		on_connected_message(l, now_ms, out);
 		break;
 	default:
@@ -226,7 +225,7 @@ void link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, ui
 void link_on_survey(struct link *l, const uint8_t channels[LINK_OWN_CHANNELS], uint32_t now_ms,
 		    struct link_out *out)
 {
-	if (l->state != LINK_SURVEY) {
+	if (l->state != LINK_STATE_SURVEY) {
 		return;
 	}
 	memcpy(l->next_offer, channels, sizeof(l->next_offer));
@@ -240,7 +239,7 @@ void link_on_survey(struct link *l, const uint8_t channels[LINK_OWN_CHANNELS], u
 
 void link_survey_failed(struct link *l, uint32_t now_ms, struct link_out *out)
 {
-	if (l->state == LINK_SURVEY) {
+	if (l->state == LINK_STATE_SURVEY) {
 		go_idle(l, now_ms, out);
 	}
 }
@@ -248,17 +247,17 @@ void link_survey_failed(struct link *l, uint32_t now_ms, struct link_out *out)
 void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 {
 	switch (l->state) {
-	case LINK_CONNECTED:
-	case LINK_CONFIRMED:
-	case LINK_MOVING_HOME:
-	case LINK_PAIRING:
+	case LINK_STATE_CONNECTED:
+	case LINK_STATE_CONFIRMED:
+	case LINK_STATE_MOVING_HOME:
+	case LINK_STATE_PAIRING:
 		if (now_ms - l->last_rx_ms >= IDLE_AFTER_MS) {
 			out->lost = link_connected(l);
-			out->pairing_expired = l->state == LINK_PAIRING;
+			out->pairing_expired = l->state == LINK_STATE_PAIRING;
 			go_idle(l, now_ms, out);
 		}
 		break;
-	case LINK_IDLE:
+	case LINK_STATE_IDLE:
 		/* A keyboard that fails a send sweeps its channels within milliseconds. */
 		if (l->own_known && !link_pairing_open(l, now_ms)) {
 			if (on_pairing_channel(l)) {
@@ -269,14 +268,14 @@ void link_tick(struct link *l, uint32_t now_ms, struct link_out *out)
 				set_channel(l, PAIRING_CHANNEL, out);
 			} else {
 				if (!l->own_known) {
-					l->fixed_next = (l->fixed_next + 1) % sizeof(link_fixed_channels);
+					l->fixed_next = (l->fixed_next + 1) % sizeof(diag_nuphy_fixed_channels);
 				}
 				set_channel(l, own_slot_channel(l), out);
 			}
 			l->slot_start_ms = now_ms;
 		}
 		break;
-	case LINK_SURVEY:
+	case LINK_STATE_SURVEY:
 		break;
 	}
 	out->window_closed = !attempting(l) && pairwin_ran_out(&l->window, now_ms);
@@ -320,7 +319,7 @@ enum link_led link_led(const struct link *l, uint32_t now_ms)
 	if (link_pairing_open(l, now_ms)) {
 		return LINK_LED_PAIRING;
 	}
-	if (l->state == LINK_IDLE) {
+	if (l->state == LINK_STATE_IDLE) {
 		return LINK_LED_IDLE;
 	}
 	return link_connected(l) ? LINK_LED_CONNECTED : LINK_LED_PAIRING;
@@ -371,7 +370,7 @@ const uint8_t *link_forced_channels(const struct link *l)
 static bool movable(const struct link *l, uint32_t now_ms)
 {
 	return l->own_known && !link_pairing_open(l, now_ms) && !l->host_suspended &&
-	       (l->state == LINK_CONNECTED || l->state == LINK_IDLE);
+	       (l->state == LINK_STATE_CONNECTED || l->state == LINK_STATE_IDLE);
 }
 
 enum chanmove_result link_move(struct link *l, uint8_t channel, uint32_t now_ms)

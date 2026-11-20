@@ -5,9 +5,10 @@ use anyhow::{Context, Result, bail};
 use crate::protocol::{
     Action, CHUNK, Command, ErrorCode, Event, Minute, NoiseChannel, Part, Protocol, REPORT_LEN,
     Reader, SlotStatus, Status, StoredDevice, VersionMismatch, Watch, channels_arg, decode_events,
-    decode_minutes, decode_noise, decode_watch, parse_part, read_devices, read_status, request,
-    shown_slots,
+    decode_minutes, decode_noise, decode_watch, is_reply_to, parse_part, read_devices,
+    read_protocol, read_status, request, shown_slots,
 };
+use crate::protocol::{ErrorText as _, ProtocolInfo as _};
 
 pub const VID: u16 = 0x2fe3;
 pub const PID: u16 = 0x4e44;
@@ -105,7 +106,7 @@ impl<T: Transport> Device<T> {
             if !self.transport.read(&mut buf, left)? {
                 continue;
             }
-            let Some(part) = parse_part(&buf).filter(|p| p.is_reply_to(command, seq)) else {
+            let Some(part) = parse_part(&buf).filter(|p| is_reply_to(p, command, seq)) else {
                 continue;
             };
             let (index, count, chunk) = match part {
@@ -207,13 +208,18 @@ impl<T: Transport> Device<T> {
     /// Returns the channel the link was on.
     pub fn move_to(&mut self, channel: u8) -> Result<u8> {
         let reply = self.call(Command::Move, channel.into(), TIMEOUT)?;
-        Reader::new(&reply).u8()
+        Ok(Reader::new(&reply).u8()?)
     }
 
     /// Returns whether a keyboard pairing is asked for a passkey, which only Bluetooth does; the
     /// status carries the passkey once a keyboard waits for it.
     pub fn pair(&mut self, no_passkey: bool) -> Result<bool> {
-        let reply = self.call(Command::Pair, u32::from(no_passkey), TIMEOUT)?;
+        let arg = if no_passkey {
+            diagwire::PAIR_NO_PASSKEY
+        } else {
+            0
+        };
+        let reply = self.call(Command::Pair, arg, TIMEOUT)?;
         Ok(Reader::new(&reply).u8()? != 0)
     }
 
@@ -221,7 +227,7 @@ impl<T: Transport> Device<T> {
     pub fn protocol(&mut self, set: Option<Protocol>) -> Result<(Protocol, bool)> {
         let reply = self.call(Command::Protocol, set.map_or(0, |p| p as u32), TIMEOUT)?;
         let mut r = Reader::new(&reply);
-        let running = Protocol::read(&mut r)?;
+        let running = read_protocol(r.u8()?)?;
         Ok((running, r.u8()? != 0))
     }
 
@@ -342,7 +348,7 @@ pub fn open_unchecked(serial: Option<&str>) -> Result<Device<HidTransport>> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::protocol::HEADER_LEN;
+    use crate::protocol::tests::minutes_page;
     use crate::protocol::tests::{fixture, status_in_protocol};
     use std::collections::VecDeque;
 
@@ -383,22 +389,27 @@ pub(crate) mod tests {
         }
     }
 
+    fn request_of(command: u8, seq: u8) -> diagwire::Request {
+        diagwire::Request {
+            command,
+            seq,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn parts(command: u8, seq: u8, payload: &[u8]) -> Vec<[u8; REPORT_LEN]> {
-        let count = payload.len().div_ceil(CHUNK).max(1);
-        (0..count)
+        (0..diagwire::part_count(payload.len()))
             .map(|i| {
-                let mut r = [0u8; REPORT_LEN];
-                r[..HEADER_LEN].copy_from_slice(&[command, seq, i as u8, count as u8]);
-                let chunk = payload.chunks(CHUNK).nth(i).unwrap_or(&[]);
-                r[HEADER_LEN..HEADER_LEN + chunk.len()].copy_from_slice(chunk);
+                let mut r = [0; REPORT_LEN];
+                diagwire::part(&mut r, &request_of(command, seq), payload, i);
                 r
             })
             .collect()
     }
 
     pub(crate) fn error_part(command: u8, seq: u8, code: u8) -> [u8; REPORT_LEN] {
-        let mut r = [0u8; REPORT_LEN];
-        r[..5].copy_from_slice(&[command | crate::protocol::ERROR_FLAG, seq, 0, 1, code]);
+        let mut r = [0; REPORT_LEN];
+        diagwire::error_report(&mut r, &request_of(command, seq), code, 0);
         r
     }
 
@@ -442,12 +453,7 @@ pub(crate) mod tests {
             Fake::new(|req| {
                 let from = u32::from_le_bytes(req[2..6].try_into().unwrap());
                 let n = 130u32.saturating_sub(from).min(40) as u8;
-                let mut p = from.to_le_bytes().to_vec();
-                p.push(n);
-                for _ in 0..n {
-                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-                }
-                parts(req[0], req[1], &p)
+                parts(req[0], req[1], &minutes_page(from, n.into(), 1))
             }),
             0,
         );
@@ -514,9 +520,7 @@ pub(crate) mod tests {
             Fake::new(move |req| {
                 assert_eq!(req[0], Command::Status as u8);
                 asked.borrow_mut().push(req[6]);
-                let mut reply = fixture("status-slot1.hex");
-                let slot_at = reply.len() - crate::protocol::tests::SLOT_FROM_END;
-                reply[slot_at] = req[6];
+                let reply = crate::protocol::tests::edited("status-slot1.hex", |s| s.slot = req[6]);
                 parts(req[0], req[1], &reply)
             }),
             0,

@@ -1,5 +1,5 @@
 [tools]
-rust = { version = "1.100", components = "rustfmt,clippy" }
+rust = { version = "1.100", components = "rustfmt,clippy", targets = "thumbv7em-none-eabi" }
 cmake = "4.4"
 ninja = "1.13"
 python = "3.14"
@@ -39,15 +39,16 @@ run = [
 	"cmake -S tests -B build/tests -G Ninja",
 	"cmake --build build/tests",
 	"ctest --test-dir build/tests --output-on-failure",
-	"cargo test --manifest-path tool/Cargo.toml",
-	"cargo build --manifest-path tool/Cargo.toml",
+	"cargo test",
+	"cargo build",
 ]
 
 [tasks.lint]
 description = "Check the tool's formatting and lints, and the shell scripts"
 run = [
-	"cargo fmt --manifest-path tool/Cargo.toml --check",
-	"cargo clippy --manifest-path tool/Cargo.toml --all-targets -- -D warnings",
+	"cargo fmt --all --check",
+	"cargo clippy --all-targets -- -D warnings",
+	"cargo clippy -p diagwire-ffi --profile ffi -- -D warnings",
 	"shellcheck tools/*.sh",
 ]
 

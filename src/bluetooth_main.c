@@ -30,14 +30,8 @@ static void nothing(void)
 {
 }
 
-enum {
-	LINK_NONE_READY,
-	LINK_READY,
-	LINK_START_FAILED,
-};
-
 /* One device of each kind connects at once, each in the slot numbered by its kind. */
-BUILD_ASSERT(DEVICE_KEYBOARD == 0 && DEVICE_MOUSE == 1 && DEVICE_KINDS == DEVICE_SLOTS);
+BUILD_ASSERT(DEVICE_KIND_KEYBOARD == 0 && DEVICE_KIND_MOUSE == 1 && DEVICE_KINDS == DEVICE_SLOTS);
 
 static uint8_t slot_of(enum device_kind kind)
 {
@@ -140,7 +134,7 @@ static uint8_t pairing_of(enum device_kind kind)
 	if (!e) {
 		return 0;
 	}
-	return diag_pairing(e, ble_bond_secure(e->addr));
+	return btlist_pairing(e, ble_bond_secure(e->addr));
 }
 
 static void fill_status(struct diag_status *st, uint8_t slot)
@@ -148,7 +142,7 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 	enum device_kind kind = kind_in(slot);
 	const struct connected *c = &devices[kind];
 
-	st->link_state = start_err ? LINK_START_FAILED : any_ready() ? LINK_READY : LINK_NONE_READY;
+	st->link_state = start_err ? BT_LINK_START_FAILED : any_ready() ? BT_LINK_READY : BT_LINK_NONE_READY;
 	if (pairwin_holder(&window) != DEVICE_NO_KIND) {
 		char name[BLE_NAME_MAX + 1];
 
@@ -256,30 +250,35 @@ static int forget(const uint8_t *addr)
 	return 0;
 }
 
-BUILD_ASSERT(HISTORY_ADDR_LEN == BTPOLICY_ADDR_LEN);
 BUILD_ASSERT(DIAG_REQUEST_DATA_LEN == BTPOLICY_ADDR_LEN);
 
-static void log_address(uint8_t type, enum device_kind kind, const uint8_t *addr, uint8_t c)
-{
-	struct history_event e = history_keyboard_event(type, slot_of(kind), addr, c);
+#define SAME_ADDR(body) (offsetof(struct diag_detail, body.addr) == \
+			 offsetof(struct diag_detail, BT_CONNECTED.addr))
+BUILD_ASSERT(SAME_ADDR(BT_PAIRED) && SAME_ADDR(BT_BOND_LOST) && SAME_ADDR(BT_FORGOTTEN) &&
+	     SAME_ADDR(BT_PASSKEY_AWAITED));
 
-	core_log(e.type, e.slot, e.a, e.b, e.c, e.value);
+/* d is one of the details SAME_ADDR lists; its address is set from addr. */
+static void log_address(struct diag_detail d, enum device_kind kind,
+			const uint8_t addr[BTPOLICY_ADDR_LEN])
+{
+	memcpy(d.BT_CONNECTED.addr, &addr[1], DIAG_EVENT_ADDR_LEN);
+	core_log(slot_of(kind), d);
 }
 
-static void log_device(uint8_t type, enum device_kind kind, uint8_t c)
+static void log_device(struct diag_detail d, enum device_kind kind)
 {
-	log_address(type, kind, btpolicy_peer(&policy, kind), c);
+	log_address(d, kind, btpolicy_peer(&policy, kind));
 }
 
 static void send_leds(uint8_t leds)
 {
-	const struct hidmap *map = &maps[DEVICE_KEYBOARD];
+	const struct hidmap *map = &maps[DEVICE_KIND_KEYBOARD];
 	int err;
 
-	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || !map->has_leds) {
+	if (!btpolicy_is_ready(&policy, DEVICE_KIND_KEYBOARD) || !map->has_leds) {
 		return;
 	}
-	err = ble_write_report(DEVICE_KEYBOARD, map->led_report_id, &leds, sizeof(leds));
+	err = ble_write_report(DEVICE_KIND_KEYBOARD, map->led_report_id, &leds, sizeof(leds));
 	if (err) {
 		printk("bluetooth leds not sent: %d\n", err);
 	}
@@ -329,12 +328,13 @@ static void on_failed(const struct ble_event *ev)
 	switch (btpolicy_security_failed(&policy, ev->kind, ev->failed.why)) {
 	case BTPOLICY_PAIRING_REFUSED:
 		printk("bluetooth pairing refused\n");
-		core_log(HISTORY_BT_REFUSED, slot_of(ev->kind), HISTORY_REFUSED_BY_KEYBOARD,
-			 0, 0, 0);
+		core_log(slot_of(ev->kind),
+			 (struct diag_detail){.tag = DIAG_DETAIL_BT_REFUSED,
+					       .BT_REFUSED = {.refused = HISTORY_REFUSED_BY_KEYBOARD}});
 		break;
 	case BTPOLICY_BOND_LOST:
 		printk("bluetooth device lost its bond\n");
-		log_device(HISTORY_BT_BOND_LOST, ev->kind, 0);
+		log_device((struct diag_detail){.tag = DIAG_DETAIL_BT_BOND_LOST}, ev->kind);
 		break;
 	case BTPOLICY_REFUSED_BEFORE:
 	case BTPOLICY_SECURITY_FAILED:
@@ -346,7 +346,7 @@ static void on_failed(const struct ble_event *ev)
 static void device_ready(enum device_kind kind)
 {
 	btpolicy_ready(&policy, kind);
-	log_device(HISTORY_BT_CONNECTED, kind, 0);
+	log_device((struct diag_detail){.tag = DIAG_DETAIL_BT_CONNECTED}, kind);
 	save_list(btlist_connected(&list, btpolicy_peer(&policy, kind), devices[kind].name));
 }
 
@@ -365,7 +365,9 @@ static void on_map_read(enum device_kind kind)
 		       map_fault(result));
 		if ((result == HIDMAP_NO_KEYBOARD || result == HIDMAP_NO_POINTER) &&
 		    forget(btpolicy_peer(&policy, kind)) == 0) {
-			log_device(HISTORY_BT_FORGOTTEN, kind, HISTORY_FORGOTTEN_UNUSABLE_MAP);
+			log_device((struct diag_detail){.tag = DIAG_DETAIL_BT_FORGOTTEN,
+							 .BT_FORGOTTEN = {.cause = HISTORY_FORGOTTEN_UNUSABLE_MAP}},
+				   kind);
 		}
 		ble_disconnect(kind);
 		return;
@@ -381,7 +383,7 @@ static void on_map_read(enum device_kind kind)
 		}
 		hidpp_start(&runs[kind].hidpp);
 	}
-	if (kind == DEVICE_KEYBOARD) {
+	if (kind == DEVICE_KIND_KEYBOARD) {
 		uint8_t leds;
 
 		core_take_leds(&leds);
@@ -392,14 +394,17 @@ static void on_map_read(enum device_kind kind)
 static void on_disconnected(enum device_kind kind, uint8_t reason)
 {
 	if (btpolicy_is_ready(&policy, kind)) {
-		core_log_input_lost(HISTORY_BT_DISCONNECTED, slot_of(kind), reason, 0);
-		if (kind == DEVICE_MOUSE) {
+		core_log(slot_of(kind),
+			 (struct diag_detail){.tag = DIAG_DETAIL_BT_DISCONNECTED,
+					       .BT_DISCONNECTED = {.reason = reason,
+								   .since_input_s = core_since_input_s(slot_of(kind))}});
+		if (kind == DEVICE_KIND_MOUSE) {
 			const struct report released = {.kind = REPORT_MOUSE};
 
-			core_submit(slot_of(DEVICE_MOUSE), &released, NULL);
+			core_submit(slot_of(DEVICE_KIND_MOUSE), &released, NULL);
 		}
 	}
-	if (kind == DEVICE_KEYBOARD) {
+	if (kind == DEVICE_KIND_KEYBOARD) {
 		if (btpolicy_is_ready(&policy, kind)) {
 			core_release_keys();
 		}
@@ -415,14 +420,14 @@ static void on_mouse_report(const struct ble_event *ev)
 {
 	struct report out;
 
-	if (hidkeys_pointer(&maps[DEVICE_MOUSE].pointer, ev->report.id, ev->report.data,
+	if (hidkeys_pointer(&maps[DEVICE_KIND_MOUSE].pointer, ev->report.id, ev->report.data,
 			    ev->report.len, &out)) {
-		int wheel = reports_scale_wheel(&devices[DEVICE_MOUSE].wheel_carry, out.mouse.wheel,
-						hidpp_wheel_steps(&runs[DEVICE_MOUSE].hidpp),
+		int wheel = reports_scale_wheel(&devices[DEVICE_KIND_MOUSE].wheel_carry, out.mouse.wheel,
+						hidpp_wheel_steps(&runs[DEVICE_KIND_MOUSE].hidpp),
 						usb_mouse_wheel_steps());
 
 		out.mouse.wheel = (int8_t)reports_clamp(wheel, -INT8_MAX, INT8_MAX);
-		core_submit(slot_of(DEVICE_MOUSE), &out, &ev->report.received_us);
+		core_submit(slot_of(DEVICE_KIND_MOUSE), &out, &ev->report.received_us);
 	}
 }
 
@@ -474,11 +479,11 @@ static void on_report(const struct ble_event *ev)
 		on_hidpp_report(ev);
 		return;
 	}
-	if (ev->kind == DEVICE_MOUSE) {
+	if (ev->kind == DEVICE_KIND_MOUSE) {
 		on_mouse_report(ev);
 		return;
 	}
-	n = hidkeys_translate(&keys, &maps[DEVICE_KEYBOARD], ev->report.id, ev->report.data,
+	n = hidkeys_translate(&keys, &maps[DEVICE_KIND_KEYBOARD], ev->report.id, ev->report.data,
 			      ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
 		if (out[i].kind == REPORT_CONSUMER) {
@@ -512,14 +517,16 @@ static void on_event(const struct ble_event *ev)
 		if (btpolicy_paired(&policy, ev->kind, ev->passkey_used) ==
 		    BTPOLICY_PAIRING_FORGOTTEN) {
 			printk("bluetooth pairing refused: no passkey typed\n");
-			core_log(HISTORY_BT_REFUSED, slot_of(ev->kind),
-				 HISTORY_REFUSED_NO_PASSKEY, 0, 0, 0);
+			core_log(slot_of(ev->kind),
+				 (struct diag_detail){.tag = DIAG_DETAIL_BT_REFUSED,
+						       .BT_REFUSED = {.refused = HISTORY_REFUSED_NO_PASSKEY}});
 			forget(btpolicy_peer(&policy, ev->kind));
 			ble_disconnect(ev->kind);
 			break;
 		}
 		printk("bluetooth paired\n");
-		log_device(HISTORY_BT_PAIRED, ev->kind, ev->passkey_used);
+		log_device((struct diag_detail){.tag = DIAG_DETAIL_BT_PAIRED, .BT_PAIRED = {.passkey = ev->passkey_used}},
+			   ev->kind);
 		ble_copy_name(ev->kind, name);
 		save_list(btlist_paired(&list, btpolicy_peer(&policy, ev->kind), ev->kind,
 					!ev->passkey_used, name));
@@ -530,7 +537,7 @@ static void on_event(const struct ble_event *ev)
 			awaited_passkey = ev->passkey;
 			ble_copy_name(ev->kind, name);
 			printk("bluetooth passkey awaited by \"%s\"\n", name);
-			log_device(HISTORY_BT_PASSKEY_AWAITED, ev->kind, 0);
+			log_device((struct diag_detail){.tag = DIAG_DETAIL_BT_PASSKEY_AWAITED}, ev->kind);
 		}
 		break;
 	case BLE_MAP_READ:
@@ -556,11 +563,11 @@ static void open_pairing(const struct diag_request *req)
 	int err;
 
 	if (start_err) {
-		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		diag_reply_error(req, DIAG_ERROR_RADIO, 0);
 		return;
 	}
 	if (ble_stored_count() >= BTPOLICY_STORED_MAX) {
-		diag_reply_error(req, DIAG_ERR_LIST_FULL, 0);
+		diag_reply_error(req, DIAG_ERROR_LIST_FULL, 0);
 		return;
 	}
 	if (with_passkey) {
@@ -570,7 +577,7 @@ static void open_pairing(const struct diag_request *req)
 	err = ble_offer_passkey(with_passkey, passkey);
 	if (err) {
 		printk("bluetooth passkey not offered: %d\n", err);
-		diag_reply_error(req, DIAG_ERR_RADIO, 0);
+		diag_reply_error(req, DIAG_ERROR_RADIO, 0);
 		return;
 	}
 	passkey_asked = with_passkey;
@@ -582,8 +589,9 @@ static void open_pairing(const struct diag_request *req)
 
 static void send_devices(const struct diag_request *req)
 {
-	uint8_t payload[DIAG_DEVICES_MAX];
+	static struct diag_device devices[BTPOLICY_STORED_MAX];
 	const uint8_t *connected[DEVICE_SLOTS];
+	size_t n;
 
 	for (uint8_t s = 0; s < DEVICE_SLOTS; s++) {
 		enum device_kind kind = kind_in(s);
@@ -591,8 +599,8 @@ static void send_devices(const struct diag_request *req)
 
 		connected[s] = ready ? btpolicy_peer(&policy, kind) : NULL;
 	}
-	diag_reply(req, payload, diag_encode_devices(payload, &list, connected, ble_bond_secure),
-		   DIAG_AFTER_NONE);
+	n = btlist_devices(&list, connected, ble_bond_secure, devices);
+	core_reply_devices(req, devices, n);
 }
 
 static void forget_listed(const struct diag_request *req)
@@ -600,32 +608,34 @@ static void forget_listed(const struct diag_request *req)
 	enum device_kind kind;
 
 	if (!btlist_has(&list, req->data)) {
-		diag_reply_error(req, DIAG_ERR_NO_SUCH_DEVICE, 0);
+		diag_reply_error(req, DIAG_ERROR_NO_SUCH_DEVICE, 0);
 		return;
 	}
 	kind = btlist_kind(&list, req->data);
 	if (forget(req->data) != 0) {
-		diag_reply_error(req, DIAG_ERR_STORE, 0);
+		diag_reply_error(req, DIAG_ERROR_STORE, 0);
 		return;
 	}
-	log_address(HISTORY_BT_FORGOTTEN, kind, req->data, HISTORY_FORGOTTEN_ON_REQUEST);
+	log_address((struct diag_detail){.tag = DIAG_DETAIL_BT_FORGOTTEN,
+					  .BT_FORGOTTEN = {.cause = HISTORY_FORGOTTEN_ON_REQUEST}},
+		    kind, req->data);
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 
 static void on_request(const struct diag_request *req)
 {
 	switch (req->command) {
-	case DIAG_PAIR:
+	case DIAG_COMMAND_PAIR:
 		open_pairing(req);
 		break;
-	case DIAG_DEVICES:
+	case DIAG_COMMAND_DEVICES:
 		send_devices(req);
 		break;
-	case DIAG_FORGET:
+	case DIAG_COMMAND_FORGET:
 		forget_listed(req);
 		break;
 	default:
-		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
+		diag_reply_error(req, DIAG_ERROR_UNKNOWN_COMMAND, 0);
 		break;
 	}
 }
@@ -667,7 +677,7 @@ static void run_hidpp(enum device_kind kind, uint32_t now)
 		hidpp_taken(x, now);
 	}
 	if (hidpp_take_event(x, &event)) {
-		core_log(event.type, slot_of(kind), event.a, event.b, event.c, event.value);
+		core_log(slot_of(kind), event.detail);
 	}
 }
 

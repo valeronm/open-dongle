@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include "diagproto.h"
+#include "diagwire.h"
 
 enum diag_after {
 	DIAG_AFTER_NONE,

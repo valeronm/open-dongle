@@ -18,6 +18,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       ncs: ${{ steps.v.outputs.ncs }}
       board: ${{ steps.v.outputs.board }}
+      rust: ${{ steps.v.outputs.rust }}
     steps:
       - uses: actions/checkout@v7
       - id: v
@@ -25,8 +26,9 @@ jobs:
           version=$(sed -nE 's/^version = "([0-9]+\.[0-9]+\.[0-9]+)"$/\1/p' tool/Cargo.toml | head -n1)
           ncs=$(sed -n 's/^NCS_VERSION = "\(.*\)"$/\1/p' mise.toml)
           board=$(sed -n 's/^BOARD = "\(.*\)"$/\1/p' mise.toml)
-          if [ -z "$version" ] || [ -z "$ncs" ] || [ -z "$board" ]; then
-            echo "::error::read version '$version' from tool/Cargo.toml, NCS_VERSION '$ncs' and BOARD '$board' from mise.toml"
+          rust=$(sed -n 's/^rust = { version = "\([^"]*\)".*/\1/p' mise.toml)
+          if [ -z "$version" ] || [ -z "$ncs" ] || [ -z "$board" ] || [ -z "$rust" ]; then
+            echo "::error::read version '$version' from tool/Cargo.toml, NCS_VERSION '$ncs', BOARD '$board' and rust '$rust' from mise.toml"
             exit 1
           fi
           if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
@@ -42,6 +44,7 @@ jobs:
             echo "version=$version"
             echo "ncs=$ncs"
             echo "board=$board"
+            echo "rust=$rust"
           } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v7
         with:
@@ -64,6 +67,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: spare-dongle
+      # The firmware links the diagnostic protocol's Rust library.
+      - run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --profile minimal --default-toolchain "${{ needs.check.outputs.rust }}" \
+              --target thumbv7em-none-eabi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: west init -m https://github.com/nrfconnect/sdk-nrf --mr "$NCS" ncs
       - run: cd ncs && west update --narrow -o=--depth=1
       - run: spare-dongle/tools/build-firmware.sh ncs build
@@ -85,7 +94,7 @@ jobs:
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl --manifest-path tool/Cargo.toml
       - run: |
           mkdir "$DIR"
-          cp tool/target/x86_64-unknown-linux-musl/release/spare-dongle LICENSE tools/udev/70-spare-dongle.rules "$DIR"/
+          cp target/x86_64-unknown-linux-musl/release/spare-dongle LICENSE tools/udev/70-spare-dongle.rules "$DIR"/
           tar czf "$DIR.tar.gz" "$DIR"
       - uses: actions/upload-artifact@v7
         with:
@@ -103,7 +112,7 @@ jobs:
       - run: cargo build --release --locked --manifest-path tool/Cargo.toml
       - run: |
           mkdir "$DIR"
-          cp tool/target/release/spare-dongle LICENSE "$DIR"/
+          cp target/release/spare-dongle LICENSE "$DIR"/
           tar czf "$DIR.tar.gz" "$DIR"
       - uses: actions/upload-artifact@v7
         with:

@@ -35,7 +35,7 @@ static void check_find(const struct hidpp_msg *m, uint16_t feature)
 /* The device has no reprogrammable controls and no feature 0x1000. */
 static void past_battery_status(struct hidpp *x, struct device_battery *b)
 {
-	hidpp_init(x, DEVICE_KEYBOARD);
+	hidpp_init(x, DEVICE_KIND_KEYBOARD);
 	*b = DEVICE_BATTERY_UNKNOWN;
 	hidpp_start(x);
 	request(x, 0);
@@ -84,7 +84,7 @@ static void test_a_unified_battery_reply_gives_the_level_and_charging(void)
 	request(&x, 30);
 	reply(&x, &b, UNIFIED_AT, 0x11, 55, 0x04, 0x01);
 	CHECK_EQ(b.level, 55);
-	CHECK_EQ(b.charging, DEVICE_CHARGING);
+	CHECK_EQ(b.charging, DEVICE_CHARGING_CHARGING);
 	CHECK(!hidpp_request(&x, DEVICE, 40, 1000, &m));
 }
 
@@ -98,7 +98,7 @@ static void test_a_unified_battery_event_updates_the_battery(void)
 	reply(&x, &b, UNIFIED_AT, 0x11, 55, 0x04, 0x00);
 	reply(&x, &b, UNIFIED_AT, 0x00, 100, 0x08, 0x03);
 	CHECK_EQ(b.level, 100);
-	CHECK_EQ(b.charging, DEVICE_CHARGED);
+	CHECK_EQ(b.charging, DEVICE_CHARGING_CHARGED);
 }
 
 static void test_a_device_with_neither_battery_feature_asks_nothing_more(void)
@@ -121,7 +121,7 @@ static void mouse_past_battery(struct hidpp *x, struct device_battery *b)
 {
 	struct hidpp_msg m;
 
-	hidpp_init(x, DEVICE_MOUSE);
+	hidpp_init(x, DEVICE_KIND_MOUSE);
 	*b = DEVICE_BATTERY_UNKNOWN;
 	hidpp_start(x);
 	m = request(x, 0);
@@ -256,9 +256,9 @@ static void check_wheel_event(struct hidpp *x, enum history_wheel outcome, uint8
 	struct hidpp_event event;
 
 	CHECK(hidpp_take_event(x, &event));
-	CHECK_EQ(event.type, HISTORY_WHEEL_SET);
-	CHECK_EQ(event.a, outcome);
-	CHECK_EQ(event.b, steps);
+	CHECK_EQ(event.detail.tag, DIAG_DETAIL_WHEEL_SET);
+	CHECK_EQ(event.detail.WHEEL_SET.outcome, outcome);
+	CHECK_EQ(event.detail.WHEEL_SET.steps, steps);
 	CHECK(!hidpp_take_event(x, &event));
 }
 

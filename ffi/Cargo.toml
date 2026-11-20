@@ -1,0 +1,17 @@
+[package]
+name = "diagwire-ffi"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[lib]
+name = "diagwire_ffi"
+crate-type = ["staticlib"]
+test = false
+
+[dependencies]
+diagwire = { path = "../wire" }
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }

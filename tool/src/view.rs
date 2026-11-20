@@ -25,6 +25,7 @@ use crate::format::{
     slot_health, slot_state, state_name, status_label, switch_question, uptime, usb_state,
     waiting_keyboard, waits_for_passkey, wall_clock, watch_role, watch_summary,
 };
+use crate::protocol::ProtocolInfo as _;
 use crate::protocol::{
     Action, BUSY_DBM, Counter, Event, Link, Minute, NOISE_BUCKETS, NoiseChannel, NuphyLink,
     Pairing, PairingWindow, Protocol, SlotStatus, Status, Step, StoredDevice, Watch, shown_slots,
@@ -548,7 +549,7 @@ fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
     );
     const CLEAR: (char, &str, Key) = ('c', "clear", Key::Ask(Prompt::Action(Action::Clear)));
     const DEVICES: (char, &str, Key) = ('d', "devices", Key::Devices);
-    let channels = protocol.has_channels();
+    let channels = protocol.has_esb();
     let pair = if protocol == Protocol::Bluetooth {
         ('a', "pair", Key::Choose(Choice::Passkey))
     } else {
@@ -922,7 +923,7 @@ impl<T: Transport> Session<T> {
         if self.cycling(u16::try_from(width).unwrap_or(u16::MAX)) {
             hints.push("o device".into());
         }
-        if self.protocol().has_channels() {
+        if self.protocol().has_esb() {
             hints.push("[/] channel".into());
         }
         hints.extend(["←/→ history", "↑/↓ events", "esc back", "q quit"].map(String::from));
@@ -1093,7 +1094,7 @@ fn dongle_lines(status: Option<&Status>) -> Vec<Line<'static>> {
         ));
     }
     let mut rows = vec![status_row("dongle", dongle)];
-    if s.protocol().has_channels() {
+    if s.protocol().has_esb() {
         rows.push(status_row("channels", channel_spans(s)));
     }
     rows.push(status_row(
@@ -1424,8 +1425,7 @@ mod tests {
     use crate::protocol::REPORT_LEN;
     use crate::protocol::tests::{awaited, mouse_status, nuphy, status_of, status_running};
     use crate::protocol::{
-        BluetoothLink, Command, ErrorCode, EventKind, Link, Noise, Pairing, Protocol, Rssi,
-        SlotMinute,
+        BluetoothLink, Command, Detail, ErrorCode, Link, Noise, Pairing, Protocol, Rssi, SlotMinute,
     };
     use chrono::TimeZone;
     use ratatui::{Terminal, backend::TestBackend};
@@ -1433,12 +1433,12 @@ mod tests {
     fn events(indexes: Range<u32>) -> Vec<(u32, Event)> {
         let event = Event {
             time_ms: 0,
-            kind: EventKind::LinkLost,
+            detail: Ok(Detail::LinkLost {
+                rssi: 0,
+                since_input_s: 0,
+                gap_ms: 0,
+            }),
             slot: Some(0),
-            a: 0,
-            b: 0,
-            c: 0,
-            value: 0,
             noise: None,
         };
         indexes.map(|i| (i, event)).collect()
@@ -2084,23 +2084,21 @@ mod tests {
         Device::new(
             Fake::new(move |req| {
                 let payload = match req[0] {
-                    1 => {
-                        let mut p = crate::protocol::tests::fixture("status-slot1.hex");
-                        let slot_at = p.len() - crate::protocol::tests::SLOT_FROM_END;
-                        p[slot_at] = req[6];
-                        p[slot_at - 3] = u8::from(stored[0]);
-                        p[slot_at - 1] = u8::from(stored[1]);
-                        p
-                    }
+                    1 => crate::protocol::tests::edited("status-slot1.hex", |s| {
+                        s.slot = req[6];
+                        for (slot, stored) in s.slots.iter_mut().zip(stored) {
+                            slot.stored = stored;
+                            slot.ready = false;
+                        }
+                    }),
                     2 => {
                         let from = u32::from_le_bytes(req[2..6].try_into().unwrap()).max(60);
                         let n = 1500u32.saturating_sub(from).min(40) as u8;
-                        let mut p = from.to_le_bytes().to_vec();
-                        p.push(n);
-                        for _ in 0..n {
-                            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 7 + 2 * req[6], 0, 0, 0, 0, 0, 0]);
-                        }
-                        p
+                        crate::protocol::tests::minutes_page(
+                            from,
+                            n.into(),
+                            (7 + 2 * req[6]).into(),
+                        )
                     }
                     13 => vec![0],
                     _ => vec![0, 0, 0, 0, 0],
@@ -2134,12 +2132,10 @@ mod tests {
         let mut app = bluetooth_dongle_forgetting_into(Default::default());
         let connected = Event {
             time_ms: 0,
-            kind: EventKind::BluetoothConnected,
+            detail: Ok(Detail::BtConnected {
+                addr: [0xd9, 0x9a, 0xa6, 0x49, 0xbb, 0xeb],
+            }),
             slot: Some(0),
-            a: 0xeb,
-            b: 0xbb,
-            c: 0,
-            value: 0x49a6_9ad9,
             noise: None,
         };
         history(&mut app).events = vec![(0, connected)];
@@ -2393,8 +2389,10 @@ mod tests {
 
     #[test]
     fn the_pairing_message_goes_with_a_closed_status_even_when_the_fetch_fails() {
-        let mut closed = status_payload(Protocol::Nuphy, 60_000, 1, 0);
-        closed[crate::protocol::tests::PROTOCOL_AT + 1] = 0;
+        let closed =
+            crate::protocol::tests::edit(&status_payload(Protocol::Nuphy, 60_000, 1, 0), |s| {
+                s.pairing_window = 0
+            });
         let device = Device::new(
             Fake::new(move |req| match req[0] {
                 1 => parts(req[0], req[1], &closed),
@@ -2631,25 +2629,13 @@ mod tests {
         minute_next: u32,
         minute_oldest: u32,
     ) -> Vec<u8> {
-        let mut p = status_running(protocol as u8);
-        let u = crate::protocol::tests::UPTIME_AT;
-        p[u..u + 8].copy_from_slice(&uptime_ms.to_le_bytes());
-        let n = crate::protocol::tests::PROTOCOL_AT;
-        p[n - 16..n - 12].copy_from_slice(&minute_next.to_le_bytes());
-        p[n - 12..n - 8].copy_from_slice(&minute_oldest.to_le_bytes());
-        let e = crate::protocol::tests::EVENTS_TOTAL_AT;
-        p[e..e + 4].copy_from_slice(&0u32.to_le_bytes());
-        p[n - 4..n].copy_from_slice(&0u32.to_le_bytes());
-        p
-    }
-
-    fn minutes_payload(first: u32, count: u8, boot: u8) -> Vec<u8> {
-        let mut p = first.to_le_bytes().to_vec();
-        p.push(count);
-        for _ in 0..count {
-            p.extend([0, 0, 0, 0, 0, 0, 0, 0, boot, 0, 0, 0, 0, 0, 0]);
-        }
-        p
+        crate::protocol::tests::edit(&status_running(protocol as u8), |s| {
+            s.uptime_ms = uptime_ms;
+            s.minute_next = minute_next;
+            s.minute_oldest = minute_oldest;
+            s.events_total = 0;
+            s.events_oldest = 0;
+        })
     }
 
     fn dongle(boot: u8, uptime_ms: u64, next: u32, oldest: u32) -> Device<Fake> {
@@ -2670,7 +2656,7 @@ mod tests {
                     2 => {
                         let from = u32::from_le_bytes(req[2..6].try_into().unwrap()).max(oldest);
                         let n = next.saturating_sub(from).min(40) as u8;
-                        minutes_payload(from, n, boot)
+                        crate::protocol::tests::minutes_page(from, n.into(), boot.into())
                     }
                     _ => vec![0, 0, 0, 0, 0],
                 };
@@ -3023,7 +3009,7 @@ mod tests {
     #[test]
     fn a_connected_bluetooth_status_box_shows_the_signal_and_last_packet() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.link = Link::Bluetooth(BluetoothLink::Connected);
+        s.link = Link::Bluetooth(BluetoothLink::Ready);
         s.slots[0].connected = true;
         s.device.signal = Some(-58);
         s.device.last_packet_ms = Some(400);

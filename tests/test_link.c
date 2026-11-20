@@ -611,7 +611,7 @@ static void test_a_paired_channel_that_is_also_fixed_is_listed_once(void)
 
 static void test_a_never_paired_dongle_lists_the_fixed_channels(void)
 {
-	check_channels(NULL, link_fixed_channels, LINK_FIXED_CHANNELS);
+	check_channels(NULL, diag_nuphy_fixed_channels, LINK_FIXED_CHANNELS);
 }
 
 static void test_a_paired_dongle_waits_on_home_while_pairing_is_closed(void)

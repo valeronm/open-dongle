@@ -14,8 +14,9 @@ use crate::format::{
     pairing_offer, reset_causes, state_name, status_label, unifying_kind, uptime, usb_state,
     wall_clock,
 };
+use crate::protocol::ProtocolInfo as _;
 use crate::protocol::{
-    Action, Counter, DeviceKind, ErrorCode, EventKind, Link, Minute, NOISE_BUCKETS, NoiseChannel,
+    Action, Counter, Detail, DeviceKind, ErrorCode, Link, Minute, NOISE_BUCKETS, NoiseChannel,
     PairingWindow, Protocol, Slot, SlotMinute, SlotStatus, Status, StoredDevice, Watch,
     shown_slots,
 };
@@ -44,7 +45,7 @@ fn status_lines(s: &Status, devices: &[SlotStatus]) -> Vec<String> {
         .iter()
         .filter_map(|&counter| Some(format!("{} {}", counter.name(), s.counters.get(counter)?)))
         .collect();
-    let link = if s.protocol().has_channels() {
+    let link = if s.protocol().has_esb() {
         format!("{} on channel {}{link}", state_name(s), s.channel)
     } else {
         state_name(s).to_string()
@@ -234,8 +235,8 @@ pub fn follow_pairing<T: Transport>(
         .into_iter()
         .filter(|(_, e)| {
             matches!(
-                e.kind,
-                EventKind::BluetoothPaired | EventKind::BluetoothRefused
+                e.detail,
+                Ok(Detail::BtPaired { .. } | Detail::BtRefused { .. })
             )
         })
         .collect();
@@ -688,7 +689,7 @@ mod tests {
     #[test]
     fn a_connected_bluetooth_keyboard_shows_its_signal_and_last_packet() {
         let mut s = status_of(Protocol::Bluetooth);
-        s.link = Link::Bluetooth(BluetoothLink::Connected);
+        s.link = Link::Bluetooth(BluetoothLink::Ready);
         s.device.signal = Some(-58);
         s.device.last_packet_ms = Some(400);
         let lines = lines(&s);
@@ -961,17 +962,20 @@ mod tests {
         );
     }
 
-    /// The bytes of one event as the dongle sends it, with no noise reading.
-    fn event_record(kind: u8, slot: u8, c: u8) -> Vec<u8> {
-        let mut e = vec![0; 8];
-        e.extend([kind, slot, 0, 0, c]);
-        e.extend([0; 9]);
-        e
+    fn event_record(kind: diagwire::EventType, c: u8) -> diagwire::Event {
+        diagwire::Event {
+            r#type: kind as u8,
+            c,
+            ..Default::default()
+        }
     }
 
     /// A Bluetooth dongle answering status with each window in turn, keeping the last, and
     /// holding `events` from index 600 on.
-    fn pairing_dongle(windows: Vec<(PairingWindow, u32)>, events: Vec<Vec<u8>>) -> Device<Fake> {
+    fn pairing_dongle(
+        windows: Vec<(PairingWindow, u32)>,
+        events: Vec<diagwire::Event>,
+    ) -> Device<Fake> {
         let mut windows = std::collections::VecDeque::from(windows);
         Device::new(
             Fake::new(move |req| {
@@ -985,10 +989,7 @@ mod tests {
                         status_with_window(Protocol::Bluetooth, window, total)
                     }
                     c if c == Command::Events as u8 => {
-                        let mut page = 600u32.to_le_bytes().to_vec();
-                        page.push(events.len() as u8);
-                        page.extend(events.concat());
-                        page
+                        crate::protocol::tests::events_page(600, &events)
                     }
                     _ => vec![0],
                 };
@@ -1007,7 +1008,10 @@ mod tests {
                 (awaited(42, None), 601),
                 (PairingWindow::Closed, 602),
             ],
-            vec![event_record(26, 0, 0), event_record(20, 0, 1)],
+            vec![
+                event_record(diagwire::EventType::BtPasskeyAwaited, 0),
+                event_record(diagwire::EventType::BtPaired, 1),
+            ],
         );
         let mut out = Vec::new();
         follow_pairing(&mut dev, 600, Duration::ZERO, &mut out, false).unwrap();
@@ -1355,13 +1359,9 @@ mod tests {
                 assert_eq!(req[0], Command::History as u8);
                 let from = u32::from_le_bytes(req[2..6].try_into().unwrap());
                 let packets = if req[6] == 1 { 9 } else { 7 };
-                let mut p = from.to_le_bytes().to_vec();
-                let n = 1442 - from;
-                p.push(n as u8);
-                for _ in 0..n {
-                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, packets, 0, 0, 0, 0, 0, 0]);
-                }
-                parts(req[0], req[1], &p)
+                let page =
+                    crate::protocol::tests::minutes_page(from, (1442 - from) as usize, packets);
+                parts(req[0], req[1], &page)
             }),
             0,
         );

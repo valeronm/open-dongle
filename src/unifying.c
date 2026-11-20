@@ -22,8 +22,6 @@
 #define HIDPP_SHORT_FRAME_LEN 10
 
 const uint8_t unifying_pairing_address[UNIFYING_ADDRESS_LEN] = {0xbb, 0x0a, 0xdc, 0xa5, 0x75};
-const uint8_t unifying_pairing_channels[UNIFYING_PAIRING_CHANNELS] = {5,  8,  17, 32, 35, 41,
-								      44, 62, 65, 71, 74};
 
 void unifying_device_address(const struct unifying_receiver *r, uint8_t out[UNIFYING_ADDRESS_LEN])
 {
@@ -54,7 +52,7 @@ uint8_t unifying_sweep_channel(struct unifying_sweep *s, const struct unifying_p
 		s->index = (s->index + 1) % UNIFYING_PAIRING_CHANNELS;
 		s->last_ms = now_ms;
 	}
-	return unifying_pairing_channels[s->index];
+	return diag_unifying_channels[s->index];
 }
 
 uint8_t unifying_checksum(const uint8_t *buf, size_t len)
@@ -569,7 +567,7 @@ void unifying_session_init(struct unifying_session *s, const struct unifying_rec
 			   const uint8_t *record, uint64_t now_ms)
 {
 	memset(s, 0, sizeof(*s));
-	hidpp_init(&s->hidpp, DEVICE_KEYBOARD);
+	hidpp_init(&s->hidpp, DEVICE_KIND_KEYBOARD);
 	s->receiver = *r;
 	s->started_ms = now_ms;
 	s->battery = DEVICE_BATTERY_UNKNOWN;
@@ -591,7 +589,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 	out->reply_pipe = pipe;
 	if (out->event == UNIFYING_RX_PAIRED) {
 		unifying_link_reset(&s->link);
-		hidpp_init(&s->hidpp, DEVICE_KEYBOARD);
+		hidpp_init(&s->hidpp, DEVICE_KIND_KEYBOARD);
 		hidpp_start(&s->hidpp);
 		s->battery = DEVICE_BATTERY_UNKNOWN;
 	}
@@ -740,12 +738,12 @@ void unifying_session_open_pairing(struct unifying_session *s, enum pairwin_caus
 enum unifying_status unifying_session_status(const struct unifying_session *s, uint64_t now_ms)
 {
 	if (!unifying_has_device(&s->pairing)) {
-		return UNIFYING_NOT_PAIRED;
+		return UNIFYING_STATUS_NOT_PAIRED;
 	}
 	if (s->heard && !quiet_too_long(s, now_ms)) {
-		return UNIFYING_CONNECTED;
+		return UNIFYING_STATUS_CONNECTED;
 	}
-	return UNIFYING_SILENT;
+	return UNIFYING_STATUS_SILENT;
 }
 
 void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
@@ -770,7 +768,7 @@ int unifying_session_movable(const struct unifying_session *s, uint64_t now_ms)
 
 size_t unifying_session_channels(const uint8_t **out)
 {
-	*out = unifying_pairing_channels;
+	*out = diag_unifying_channels;
 	return UNIFYING_PAIRING_CHANNELS;
 }
 

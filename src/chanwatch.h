@@ -72,4 +72,10 @@ bool chanwatch_take_move(struct chanwatch *w, struct chanwatch_move *out);
  * made. */
 void chanwatch_hold(struct chanwatch *w, uint64_t now_ms);
 
+uint32_t chanwatch_hold_left(const struct chanwatch *w, uint64_t now_ms);
+
+/* CHANWATCH_NO_THRESHOLD counts nothing. Returns the number of channels written. */
+size_t chanwatch_report(const struct chanwatch *w, uint8_t threshold_bucket,
+			struct diag_watch_channel out[CHANWATCH_MAX]);
+
 #endif

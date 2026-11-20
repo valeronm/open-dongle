@@ -120,7 +120,7 @@ static void test_events_keep_the_newest_512_in_order(void)
 
 	history_init(&h, 0, &t);
 	for (uint32_t i = 0; i < 600; i++) {
-		history_event(&h, &(struct history_event){.time_ms = i, .type = HISTORY_LINK_LOST});
+		history_event(&h, &(struct history_event){.time_ms = i, .type = EVENT_LINK_LOST});
 	}
 	CHECK_EQ(h.events_total, 600);
 	CHECK_EQ(h.events_oldest, 88);
@@ -138,7 +138,7 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 	uint32_t first;
 
 	history_init(&h, 0, &t);
-	history_event(&h, &(struct history_event){.type = HISTORY_BOOT});
+	history_event(&h, &(struct history_event){.type = EVENT_BOOT});
 	t.packets[0] = 80;
 	history_tick(&h, 3 * MINUTE, &t);
 	history_noise(&h, &(struct noise_tally){.readings = 1, .busy = 1, .strong = 1, .peak = -40},
@@ -154,7 +154,7 @@ static void test_clear_drops_what_is_held_and_keeps_counting(void)
 	CHECK_EQ(first, 3);
 	CHECK_EQ(m.packets[0], 7);
 	CHECK_EQ(m.noise.peak, 0);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(history_events(&h, 0, &first, &e, 1), 1);
 	CHECK_EQ(e.noise.peak, 0);
 }
@@ -178,7 +178,7 @@ static void test_readings_off_the_home_channel_reach_a_gap_but_not_the_minute(vo
 	history_init(&h, 0, &t);
 	noise_add(&n, -50);
 	history_noise(&h, &n, false);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, -50);
 	CHECK_EQ(last_event().noise.strong, 10000);
 	history_tick(&h, MINUTE, &t);
@@ -199,12 +199,12 @@ static void test_a_gap_records_the_readings_since_its_slots_last_packet(void)
 	noise_add(&after, -96);
 	noise_add(&after, -80);
 	history_noise(&h, &after, true);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, -80);
 	CHECK_EQ(last_event().noise.busy, 5000);
 	CHECK_EQ(last_event().noise.strong, 0);
 	history_rssi(&h, 0, -60);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, 0);
 }
 
@@ -216,10 +216,10 @@ static void test_a_loss_records_the_readings_and_starts_over(void)
 	history_init(&h, 0, &t);
 	noise_add(&n, -70);
 	history_noise(&h, &n, true);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_LOST});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_LOST});
 	CHECK_EQ(last_event().noise.peak, -70);
 	CHECK_EQ(last_event().noise.busy, 10000);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, 0);
 }
 
@@ -231,10 +231,10 @@ static void test_other_events_leave_the_readings_for_the_next_gap(void)
 	history_init(&h, 0, &t);
 	noise_add(&n, -70);
 	history_noise(&h, &n, true);
-	history_event(&h, &(struct history_event){.type = HISTORY_PAIRED});
+	history_event(&h, &(struct history_event){.type = EVENT_PAIRED});
 	CHECK_EQ(last_event().noise.peak, 0);
 	CHECK_EQ(last_event().noise.busy, 0);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, -70);
 }
 
@@ -264,23 +264,6 @@ static void test_weakest_spans_the_current_and_the_previous_minute(void)
 	CHECK_EQ(weakest, -70);
 	history_tick(&h, 3 * MINUTE, &t);
 	CHECK(!history_weakest(&h, 0, &weakest));
-}
-
-static void test_a_keyboard_event_packs_the_address_as_the_fixture_has_it(void)
-{
-	uint8_t f[HISTORY_ADDR_LEN + 6 + 1];
-	size_t n = load_fixture("event-address.hex", f, sizeof(f));
-	const uint8_t *packed = &f[HISTORY_ADDR_LEN];
-	struct history_event e = history_keyboard_event(HISTORY_BT_PAIRED, 1, f, 1);
-
-	CHECK_EQ(n, sizeof(f) - 1);
-	CHECK_EQ(e.type, HISTORY_BT_PAIRED);
-	CHECK_EQ(e.slot, 1);
-	CHECK_EQ(e.a, packed[0]);
-	CHECK_EQ(e.b, packed[1]);
-	CHECK_EQ(e.c, 1);
-	CHECK_EQ(e.value, (uint32_t)packed[2] | (uint32_t)packed[3] << 8 |
-				  (uint32_t)packed[4] << 16 | (uint32_t)packed[5] << 24);
 }
 
 static void test_each_slot_has_its_own_packets_and_signal(void)
@@ -318,9 +301,9 @@ static void test_a_reading_in_one_slot_leaves_the_other_slots_readings(void)
 	history_rssi(&h, 1, -50);
 	noise_add(&quiet, -80);
 	history_noise(&h, &quiet, true);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP, .slot = 1});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP, .slot = 1});
 	CHECK_EQ(last_event().noise.peak, -80);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_LOST, .slot = 0});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_LOST, .slot = 0});
 	CHECK_EQ(last_event().noise.peak, -70);
 }
 
@@ -350,9 +333,9 @@ static void test_an_event_about_no_slot_leaves_the_readings(void)
 	history_init(&h, 0, &t);
 	noise_add(&n, -70);
 	history_noise(&h, &n, true);
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP,
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP,
 						  .slot = DEVICE_NO_SLOT});
-	history_event(&h, &(struct history_event){.type = HISTORY_LINK_GAP});
+	history_event(&h, &(struct history_event){.type = EVENT_LINK_GAP});
 	CHECK_EQ(last_event().noise.peak, -70);
 }
 
@@ -371,24 +354,6 @@ static void test_weakest_is_per_slot(void)
 	CHECK_EQ(weakest, -90);
 }
 
-static void test_time_since_input_is_seconds_low_byte_first(void)
-{
-	uint8_t low, high;
-
-	history_since_input(42999, &low, &high);
-	CHECK_EQ(low, 42);
-	CHECK_EQ(high, 0);
-	history_since_input(1000999, &low, &high);
-	CHECK_EQ(low, 0xe8);
-	CHECK_EQ(high, 0x03);
-	history_since_input(65535000ll, &low, &high);
-	CHECK_EQ(low, 0xff);
-	CHECK_EQ(high, 0xff);
-	history_since_input(-1, &low, &high);
-	CHECK_EQ(low, 0xff);
-	CHECK_EQ(high, 0xff);
-}
-
 int main(void)
 {
 	RUN(test_weakest_is_absent_without_packets);
@@ -405,12 +370,10 @@ int main(void)
 	RUN(test_a_gap_records_the_readings_since_its_slots_last_packet);
 	RUN(test_a_loss_records_the_readings_and_starts_over);
 	RUN(test_other_events_leave_the_readings_for_the_next_gap);
-	RUN(test_a_keyboard_event_packs_the_address_as_the_fixture_has_it);
 	RUN(test_each_slot_has_its_own_packets_and_signal);
 	RUN(test_a_reading_in_one_slot_leaves_the_other_slots_readings);
 	RUN(test_each_slot_has_its_own_gaps_and_losses);
 	RUN(test_an_event_about_no_slot_leaves_the_readings);
 	RUN(test_weakest_is_per_slot);
-	RUN(test_time_since_input_is_seconds_low_byte_first);
 	return TEST_EXIT();
 }

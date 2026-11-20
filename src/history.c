@@ -105,7 +105,7 @@ void history_event(struct history *h, const struct history_event *e)
 	struct history_event *stored = &h->events[h->events_total % HISTORY_EVENTS];
 
 	*stored = *e;
-	if ((e->type == HISTORY_LINK_GAP || e->type == HISTORY_LINK_LOST) &&
+	if ((e->type == EVENT_LINK_GAP || e->type == EVENT_LINK_LOST) &&
 	    e->slot < DEVICE_SLOTS) {
 		stored->noise = noise_record(&h->since_packet[e->slot]);
 		h->since_packet[e->slot] = (struct noise_tally){0};
@@ -163,27 +163,4 @@ bool history_weakest(const struct history *h, uint8_t slot, int8_t *out)
 		}
 	}
 	return found;
-}
-
-struct history_event history_keyboard_event(uint8_t type, uint8_t slot,
-					    const uint8_t addr[HISTORY_ADDR_LEN], uint8_t c)
-{
-	return (struct history_event){
-		.type = type,
-		.slot = slot,
-		.a = addr[6],
-		.b = addr[5],
-		.c = c,
-		.value = (uint32_t)addr[1] | (uint32_t)addr[2] << 8 | (uint32_t)addr[3] << 16 |
-			 (uint32_t)addr[4] << 24,
-	};
-}
-
-void history_since_input(int64_t elapsed_ms, uint8_t *low, uint8_t *high)
-{
-	int64_t whole = elapsed_ms / 1000;
-	uint16_t seconds = elapsed_ms < 0 || whole > UINT16_MAX ? UINT16_MAX : (uint16_t)whole;
-
-	*low = (uint8_t)seconds;
-	*high = (uint8_t)(seconds >> 8);
 }

@@ -50,9 +50,7 @@ enum hidpp_wheel_mode {
 /* A run settles one feature: a keyboard's divert or a mouse's wheel. */
 struct hidpp_event {
 	bool pending;
-	enum history_event_type type;
-	uint8_t a, b, c;
-	uint32_t value;
+	struct diag_detail detail;
 };
 
 /*

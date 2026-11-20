@@ -22,20 +22,6 @@ struct history_totals {
 	uint32_t usb_retries;
 };
 
-/* All 0 for a minute without a history_rssi reading from the slot. */
-struct history_rssi {
-	int8_t min, avg, max;
-};
-
-/* Counts saturate. */
-struct history_minute {
-	uint8_t invalid, dropped, usb_retries;
-	struct noise_record noise;
-	uint16_t packets[DEVICE_SLOTS];
-	uint8_t gaps[DEVICE_SLOTS], link_losses[DEVICE_SLOTS];
-	struct history_rssi rssi[DEVICE_SLOTS];
-};
-
 struct history_rssi_sum {
 	int32_t sum;
 	uint32_t count;
@@ -43,73 +29,7 @@ struct history_rssi_sum {
 	int8_t max;
 };
 
-enum history_event_type {
-	HISTORY_BOOT = 1, HISTORY_PAIRED, HISTORY_LINK_LOST, HISTORY_SURVEY,
-	HISTORY_NOISE, HISTORY_USB_SUSPEND, HISTORY_USB_RESUME,
-	HISTORY_CLEAR, HISTORY_LINK_UP, HISTORY_LINK_MOVED, HISTORY_LINK_GAP,
-	HISTORY_UNIFYING_PAIRED, HISTORY_PAIRING_OPENED, HISTORY_PAIRING_CLOSED,
-	HISTORY_PAIRING_TIMEOUT, HISTORY_RECONNECT, HISTORY_ATTACK,
-	HISTORY_BT_CONNECTED, HISTORY_BT_DISCONNECTED, HISTORY_BT_PAIRED,
-	HISTORY_BT_REFUSED, HISTORY_BT_BOND_LOST, HISTORY_BT_FORGOTTEN,
-	HISTORY_KEYS_DIVERTED, HISTORY_WHEEL_SET, HISTORY_BT_PASSKEY_AWAITED
-};
-
-/*
- * Byte a of HISTORY_KEYS_DIVERTED; b and c count the controls diverted and refused, and value holds
- * an unanswered control, or 0 for an unanswered feature lookup.
- */
-enum history_divert {
-	HISTORY_DIVERT_FINISHED,
-	HISTORY_DIVERT_NO_FEATURE,
-	HISTORY_DIVERT_UNANSWERED,
-};
-
-/* Byte a of HISTORY_WHEEL_SET; b holds the steps per notch in high resolution. */
-enum history_wheel {
-	HISTORY_WHEEL_HIRES,
-	HISTORY_WHEEL_NOTCHES,
-	HISTORY_WHEEL_NO_FEATURE,
-	HISTORY_WHEEL_UNANSWERED,
-	HISTORY_WHEEL_REFUSED,
-};
-
-#define HISTORY_ADDR_LEN 7
-
-/* Byte a of HISTORY_BT_REFUSED. */
-enum history_bt_refused {
-	HISTORY_REFUSED_BY_KEYBOARD,
-	HISTORY_REFUSED_NO_PASSKEY,
-};
-
-/* Byte c of HISTORY_BT_FORGOTTEN. */
-enum history_bt_forgotten {
-	HISTORY_FORGOTTEN_ON_REQUEST,
-	/* Its report map declares no keyboard, or no pointer for a mouse. */
-	HISTORY_FORGOTTEN_UNUSABLE_MAP,
-};
-
-/* Byte c of HISTORY_LINK_UP. */
-enum history_link_up {
-	HISTORY_UP_FIRST,
-	HISTORY_UP_AGAIN,
-	HISTORY_UP_WOKE,
-};
-
-/* Byte c of HISTORY_LINK_MOVED; a noise move's value holds the home share in its high 16 bits and
- * the new channel's in its low 16, in hundredths of a percent. */
-enum history_link_moved {
-	HISTORY_MOVED_TO_HOME,
-	HISTORY_MOVED_FOR_NOISE,
-	HISTORY_MOVED_ON_REQUEST,
-};
-
-struct history_event {
-	uint64_t time_ms;
-	uint32_t value;
-	/* slot is DEVICE_NO_SLOT for an event about no slot. */
-	uint8_t type, slot, a, b, c;
-	struct noise_record noise;
-};
+#define HISTORY_ADDR_LEN DIAG_ADDR_LEN
 
 /* Minute n covers uptime [n * HISTORY_MINUTE_MS, (n + 1) * HISTORY_MINUTE_MS). */
 struct history {
@@ -146,17 +66,6 @@ void history_event(struct history *h, const struct history_event *e);
 
 /* Readings that do not count toward the minute still count toward a gap or loss. */
 void history_noise(struct history *h, const struct noise_tally *t, bool counts);
-
-/* addr is the address type, then the six address bytes, least significant first; the event leaves
- * out the type and holds the bytes in a, b and value, most significant first. c is 1 for a
- * HISTORY_BT_PAIRED with a passkey. */
-struct history_event history_keyboard_event(uint8_t type, uint8_t slot,
-					    const uint8_t addr[HISTORY_ADDR_LEN], uint8_t c);
-
-/* For bytes b and c of an event logged when input stopped: the whole seconds since the last input,
- * low byte first, UINT16_MAX for none since boot (a negative elapsed_ms) or for that many seconds
- * or more. */
-void history_since_input(int64_t elapsed_ms, uint8_t *low, uint8_t *high);
 
 /* Copies up to max held records from index from, or from the oldest held if that is later. */
 size_t history_minutes(const struct history *h, uint32_t from, uint32_t *first,

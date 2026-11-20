@@ -58,19 +58,6 @@ static void test_noise_shares_round_down(void)
 	CHECK_EQ(noise_record(&t).busy, 3333);
 }
 
-static void test_readings_fall_into_10_db_buckets_from_the_busy_level(void)
-{
-	CHECK_EQ(noise_bucket(-96), 0);
-	CHECK_EQ(noise_bucket(-86), 0);
-	CHECK_EQ(noise_bucket(-85), 1);
-	CHECK_EQ(noise_bucket(-76), 1);
-	CHECK_EQ(noise_bucket(-75), 2);
-	CHECK_EQ(noise_bucket(-56), 3);
-	CHECK_EQ(noise_bucket(-46), 4);
-	CHECK_EQ(noise_bucket(-45), 5);
-	CHECK_EQ(noise_bucket(-20), 5);
-}
-
 static void test_a_tally_counts_its_readings_per_bucket_and_merges_them(void)
 {
 	struct noise_tally a = {0};
@@ -90,7 +77,6 @@ static void test_a_tally_counts_its_readings_per_bucket_and_merges_them(void)
 
 int main(void)
 {
-	RUN(test_readings_fall_into_10_db_buckets_from_the_busy_level);
 	RUN(test_a_tally_counts_its_readings_per_bucket_and_merges_them);
 	RUN(test_noise_counts_readings_at_both_levels);
 	RUN(test_noise_without_readings_records_zero);

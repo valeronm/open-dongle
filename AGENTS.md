@@ -3,11 +3,11 @@
 ## Module boundaries
 
 - `src/nuphy.*`, `src/reports.*`, `src/chanpick.*`, `src/noise.*`, `src/link.*`,
-  `src/diagproto.*`, `src/history.*`, `src/protocol.*`, `src/pairwin.*`, `src/unifying.*`,
-  `src/chanwatch.*`, `src/hidmap.*`, `src/hidkeys.*`, `src/hidpp.*`, `src/btpolicy.*`,
-  `src/btlist.*`, `src/bootinfo.*`, `src/chanmove.h` and `src/device.h` include only the C
-  standard library and each other. Their tests build them with the host compiler, where no Zephyr, nrfx or ESB header
-  exists.
+  `src/history.*`, `src/protocol.*`, `src/pairwin.*`, `src/unifying.*`, `src/chanwatch.*`,
+  `src/hidmap.*`, `src/hidkeys.*`, `src/hidpp.*`, `src/btpolicy.*`, `src/btlist.*`,
+  `src/bootinfo.*`, `src/chanmove.h` and `src/device.h` include only the C standard library, each
+  other and the header `ffi` generates. Their tests build them with the host compiler, where no
+  Zephyr, nrfx or ESB header exists.
 - Radio, USB, flash and the clock reach those modules only through `src/core.c`,
   `src/nuphy_main.c`, `src/unifying_main.c`, `src/bluetooth_main.c`, `src/main.c`, `src/diag.c`
   and `src/store.c`.
@@ -20,11 +20,17 @@
 
 ## Diagnostic protocol
 
-- The firmware and the tool each encode the diagnostic frames, and the hex files in
-  `tool/fixtures` are the wire format both test suites check against, so a frame change starts in
-  a fixture.
-- A wire change bumps `DIAG_VERSION` in `src/diagproto.h` and `VERSION` in `tool/src/protocol.rs`
-  once per release, and the version byte in `status.hex` holds both to the same number.
+- `wire` is the one definition of the protocol's numbers, the records the firmware stores and
+  sends, and their byte layout; the firmware reaches it only through `ffi`, whose C header cbindgen
+  generates from both crates on every build.
+- The hex files in `tool/fixtures` are the wire format as shipped, and `wire`'s tests check its
+  encoding against them, so a frame change starts in a fixture.
+- A wire change bumps `VERSION` in `wire/src/lib.rs` once per release, and the version byte in
+  `status.hex` holds it.
+- C sets a `struct diag_detail`'s tag only to a generated `DIAG_DETAIL_*` value: Rust reads any
+  other tag as undefined behavior, and no check stands between them.
+- `ffi`'s library exports only `diag_*` symbols; the firmware build localizes everything else, so
+  an export under another name fails to link.
 
 ## CHANGELOG.md
 

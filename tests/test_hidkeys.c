@@ -272,9 +272,9 @@ static void a_wide_wheel_is_clamped(void)
 
 int main(void)
 {
-	load("air75-v2-report-map.hex", DEVICE_KEYBOARD, &air75);
-	load("mx-keys-report-map.hex", DEVICE_KEYBOARD, &mx);
-	load("mx-master-3s-report-map.hex", DEVICE_MOUSE, &mouse);
+	load("air75-v2-report-map.hex", DEVICE_KIND_KEYBOARD, &air75);
+	load("mx-keys-report-map.hex", DEVICE_KIND_KEYBOARD, &mx);
+	load("mx-master-3s-report-map.hex", DEVICE_KIND_MOUSE, &mouse);
 	RUN(air75_letter_and_release);
 	RUN(air75_shift_letter);
 	RUN(mx_keys_seven_byte_report);

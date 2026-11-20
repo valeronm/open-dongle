@@ -155,3 +155,34 @@ enum device_kind btlist_kind(const struct btlist *l, const uint8_t *addr)
 
 	return e ? e->kind : DEVICE_NO_KIND;
 }
+
+_Static_assert(BTPOLICY_ADDR_LEN == DIAG_ADDR_LEN, "a device list carries the whole address");
+_Static_assert(BTPOLICY_STORED_MAX <= DIAG_STORED_MAX, "a device list carries every device");
+
+uint8_t btlist_pairing(const struct btlist_entry *e, bool secure)
+{
+	return diag_pairing(secure, !e->no_passkey);
+}
+
+size_t btlist_devices(const struct btlist *l, const uint8_t *const connected[DEVICE_SLOTS],
+		      bool (*secure)(const uint8_t addr[BTPOLICY_ADDR_LEN]),
+		      struct diag_device out[BTPOLICY_STORED_MAX])
+{
+	for (uint8_t i = 0; i < l->count; i++) {
+		const struct btlist_entry *e = &l->entries[i];
+
+		out[i] = (struct diag_device){
+			.kind = e->kind,
+			.pairing = btlist_pairing(e, secure(e->addr)),
+			.slot = DEVICE_NO_SLOT,
+		};
+		memcpy(out[i].addr, e->addr, sizeof(out[i].addr));
+		memcpy(out[i].name, e->name, sizeof(out[i].name));
+		for (uint8_t s = 0; s < DEVICE_SLOTS; s++) {
+			if (connected[s] && memcmp(e->addr, connected[s], BTPOLICY_ADDR_LEN) == 0) {
+				out[i].slot = s;
+			}
+		}
+	}
+	return l->count;
+}

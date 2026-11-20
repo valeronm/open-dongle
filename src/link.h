@@ -5,23 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "chanmove.h"
+#include "diagwire.h"
 #include "nuphy.h"
 #include "pairwin.h"
 
-#define LINK_FIXED_CHANNELS 7
-/* The keyboard firmware fixes these channels besides the three it gets at pairing. */
-extern const uint8_t link_fixed_channels[LINK_FIXED_CHANNELS];
 #define LINK_OWN_CHANNELS 3
 #define LINK_CHANNELS_MAX (LINK_FIXED_CHANNELS + LINK_OWN_CHANNELS)
-
-enum link_state {
-	LINK_IDLE,
-	LINK_SURVEY,
-	LINK_PAIRING,
-	LINK_CONFIRMED,
-	LINK_CONNECTED,
-	LINK_MOVING_HOME,
-};
 
 enum link_led {
 	LINK_LED_IDLE,

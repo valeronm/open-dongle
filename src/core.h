@@ -7,7 +7,7 @@
 #include "chanmove.h"
 #include "chanpick.h"
 #include "chanwatch.h"
-#include "diagproto.h"
+#include "diagwire.h"
 #include "history.h"
 #include "indicator.h"
 #include "pairwin.h"
@@ -89,14 +89,14 @@ void core_link_lost(uint8_t slot);
  * which *home then holds, else CHANMOVE_NO_HOME. */
 bool core_take_radio_noise(struct noise_tally *t, int *home);
 /* Takes the pending noise readings first, which a gap or loss event records. */
-void core_log(uint8_t type, uint8_t slot, uint8_t a, uint8_t b, uint8_t c, uint32_t value);
+void core_log(uint8_t slot, struct diag_detail d);
 void core_log_pairing_opened(const struct pairwin *w);
 void core_log_pairing_closed(void);
 /* Takes the pending noise readings first. */
 void core_rssi(uint8_t slot, int8_t dbm);
-/* Logs an event whose bytes b and c hold the time since the slot's last input, a report that
- * changed what the host sees, as history_since_input gives it. */
-void core_log_input_lost(uint8_t type, uint8_t slot, uint8_t a, uint32_t value);
+/* The time since the slot's last input, a report that changed what the host sees, as an event
+ * records it. */
+uint16_t core_since_input_s(uint8_t slot);
 /* Logs USB suspend changes and closes the minutes that ended. */
 void core_poll(void);
 /* Takes the pending noise readings, which a channel change drops, and counts a change that
@@ -112,6 +112,7 @@ void core_fill_status(struct diag_status *st, uint8_t slot);
 /* Answers the requests every loop shares and refuses those the running protocol lacks; returns
  * true with the next request the loop must answer. */
 bool core_take_request(struct diag_request *out);
+void core_reply_devices(const struct diag_request *req, const struct diag_device *d, size_t n);
 
 FUNC_NORETURN void nuphy_run(int store_err);
 FUNC_NORETURN void unifying_run(int store_err);

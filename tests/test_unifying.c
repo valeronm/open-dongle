@@ -391,7 +391,7 @@ static void test_pairing_address_and_channels_are_the_fixed_ones(void)
 	static const uint8_t channels[11] = {5, 8, 17, 32, 35, 41, 44, 62, 65, 71, 74};
 
 	CHECK_MEM(unifying_pairing_address, address, 5);
-	CHECK_MEM(unifying_pairing_channels, channels, 11);
+	CHECK_MEM(diag_unifying_channels, channels, 11);
 }
 
 static void test_device_address_is_the_base_then_the_device_octet(void)
@@ -409,13 +409,13 @@ static void test_idle_sweep_steps_through_the_pairing_channels(void)
 	struct unifying_pairing p = open_pairing();
 	uint64_t now = 1000;
 
-	CHECK_EQ(unifying_sweep_channel(&s, &p, now), unifying_pairing_channels[1]);
+	CHECK_EQ(unifying_sweep_channel(&s, &p, now), diag_unifying_channels[1]);
 	CHECK_EQ(unifying_sweep_channel(&s, &p, now + UNIFYING_SWEEP_DWELL_MS - 1),
-		 unifying_pairing_channels[1]);
+		 diag_unifying_channels[1]);
 	for (int i = 2; i <= UNIFYING_PAIRING_CHANNELS; i++) {
 		now += UNIFYING_SWEEP_DWELL_MS;
 		CHECK_EQ(unifying_sweep_channel(&s, &p, now),
-			 unifying_pairing_channels[i % UNIFYING_PAIRING_CHANNELS]);
+			 diag_unifying_channels[i % UNIFYING_PAIRING_CHANNELS]);
 	}
 }
 
@@ -427,7 +427,7 @@ static void test_sweep_holds_the_channel_from_the_first_request(void)
 	uint8_t held;
 
 	held = unifying_sweep_channel(&s, &p, 1000);
-	CHECK_EQ(held, unifying_pairing_channels[1]);
+	CHECK_EQ(held, diag_unifying_channels[1]);
 	request_1(f, 0xe1, 0x05);
 	feed(&p, f, sizeof(f), 1005, reply);
 	CHECK_EQ(unifying_sweep_channel(&s, &p, 1100), held);
@@ -1564,7 +1564,7 @@ static void test_a_session_without_a_record_is_not_paired(void)
 	struct unifying_session s;
 
 	unifying_session_init(&s, &receiver, NULL, 0);
-	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_NOT_PAIRED);
+	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_STATUS_NOT_PAIRED);
 }
 
 static void test_a_session_answers_pairing_on_the_frames_pipe(void)
@@ -1640,13 +1640,13 @@ static void test_a_heard_paired_keyboard_is_connected_then_silent(void)
 	struct unifying_out out;
 
 	session_paired(&s);
-	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_SILENT);
+	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_STATUS_SILENT);
 	unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, keep_alive_1100, sizeof(keep_alive_1100),
 			       -60, 1000, nonce, fake_aes, &out);
 	CHECK_EQ(s.rssi, -60);
 	CHECK_EQ(unifying_session_status(&s, 1000 + 2 * s.link.keepalive_ms - 1),
-		 UNIFYING_CONNECTED);
-	CHECK_EQ(unifying_session_status(&s, 1000 + 2 * s.link.keepalive_ms), UNIFYING_SILENT);
+		 UNIFYING_STATUS_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 1000 + 2 * s.link.keepalive_ms), UNIFYING_STATUS_SILENT);
 }
 
 static void test_the_tick_moves_the_channel_while_pairing_is_open(void)
@@ -1695,7 +1695,7 @@ static void test_pairing_opened_after_a_move_sweeps_again(void)
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 1000);
 	unifying_session_tick(&s, 1000, false, 0, 0, &out);
 	CHECK(out.set_channel);
-	CHECK(contains(unifying_pairing_channels, UNIFYING_PAIRING_CHANNELS, out.channel));
+	CHECK(contains(diag_unifying_channels, UNIFYING_PAIRING_CHANNELS, out.channel));
 }
 
 static void test_a_move_is_refused_while_an_attempt_outlasts_the_window(void)
@@ -1934,11 +1934,11 @@ static void check_end(const struct unifying_out *out, enum history_divert outcom
 		      uint8_t diverted, uint8_t refused, uint16_t cid)
 {
 	CHECK(out->hidpp_event.pending);
-	CHECK_EQ(out->hidpp_event.type, HISTORY_KEYS_DIVERTED);
-	CHECK_EQ(out->hidpp_event.a, outcome);
-	CHECK_EQ(out->hidpp_event.b, diverted);
-	CHECK_EQ(out->hidpp_event.c, refused);
-	CHECK_EQ(out->hidpp_event.value, cid);
+	CHECK_EQ(out->hidpp_event.detail.tag, DIAG_DETAIL_KEYS_DIVERTED);
+	CHECK_EQ(out->hidpp_event.detail.KEYS_DIVERTED.outcome, outcome);
+	CHECK_EQ(out->hidpp_event.detail.KEYS_DIVERTED.diverted, diverted);
+	CHECK_EQ(out->hidpp_event.detail.KEYS_DIVERTED.refused, refused);
+	CHECK_EQ(out->hidpp_event.detail.KEYS_DIVERTED.control, cid);
 }
 
 static void tick_queue(struct unifying_session *s, uint64_t now, uint32_t taken,
@@ -2365,7 +2365,7 @@ static void test_the_battery_is_read_once_after_the_divert(void)
 	hidpp(f, 0x07, 0x01, 0x55, 0x32, 0x01);
 	session_feed(&s, f, sizeof(f), 110, &out);
 	CHECK_EQ(s.battery.level, 85);
-	CHECK_EQ(s.battery.charging, DEVICE_CHARGING);
+	CHECK_EQ(s.battery.charging, DEVICE_CHARGING_CHARGING);
 	unifying_session_tick(&s, 120, false, 0, 0, &out);
 	CHECK_EQ(out.hidpp_len, 0);
 }
@@ -2375,11 +2375,11 @@ static void test_battery_events_update_the_level_and_charging(void)
 	static const struct {
 		uint8_t level, status;
 		enum device_charging charging;
-	} steps[] = {{80, 0x00, DEVICE_DISCHARGING},
-		     {90, 0x02, DEVICE_CHARGING},
-		     {100, 0x03, DEVICE_CHARGED},
-		     {95, 0x04, DEVICE_CHARGING},
-		     {95, 0x08, DEVICE_CHARGE_UNKNOWN}};
+	} steps[] = {{80, 0x00, DEVICE_CHARGING_DISCHARGING},
+		     {90, 0x02, DEVICE_CHARGING_CHARGING},
+		     {100, 0x03, DEVICE_CHARGING_CHARGED},
+		     {95, 0x04, DEVICE_CHARGING_CHARGING},
+		     {95, 0x08, DEVICE_CHARGING_UNKNOWN}};
 	struct unifying_session s;
 	struct unifying_out out;
 	uint8_t f[UNIFYING_FRAME_MAX];
@@ -2404,7 +2404,7 @@ static void test_a_charging_event_without_a_level_keeps_the_level_unknown(void)
 	hidpp(f, 0x07, 0x00, 0x00, 0x00, 0x01);
 	session_feed(&s, f, sizeof(f), 200, &out);
 	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
-	CHECK_EQ(s.battery.charging, DEVICE_CHARGING);
+	CHECK_EQ(s.battery.charging, DEVICE_CHARGING_CHARGING);
 }
 
 static void test_a_battery_event_before_the_lookup_is_ignored(void)
@@ -2517,7 +2517,7 @@ static void test_a_battery_fault_is_its_own_state(void)
 	for (uint8_t status = 5; status <= 7; status++) {
 		hidpp(f, 0x07, 0x00, 0x40, 0x00, status);
 		session_feed(&s, f, sizeof(f), 200 + status, &out);
-		CHECK_EQ(s.battery.charging, DEVICE_BATTERY_FAULT);
+		CHECK_EQ(s.battery.charging, DEVICE_CHARGING_BATTERY_FAULT);
 	}
 }
 
@@ -2683,7 +2683,7 @@ static void test_a_radio_pause_postpones_the_silence(void)
 	unifying_session_radio_resumed(&s, 2500);
 	unifying_session_tick(&s, silence_after(&s, 2500) - 1, false, 0, 0, &out);
 	CHECK(!out.went_silent);
-	CHECK_EQ(unifying_session_status(&s, silence_after(&s, 2500) - 1), UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, silence_after(&s, 2500) - 1), UNIFYING_STATUS_CONNECTED);
 	unifying_session_tick(&s, silence_after(&s, 2500), false, 0, 0, &out);
 	CHECK(out.went_silent);
 }
@@ -2914,7 +2914,7 @@ static void test_a_radio_pause_during_a_silence_leaves_the_keyboard_silent(void)
 	silent = silence_after(&s, 1000);
 	unifying_session_tick(&s, silent, false, 0, 0, &out);
 	unifying_session_radio_resumed(&s, silent + 500);
-	CHECK_EQ(unifying_session_status(&s, silent + 600), UNIFYING_SILENT);
+	CHECK_EQ(unifying_session_status(&s, silent + 600), UNIFYING_STATUS_SILENT);
 }
 
 static void test_a_status_read_before_the_radio_resumed_is_not_silent(void)
@@ -2925,7 +2925,7 @@ static void test_a_status_read_before_the_radio_resumed_is_not_silent(void)
 	session_paired(&s);
 	hear(&s, 1000, &out);
 	unifying_session_radio_resumed(&s, 2000);
-	CHECK_EQ(unifying_session_status(&s, 1990), UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 1990), UNIFYING_STATUS_CONNECTED);
 }
 
 static void test_pairing_opened_at_boot_closes_once_the_paired_keyboard_is_heard(void)
@@ -2937,7 +2937,7 @@ static void test_pairing_opened_at_boot_closes_once_the_paired_keyboard_is_heard
 	unifying_session_open_pairing(&s, PAIRWIN_BOOT, 0);
 	CHECK(unifying_pairing_window_open(&s.pairing, 10));
 	hear(&s, 100, &out);
-	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_STATUS_CONNECTED);
 	unifying_session_tick(&s, PAIRWIN_MS, false, 0, 0, &out);
 	CHECK(!out.window_closed);
 }
@@ -2951,7 +2951,7 @@ static void test_pairing_opened_on_request_stays_open_when_the_keyboard_is_heard
 	unifying_session_open_pairing(&s, PAIRWIN_REQUEST, 0);
 	hear(&s, 100, &out);
 	CHECK(unifying_pairing_window_open(&s.pairing, 110));
-	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 110), UNIFYING_STATUS_CONNECTED);
 }
 
 static void test_a_pairing_attempt_is_not_the_keyboard_connecting(void)
@@ -2971,7 +2971,7 @@ static void test_a_pairing_attempt_is_not_the_keyboard_connecting(void)
 	unifying_session_tick(&s, 10 + UNIFYING_PAIRING_TIMEOUT_MS + 1, false, 0, 0, &out);
 	CHECK(out.attempt_expired);
 	hear(&s, 6000, &out);
-	CHECK_EQ(unifying_session_status(&s, 6010), UNIFYING_CONNECTED);
+	CHECK_EQ(unifying_session_status(&s, 6010), UNIFYING_STATUS_CONNECTED);
 }
 
 static void test_a_frame_with_a_bad_checksum_leaves_the_boot_window_open(void)
@@ -2999,7 +2999,7 @@ static void test_a_session_with_no_keyboard_stays_in_pairing(void)
 	unifying_session_tick(&s, 10 * PAIRWIN_MS, false, 0, 0, &out);
 	CHECK(!out.window_closed);
 	CHECK(unifying_pairing_window_open(&s.pairing, 10 * PAIRWIN_MS));
-	CHECK_EQ(unifying_session_status(&s, 10 * PAIRWIN_MS), UNIFYING_NOT_PAIRED);
+	CHECK_EQ(unifying_session_status(&s, 10 * PAIRWIN_MS), UNIFYING_STATUS_NOT_PAIRED);
 }
 
 int main(void)

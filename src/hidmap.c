@@ -435,7 +435,7 @@ enum hidmap_result hidmap_parse(const uint8_t *map, size_t len, enum device_kind
 	if (p.depth != 0) {
 		return HIDMAP_MALFORMED;
 	}
-	if (kind == DEVICE_MOUSE) {
+	if (kind == DEVICE_KIND_MOUSE) {
 		return has_pointer(&out->pointer) ? HIDMAP_OK : HIDMAP_NO_POINTER;
 	}
 	for (uint8_t i = 0; i < out->count; i++) {

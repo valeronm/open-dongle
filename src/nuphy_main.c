@@ -5,7 +5,7 @@
 #include "chanpick.h"
 #include "core.h"
 #include "diag.h"
-#include "diagproto.h"
+#include "diagwire.h"
 #include "history.h"
 #include "indicator.h"
 #include "link.h"
@@ -27,8 +27,8 @@ static bool heard;
 static uint32_t last_packet_ms;
 
 _Static_assert(sizeof(((struct diag_status *)0)->name) >= NUPHY_NAME_MAX, "status name");
-_Static_assert(BTLIST_NAME_LEN >= NUPHY_NAME_MAX, "device list name");
-_Static_assert(BTPOLICY_ADDR_LEN >= NUPHY_ID_LEN, "device list address");
+_Static_assert(DIAG_NAME_MAX >= NUPHY_NAME_MAX, "device list name");
+_Static_assert(DIAG_ADDR_LEN >= NUPHY_ID_LEN, "device list address");
 
 static int home(void)
 {
@@ -80,14 +80,19 @@ static void apply(const struct link_out *out)
 
 		printk("paired, channels %u %u %u saved: %d\n", link.own[0], link.own[1],
 		       link.own[2], err);
-		core_log(HISTORY_PAIRED, 0, link.own[0], link.own[1], link.own[2], (uint32_t)err);
+		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_PAIRED,
+						 .PAIRED = {.own = {link.own[0], link.own[1], link.own[2]},
+							    .store_err = err}});
 	}
 	if (out->lost) {
 		uint32_t gap = k_uptime_get_32() - link.last_rx_ms;
 
 		core_link_lost(0);
 		printk("link lost after %u ms, last rssi %d\n", gap, keyboard_rssi);
-		core_log_input_lost(HISTORY_LINK_LOST, 0, (uint8_t)keyboard_rssi, gap);
+		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_LINK_LOST,
+						 .LINK_LOST = {.rssi = (int8_t)keyboard_rssi,
+							       .since_input_s = core_since_input_s(0),
+							       .gap_ms = gap}});
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
 		core_release_keys();
@@ -95,15 +100,20 @@ static void apply(const struct link_out *out)
 	if (out->up) {
 		uint8_t kind = link_was_lost ? HISTORY_UP_AGAIN : HISTORY_UP_FIRST;
 
-		core_log(HISTORY_LINK_UP, 0, link.channel, (uint8_t)keyboard_rssi, kind,
-			 k_uptime_get_32() - link_down_ms);
+		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_LINK_UP,
+					     .LINK_UP = {.channel = link.channel,
+							 .rssi = (int8_t)keyboard_rssi,
+							 .up = kind,
+							 .down_ms = k_uptime_get_32() - link_down_ms}});
 	}
 	if (out->moved) {
-		core_log(HISTORY_LINK_MOVED, DEVICE_NO_SLOT, out->moved_from, out->channel,
-			 HISTORY_MOVED_TO_HOME, 0);
+		core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_LINK_MOVED,
+						      .LINK_MOVED = {.from = out->moved_from,
+								     .to = out->channel,
+								     .reason = HISTORY_MOVED_TO_HOME}});
 	}
 	if (out->pairing_expired) {
-		core_log(HISTORY_PAIRING_TIMEOUT, DEVICE_NO_SLOT, 0, 0, 0, 0);
+		core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_PAIRING_TIMEOUT});
 	}
 	if (out->window_closed) {
 		core_log_pairing_closed();
@@ -127,7 +137,8 @@ static void run_survey(void)
 	}
 	chan_pick(survey, picked);
 	printk("survey picked %u %u %u\n", picked[0], picked[1], picked[2]);
-	core_log(HISTORY_SURVEY, DEVICE_NO_SLOT, picked[0], picked[1], picked[2], 0);
+	core_log(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_SURVEY,
+					      .SURVEY = {.picked = {picked[0], picked[1], picked[2]}}});
 	link_on_survey(&link, picked, k_uptime_get_32(), &out);
 	apply(&out);
 }
@@ -152,8 +163,11 @@ static void handle(const struct rx_item *item)
 	link_on_message(&link, &m, item->pipe, k_uptime_get_32(), &out);
 	if (out.gap_ms > 0) {
 		core_gap(0);
-		core_log(HISTORY_LINK_GAP, 0, out.gap_channel, (uint8_t)rssi_before,
-			 (uint8_t)item->rssi, out.gap_ms);
+		core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_LINK_GAP,
+					     .LINK_GAP = {.channel = out.gap_channel,
+							  .rssi_before = (int8_t)rssi_before,
+							  .rssi_after = (int8_t)item->rssi,
+							  .gap_ms = out.gap_ms}});
 	}
 	if (item->pipe == 1) {
 		core_rssi(0, item->rssi);
@@ -182,7 +196,7 @@ static void handle(const struct rx_item *item)
 static void slots(struct diag_slot *out)
 {
 	out[0] = (struct diag_slot){
-		.kind = DEVICE_KEYBOARD,
+		.kind = DEVICE_KIND_KEYBOARD,
 		.stored = link.own_known,
 		.ready = link_connected(&link),
 	};
@@ -231,13 +245,13 @@ static void force_channels(const struct diag_request *req)
 	int err;
 
 	if (forced != NULL && !link_channels_allowed(forced)) {
-		diag_reply_error(req, DIAG_ERR_BAD_CHANNELS, 0);
+		diag_reply_error(req, DIAG_ERROR_BAD_CHANNELS, 0);
 		return;
 	}
 	err = store_save_forced(forced);
 	if (err) {
 		printk("saving forced channels failed: %d\n", err);
-		diag_reply_error(req, DIAG_ERR_STORE, 0);
+		diag_reply_error(req, DIAG_ERROR_STORE, 0);
 		return;
 	}
 	link_force_channels(&link, forced);
@@ -251,42 +265,35 @@ static void force_channels(const struct diag_request *req)
 
 static void send_devices(const struct diag_request *req)
 {
-	static struct btlist list;
-	static uint8_t payload[DIAG_DEVICES_MAX];
-	const uint8_t *connected[DEVICE_SLOTS] = {0};
+	struct diag_device keyboard = {.kind = DEVICE_KIND_KEYBOARD, .slot = DEVICE_NO_SLOT};
 
-	list = (struct btlist){0};
 	if (link.own_known) {
-		struct btlist_entry *e = &list.entries[list.count++];
-
-		memcpy(e->addr, link.keyboard_id, sizeof(link.keyboard_id));
-		memcpy(e->name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
+		memcpy(keyboard.addr, link.keyboard_id, sizeof(link.keyboard_id));
+		memcpy(keyboard.name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
 		if (link_connected(&link)) {
-			connected[0] = e->addr;
+			keyboard.slot = 0;
 		}
 	}
-	diag_reply(req, payload,
-		   diag_encode_devices(payload, &list, connected, NULL),
-		   DIAG_AFTER_NONE);
+	core_reply_devices(req, &keyboard, link.own_known ? 1 : 0);
 }
 
 static void serve_diag(const struct diag_request *req)
 {
 	switch (req->command) {
-	case DIAG_DEVICES:
+	case DIAG_COMMAND_DEVICES:
 		send_devices(req);
 		break;
-	case DIAG_FORCE_CHANNELS:
+	case DIAG_COMMAND_FORCE_CHANNELS:
 		force_channels(req);
 		break;
-	case DIAG_PAIR:
+	case DIAG_COMMAND_PAIR:
 		link_open_pairing(&link, PAIRWIN_REQUEST, k_uptime_get_32());
 		printk("pairing open for %u s\n", PAIRWIN_MS / 1000);
 		core_log_pairing_opened(&link.window);
 		diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 		break;
 	default:
-		diag_reply_error(req, DIAG_ERR_UNKNOWN_COMMAND, 0);
+		diag_reply_error(req, DIAG_ERROR_UNKNOWN_COMMAND, 0);
 		break;
 	}
 }

@@ -23,7 +23,5 @@ jobs:
         with:
           cache_key_prefix: mise-rustup-v1
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: tool
       - run: mise run lint
       - run: mise run test

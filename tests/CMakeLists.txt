@@ -7,8 +7,12 @@ add_compile_options(-Wall -Wextra -Werror)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../src)
 enable_testing()
 
+include(../ffi/diagwire.cmake)
+diagwire_build("")
+
 function(suite name)
   add_executable(test_${name} test_${name}.c ${ARGN})
+  target_link_libraries(test_${name} diagwire)
   add_test(NAME ${name} COMMAND test_${name})
 endfunction()
 
@@ -18,7 +22,7 @@ suite(chanpick ../src/chanpick.c)
 suite(noise ../src/noise.c)
 suite(chanwatch ../src/chanwatch.c ../src/noise.c)
 suite(link ../src/link.c ../src/nuphy.c ../src/pairwin.c)
-suite(diagproto ../src/diagproto.c ../src/link.c ../src/nuphy.c ../src/pairwin.c
+suite(diagproto ../src/link.c ../src/nuphy.c ../src/pairwin.c
   ../src/unifying.c ../src/hidpp.c ../src/reports.c ../src/chanwatch.c ../src/noise.c ../src/btlist.c ../src/protocol.c)
 target_compile_definitions(test_diagproto PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tool/fixtures")
