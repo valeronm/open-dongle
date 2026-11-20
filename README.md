@@ -72,10 +72,13 @@ or into `PREFIX` when it is set:
 curl -fsSL https://raw.githubusercontent.com/valeronm/spare-dongle/main/tools/get.sh | sh
 ```
 
+The installer also saves the release's firmware in `~/.local/share/spare-dongle` and offers to
+[flash](#flashing-the-firmware) it onto a plugged-in dongle or board.
+
 On Linux, a udev rule lets the tool reach the board without root in every state
-[`spare-dongle flash`](#flashing-the-firmware) handles. The installer leaves the rule in
-`~/.local/share/spare-dongle`, and a source checkout has it in `tools/udev`. To install it and
-apply it to a board that is already plugged in:
+[`spare-dongle flash`](#flashing-the-firmware) handles. The installer offers to install it with
+sudo and leaves it in `~/.local/share/spare-dongle`, and a source checkout has it in `tools/udev`.
+To install it by hand and apply it to a board that is already plugged in:
 
 ```
 sudo cp ~/.local/share/spare-dongle/70-spare-dongle.rules /etc/udev/rules.d/
@@ -85,8 +88,9 @@ sudo udevadm trigger --subsystem-match=hidraw --subsystem-match=tty
 
 ## Flashing the firmware
 
-Download the `.uf2` from the [latest release](https://github.com/valeronm/spare-dongle/releases/latest)
-and run:
+Running the [installer](#installing-the-tool) again installs the latest tool and offers to flash its
+firmware. Or download the `.uf2` from the
+[latest release](https://github.com/valeronm/spare-dongle/releases/latest) and run:
 
 ```
 spare-dongle flash spare-dongle-<version>-promicro_nrf52840.uf2

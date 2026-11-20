@@ -22,6 +22,9 @@
 - A connected device's latency reads "no report yet" until its first report reaches the PC.
 - The dongle no longer counts channel changes, so the live view's chart, `status`, `history` and the
   console's counters line show none; each channel move is in the events.
+- The installer offers to install the udev rule with sudo, and to flash the release's firmware onto
+  a plugged-in dongle or board.
+- On Linux, `flash` reports a missing udev rule before it asks to flash, not after.
 - The diagnostic protocol is now 5, so the 0.4.0 tool can only `flash` new firmware.
 
 ## [0.4.0] - 2026-11-19

@@ -208,6 +208,14 @@ fn bootloader_port(serial: &str, failure: &'static str) -> Result<String> {
     }
 }
 
+/// Fails with the udev rule's instructions when `board` can't be opened, without restarting it.
+pub fn check_access(board: &Board) -> Result<()> {
+    match &board.kind {
+        Kind::Dongle => device::open_unchecked(Some(&board.serial)).map(drop),
+        Kind::Bootloader(port) | Kind::Factory(port) => wait_for_access(port),
+    }
+}
+
 /// Waits until the device node at `path` can be opened for reading and writing, since udev grants
 /// access a moment after the node appears. Other failures are left for the open to report.
 pub fn wait_for_access(path: &str) -> Result<()> {

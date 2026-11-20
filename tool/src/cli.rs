@@ -592,6 +592,7 @@ pub fn flash(file: &Path, serial: Option<&str>, yes: bool) -> Result<()> {
     let image =
         uf2::image(&bytes).with_context(|| format!("{} is not usable firmware", file.display()))?;
     let board = board::pick(board::find()?, serial)?;
+    board::check_access(&board)?;
     let name = file.file_name().map_or_else(
         || file.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
