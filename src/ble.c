@@ -205,11 +205,30 @@ static const struct bt_hogp_init_params hogp_params = {
 	.prep_error_cb = on_hogp_failed,
 };
 
+/* bt_gatt_dm can end a discovery after its connection closed. */
+static struct link *discovering;
+
+/* Must run before next_discovery, which overwrites discovering. */
+static struct link *take_discovering(void)
+{
+	struct link *l = discovering;
+
+	discovering = NULL;
+	return l;
+}
+
 static void on_discovered(struct bt_gatt_dm *dm, void *context)
 {
-	struct link *l = context;
-	int err = bt_hogp_handles_assign(dm, &l->hogp);
+	struct link *l = take_discovering();
+	int err;
 
+	ARG_UNUSED(context);
+	if (!l) {
+		bt_gatt_dm_data_release(dm);
+		next_discovery();
+		return;
+	}
+	err = bt_hogp_handles_assign(dm, &l->hogp);
 	bt_gatt_dm_data_release(dm);
 	next_discovery();
 	if (err) {
@@ -217,18 +236,21 @@ static void on_discovered(struct bt_gatt_dm *dm, void *context)
 	}
 }
 
-static void on_no_hid_service(struct bt_conn *conn, void *context)
-{
-	ARG_UNUSED(conn);
-	next_discovery();
-	fail(context, BLE_STAGE_DISCOVERY, -ENOENT);
-}
-
 static void on_discovery_error(struct bt_conn *conn, int err, void *context)
 {
+	struct link *l = take_discovering();
+
 	ARG_UNUSED(conn);
+	ARG_UNUSED(context);
 	next_discovery();
-	fail(context, BLE_STAGE_DISCOVERY, err);
+	if (l) {
+		fail(l, BLE_STAGE_DISCOVERY, err);
+	}
+}
+
+static void on_no_hid_service(struct bt_conn *conn, void *context)
+{
+	on_discovery_error(conn, -ENOENT, context);
 }
 
 static const struct bt_gatt_dm_cb hid_discovery = {
@@ -270,9 +292,10 @@ static void use_battery(struct link *l, struct bt_gatt_dm *dm)
 
 static void on_battery_found(struct bt_gatt_dm *dm, void *context)
 {
-	struct link *l = context;
+	struct link *l = take_discovering();
 
-	if (bt_gatt_dm_conn_get(dm) == l->conn) {
+	ARG_UNUSED(context);
+	if (l) {
 		use_battery(l, dm);
 	}
 	bt_gatt_dm_data_release(dm);
@@ -283,14 +306,20 @@ static void on_no_battery(struct bt_conn *conn, void *context)
 {
 	ARG_UNUSED(conn);
 	ARG_UNUSED(context);
+	take_discovering();
 	next_discovery();
 }
 
 static void on_battery_error(struct bt_conn *conn, int err, void *context)
 {
+	struct link *l = take_discovering();
+
 	ARG_UNUSED(conn);
-	printk("bluetooth %s battery discovery failed: %d\n",
-	       device_kind_name(kind_of(context)), err);
+	ARG_UNUSED(context);
+	if (l) {
+		printk("bluetooth %s battery discovery failed: %d\n",
+		       device_kind_name(kind_of(l)), err);
+	}
 	next_discovery();
 }
 
@@ -302,10 +331,14 @@ static const struct bt_gatt_dm_cb battery_discovery = {
 
 static int start_discovery(struct link *l, enum discovery what)
 {
-	if (what == DISCOVERY_HID) {
-		return bt_gatt_dm_start(l->conn, BT_UUID_HIDS, &hid_discovery, l);
+	int err = what == DISCOVERY_HID
+			  ? bt_gatt_dm_start(l->conn, BT_UUID_HIDS, &hid_discovery, NULL)
+			  : bt_gatt_dm_start(l->conn, BT_UUID_BAS, &battery_discovery, NULL);
+
+	if (!err) {
+		discovering = l;
 	}
-	return bt_gatt_dm_start(l->conn, BT_UUID_BAS, &battery_discovery, l);
+	return err;
 }
 
 /* bt_gatt_dm runs one discovery at a time and refuses a second start with -EALREADY. */
@@ -384,6 +417,9 @@ static void connection_ended(struct link *l, uint8_t reason)
 		bt_hogp_release(&l->hogp);
 	}
 	l->wanted = DISCOVERY_NONE;
+	if (discovering == l) {
+		discovering = NULL;
+	}
 	bt_conn_unref(l->conn);
 	l->conn = NULL;
 	emit(l, (struct ble_event){.type = BLE_DISCONNECTED, .reason = reason});
