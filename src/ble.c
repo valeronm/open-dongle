@@ -754,16 +754,16 @@ void ble_disconnect(enum device_kind kind)
 	}
 }
 
-static void on_leds_written(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err)
+static void on_written(struct bt_hogp *h, struct bt_hogp_rep_info *rep, uint8_t err)
 {
 	ARG_UNUSED(h);
 	ARG_UNUSED(rep);
 	ARG_UNUSED(err);
 }
 
-int ble_set_leds(uint8_t report_id, uint8_t leds)
+int ble_write_report(enum device_kind kind, uint8_t report_id, const uint8_t *data, uint8_t len)
 {
-	struct bt_hogp *hogp = &links[DEVICE_KEYBOARD].hogp;
+	struct bt_hogp *hogp = &links[kind].hogp;
 	struct bt_hogp_rep_info *rep;
 
 	if (!bt_hogp_ready_check(hogp)) {
@@ -774,7 +774,7 @@ int ble_set_leds(uint8_t report_id, uint8_t leds)
 		return -ENOENT;
 	}
 	/* The library refuses a write without a completion callback. */
-	return bt_hogp_rep_write_wo_rsp(hogp, rep, &leds, sizeof(leds), on_leds_written);
+	return bt_hogp_rep_write_wo_rsp(hogp, rep, data, len, on_written);
 }
 
 bool ble_bond_secure(const uint8_t addr[BTPOLICY_ADDR_LEN])

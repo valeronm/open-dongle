@@ -98,6 +98,29 @@ static void mx_master_map_parses_as_a_mouse(void)
 	check_value(&m.pointer.pan, 48, 8);
 }
 
+static void logitech_maps_declare_hidpp(void)
+{
+	uint8_t map[512];
+	size_t len = load_fixture("mx-keys-report-map.hex", map, sizeof(map));
+	struct hidmap m;
+
+	CHECK_EQ(hidmap_parse(map, len, DEVICE_KEYBOARD, &m), HIDMAP_OK);
+	CHECK(m.has_hidpp);
+	len = load_mx_master(map, sizeof(map));
+	CHECK_EQ(hidmap_parse(map, len, DEVICE_MOUSE, &m), HIDMAP_OK);
+	CHECK(m.has_hidpp);
+}
+
+static void air75_map_has_no_hidpp(void)
+{
+	uint8_t map[512];
+	size_t len = load_fixture("air75-v2-report-map.hex", map, sizeof(map));
+	struct hidmap m;
+
+	CHECK_EQ(hidmap_parse(map, len, DEVICE_KEYBOARD, &m), HIDMAP_OK);
+	CHECK(!m.has_hidpp);
+}
+
 static void mx_master_map_is_not_a_keyboard(void)
 {
 	uint8_t map[512];
@@ -237,6 +260,8 @@ int main(void)
 	RUN(air75_map_parses);
 	RUN(mx_keys_map_parses);
 	RUN(mx_master_map_parses_as_a_mouse);
+	RUN(logitech_maps_declare_hidpp);
+	RUN(air75_map_has_no_hidpp);
 	RUN(mx_master_map_is_not_a_keyboard);
 	RUN(a_map_without_a_pointer_is_not_a_mouse);
 	RUN(mx_keys_map_holds_its_own_pointer);

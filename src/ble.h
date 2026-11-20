@@ -89,9 +89,9 @@ size_t ble_copy_map(enum device_kind kind, uint8_t *out, size_t cap);
 /* The name of the slot's device, empty if it gave none. */
 void ble_copy_name(enum device_kind kind, char out[BLE_NAME_MAX + 1]);
 void ble_disconnect(enum device_kind kind);
-/* Writes the lock LEDs to the keyboard slot's output report with this ID; fails until the
- * keyboard's reports are discovered and while an earlier write is still being sent. */
-int ble_set_leds(uint8_t report_id, uint8_t leds);
+/* Writes the slot's output report with this ID, data excluding the ID; fails until the device's
+ * reports are discovered and while an earlier write to that report is still being sent. */
+int ble_write_report(enum device_kind kind, uint8_t report_id, const uint8_t *data, uint8_t len);
 /* Reads the slot's signal from the controller; fails with -ENOTCONN without a device and -ENODATA
  * when the controller has no reading yet. */
 int ble_rssi(enum device_kind kind, int8_t *dbm);

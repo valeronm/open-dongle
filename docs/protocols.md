@@ -148,8 +148,9 @@ tells them apart by the kind the device advertises.
 | Devices | as many as the PC pairs | several stored, a keyboard and a mouse connected | 🔴 |
 | Boot menus and PCs without Bluetooth | no | yes | 🟢 |
 | Moving the keyboard to another PC | a pairing per PC | moves with the dongle | 🟢 |
+| Screen brightness on the MX Keys's F1 and F2 | with Logitech Options or Solaar | yes[^brightness] | 🟢 |
 | Keyboard name and signal | in the PC's settings | shown by the tool | ⚪ |
-| Battery level | in the PC's settings | shown by the tool | ⚪ |
+| Battery level | in the PC's settings | shown by the tool, with charging on Logitech devices[^battery] | 🟢 |
 
 The nRF52840 has no Bluetooth Classic radio. A report map the dongle cannot parse refuses the
 device, and so does a keyboard's map with no keyboard in it or a mouse's map with no relative
@@ -226,7 +227,7 @@ Unifying link key.
 [^brightness]: [HID++](unifying.md#hid): SpareDongle diverts the brightness keys itself, as
     Solaar does.
 [^battery]: [HID++](unifying.md#hid): SpareDongle reads the battery at each connect and follows
-    the keyboard's battery events.
+    the device's battery events.
 [^media]: [After pairing](unifying.md#after-pairing), seen on air from an MX Keys.
 [^led]: [After pairing](unifying.md#after-pairing), seen on air with an MX Keys.
 [^bastille-11]: Bastille, [advisory 11](https://github.com/BastilleResearch/mousejack/blob/master/doc/advisories/bastille-11.logitech.public.txt): the C-U0007 on

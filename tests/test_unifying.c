@@ -1845,6 +1845,8 @@ static uint64_t silence_after(const struct unifying_session *s, uint64_t heard)
 static const uint8_t find_request[] = {0x00, 0x10, 0x07, 0x00, 0x01, 0x1b, 0x04, 0x00, 0x00, 0xc9};
 static const uint8_t find_battery_request[] = {0x00, 0x10, 0x07, 0x00, 0x01,
 					       0x10, 0x00, 0x00, 0x00, 0xd8};
+static const uint8_t find_unified_battery_request[] = {0x00, 0x10, 0x07, 0x00, 0x01,
+						       0x10, 0x04, 0x00, 0x00, 0xd4};
 static const uint8_t read_battery_request[] = {0x00, 0x10, 0x07, 0x07, 0x01,
 					       0x00, 0x00, 0x00, 0x00, 0xe1};
 
@@ -1956,7 +1958,7 @@ static uint64_t run_out_retries(struct unifying_session *s, uint64_t now, uint32
 	uint64_t retry = 2 * (uint64_t)s->link.keepalive_ms;
 	struct unifying_out out;
 
-	for (int i = 0; i < UNIFYING_HIDPP_TRIES; i++) {
+	for (int i = 0; i < HIDPP_TRIES; i++) {
 		tick_queue(s, now, *taken, &out);
 		check_hidpp(&out, want, len);
 		CHECK(!out.divert.ended);
@@ -2078,9 +2080,9 @@ static void test_diverted_brightness_keys_type_the_brightness_usages(void)
 	static const struct {
 		uint8_t cid;
 		uint16_t usage;
-	} steps[] = {{0xc7, UNIFYING_BRIGHTNESS_DOWN},
+	} steps[] = {{0xc7, HIDPP_BRIGHTNESS_DOWN},
 		     {0x00, 0x0000},
-		     {0xc8, UNIFYING_BRIGHTNESS_UP},
+		     {0xc8, HIDPP_BRIGHTNESS_UP},
 		     {0x00, 0x0000}};
 	struct unifying_session s;
 	struct unifying_out out;
@@ -2297,7 +2299,7 @@ static void test_releasing_a_brightness_key_leaves_a_held_media_key_down(void)
 	CHECK_EQ(out.report[0].usage, 0x00e9);
 	hidpp(f, 0x08, 0x00, 0x00, 0xc7, 0x00);
 	session_feed(&s, f, sizeof(f), 110, &out);
-	CHECK_EQ(out.report[0].usage, UNIFYING_BRIGHTNESS_DOWN);
+	CHECK_EQ(out.report[0].usage, HIDPP_BRIGHTNESS_DOWN);
 	hidpp(f, 0x08, 0x00, 0x00, 0x00, 0x00);
 	session_feed(&s, f, sizeof(f), 120, &out);
 	CHECK_EQ(out.reports, 1);
@@ -2416,13 +2418,27 @@ static void test_a_battery_event_before_the_lookup_is_ignored(void)
 	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
 }
 
-static void test_a_keyboard_without_a_battery_feature_is_not_asked_its_level(void)
+static void test_a_keyboard_without_battery_status_is_asked_for_unified_battery(void)
 {
 	struct unifying_session s;
 	struct unifying_out out;
 
 	session_battery_answered(&s, 0x00);
 	unifying_session_tick(&s, 100, false, 0, 0, &out);
+	check_hidpp(&out, find_unified_battery_request, sizeof(find_unified_battery_request));
+}
+
+static void test_a_keyboard_without_a_battery_feature_is_not_asked_its_level(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_battery_answered(&s, 0x00);
+	unifying_session_tick(&s, 100, false, 0, 0, &out);
+	hidpp(f, 0x00, 0x01, 0x00, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 110, &out);
+	unifying_session_tick(&s, 120, false, 0, 0, &out);
 	CHECK_EQ(out.hidpp_len, 0);
 	CHECK_EQ(s.battery.level, DEVICE_NO_BATTERY);
 }
@@ -3116,6 +3132,7 @@ int main(void)
 	RUN(test_battery_events_update_the_level_and_charging);
 	RUN(test_a_charging_event_without_a_level_keeps_the_level_unknown);
 	RUN(test_a_battery_event_before_the_lookup_is_ignored);
+	RUN(test_a_keyboard_without_battery_status_is_asked_for_unified_battery);
 	RUN(test_a_keyboard_without_a_battery_feature_is_not_asked_its_level);
 	RUN(test_an_unanswered_battery_read_logs_no_divert_event);
 	RUN(test_a_reconnect_keeps_the_battery_level);

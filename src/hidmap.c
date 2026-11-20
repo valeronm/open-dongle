@@ -1,4 +1,5 @@
 #include "hidmap.h"
+#include "hidpp.h"
 
 #define STACK_DEPTH 4
 #define REPORT_IDS_MAX 16
@@ -37,6 +38,8 @@
 #define PAGE_GENERIC_DESKTOP 0x01
 #define PAGE_KEYBOARD 0x07
 #define PAGE_LED 0x08
+/* Logitech's long HID++ report sits on this vendor page. */
+#define PAGE_HIDPP 0xff43
 #define PAGE_BUTTON 0x09
 #define PAGE_CONSUMER 0x0c
 #define USAGE_KEYBOARD 0x06
@@ -297,6 +300,10 @@ static enum hidmap_result on_main(struct parser *p, uint8_t tag, uint32_t value,
 		    !out->has_leds) {
 			out->has_leds = true;
 			out->led_report_id = p->g.report_id;
+		}
+		if (p->g.page == PAGE_HIDPP && p->g.report_id == HIDPP_LONG_REPORT_ID &&
+		    p->g.size * p->g.count == HIDPP_LONG_LEN * 8) {
+			out->has_hidpp = true;
 		}
 		break;
 	case MAIN_COLLECTION:

@@ -19,13 +19,14 @@ suite(noise ../src/noise.c)
 suite(chanwatch ../src/chanwatch.c ../src/noise.c)
 suite(link ../src/link.c ../src/nuphy.c ../src/pairwin.c)
 suite(diagproto ../src/diagproto.c ../src/link.c ../src/nuphy.c ../src/pairwin.c
-  ../src/unifying.c ../src/chanwatch.c ../src/noise.c ../src/btlist.c ../src/protocol.c)
+  ../src/unifying.c ../src/hidpp.c ../src/reports.c ../src/chanwatch.c ../src/noise.c ../src/btlist.c ../src/protocol.c)
 target_compile_definitions(test_diagproto PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tool/fixtures")
 suite(history ../src/history.c ../src/noise.c)
 target_compile_definitions(test_history PRIVATE
   FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../tool/fixtures")
-suite(unifying ../src/unifying.c ../src/pairwin.c)
+suite(unifying ../src/unifying.c ../src/hidpp.c ../src/pairwin.c ../src/reports.c)
+suite(hidpp ../src/hidpp.c)
 suite(protocol ../src/protocol.c)
 suite(pairwin ../src/pairwin.c)
 suite(hidmap ../src/hidmap.c)

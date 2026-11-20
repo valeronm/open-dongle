@@ -10,12 +10,16 @@
 #include "diag.h"
 #include "hidkeys.h"
 #include "hidmap.h"
+#include "hidpp.h"
 #include "indicator.h"
 #include "pairwin.h"
 #include "store.h"
 
 #define TICK_MS 10
 #define RSSI_PERIOD_MS 1000
+/* A device reached over Bluetooth answers HID++ as its own receiver. */
+#define HIDPP_DEVICE_INDEX 0xff
+#define HIDPP_RETRY_MS 1000
 
 static int no_home(void)
 {
@@ -51,15 +55,54 @@ static struct hidkeys keys;
 static struct btpolicy policy;
 static struct btlist list;
 static struct pairwin window;
-static char names[DEVICE_KINDS][BLE_NAME_MAX + 1];
-static struct device_battery battery[DEVICE_KINDS];
+
+/* What the dongle learns of a connected device; it starts over at each connection. */
+struct connected {
+	char name[BLE_NAME_MAX + 1];
+	/* From the Battery Service. */
+	uint8_t level;
+	/* From HID++, the only source of the charging state. */
+	struct device_battery battery;
+	/* The consumer usages the keyboard's reports and its diverted keys each hold. */
+	uint16_t media_usage;
+	uint16_t divert_usage;
+	bool rssi_read;
+	int8_t rssi;
+};
+
+static struct connected devices[DEVICE_KINDS];
+
+/* A device's feature indexes are fixed by its firmware, so a run is kept while the same address
+ * reconnects. */
+static struct {
+	uint8_t addr[BTPOLICY_ADDR_LEN];
+	struct hidpp hidpp;
+} runs[DEVICE_KINDS];
 static int start_err;
 static bool passkey_asked;
-static bool rssi_read[DEVICE_SLOTS];
-static int8_t rssi[DEVICE_SLOTS];
 static uint32_t rssi_tried_ms;
 static bool reported[DEVICE_SLOTS];
 static uint32_t report_ms[DEVICE_SLOTS];
+
+static void connection_over(enum device_kind kind)
+{
+	devices[kind] = (struct connected){
+		.level = DEVICE_NO_BATTERY,
+		.battery = DEVICE_BATTERY_UNKNOWN,
+	};
+}
+
+/* A HID++ level replaces the Battery Service's, which a device can keep reporting while HID++
+ * calls its level unknown. */
+static struct device_battery battery_of(const struct connected *c)
+{
+	struct device_battery b = c->battery;
+
+	if (b.level == DEVICE_NO_BATTERY) {
+		b.level = c->level;
+	}
+	return b;
+}
 
 static bool any_ready(void)
 {
@@ -101,19 +144,20 @@ static uint8_t pairing_of(enum device_kind kind)
 static void fill_status(struct diag_status *st, uint8_t slot)
 {
 	enum device_kind kind = kind_in(slot);
+	const struct connected *c = &devices[kind];
 
 	st->link_state = start_err ? LINK_START_FAILED : any_ready() ? LINK_READY : LINK_NONE_READY;
 	st->pairing_open = pairwin_is_open(&window, k_uptime_get_32());
 	st->pairing = pairing_of(kind);
-	st->battery = battery[kind];
-	if (rssi_read[slot]) {
-		st->last_rssi = rssi[slot];
+	st->battery = battery_of(c);
+	if (c->rssi_read) {
+		st->last_rssi = c->rssi;
 	}
 	if (reported[slot]) {
 		st->last_rx_age_ms = k_uptime_get_32() - report_ms[slot];
 	}
 	if (btpolicy_is_ready(&policy, kind)) {
-		strncpy((char *)st->name, names[kind], sizeof(st->name));
+		strncpy((char *)st->name, c->name, sizeof(st->name));
 	} else {
 		const struct btlist_entry *latest = btlist_latest(&list, kind);
 
@@ -222,7 +266,7 @@ static void send_leds(uint8_t leds)
 	if (!btpolicy_is_ready(&policy, DEVICE_KEYBOARD) || !map->has_leds) {
 		return;
 	}
-	err = ble_set_leds(map->led_report_id, leds);
+	err = ble_write_report(DEVICE_KEYBOARD, map->led_report_id, &leds, sizeof(leds));
 	if (err) {
 		printk("bluetooth leds not sent: %d\n", err);
 	}
@@ -282,13 +326,13 @@ static void device_ready(enum device_kind kind)
 {
 	btpolicy_ready(&policy, kind);
 	log_device(HISTORY_BT_CONNECTED, kind, 0);
-	save_list(btlist_connected(&list, btpolicy_peer(&policy, kind), names[kind]));
+	save_list(btlist_connected(&list, btpolicy_peer(&policy, kind), devices[kind].name));
 }
 
 static void on_map_read(enum device_kind kind)
 {
 	const char *what = device_kind_name(kind);
-	char *name = names[kind];
+	char *name = devices[kind].name;
 	size_t len;
 	enum hidmap_result result;
 
@@ -307,6 +351,15 @@ static void on_map_read(enum device_kind kind)
 	}
 	printk("bluetooth %s \"%s\" ready\n", what, name);
 	device_ready(kind);
+	if (maps[kind].has_hidpp) {
+		const uint8_t *peer = btpolicy_peer(&policy, kind);
+
+		if (memcmp(runs[kind].addr, peer, BTPOLICY_ADDR_LEN) != 0) {
+			runs[kind].hidpp = (struct hidpp){0};
+			memcpy(runs[kind].addr, peer, BTPOLICY_ADDR_LEN);
+		}
+		hidpp_start(&runs[kind].hidpp);
+	}
 	if (kind == DEVICE_KEYBOARD) {
 		uint8_t leds;
 
@@ -331,8 +384,7 @@ static void on_disconnected(enum device_kind kind, uint8_t reason)
 		}
 		hidkeys_reset(&keys);
 	}
-	rssi_read[slot_of(kind)] = false;
-	battery[kind] = DEVICE_BATTERY_UNKNOWN;
+	connection_over(kind);
 	btpolicy_disconnected(&policy, kind, k_uptime_get_32(),
 			      reason == BLE_REASON_NOT_ESTABLISHED);
 }
@@ -344,6 +396,36 @@ static void on_mouse_report(const struct ble_event *ev)
 	if (hidkeys_pointer(&maps[DEVICE_MOUSE].pointer, ev->report.id, ev->report.data,
 			    ev->report.len, &out)) {
 		core_submit(slot_of(DEVICE_MOUSE), &out, &ev->report.received_us);
+	}
+}
+
+static void print_battery(enum device_kind kind, struct device_battery b)
+{
+	if (b.level == DEVICE_NO_BATTERY) {
+		printk("bluetooth %s battery unknown, charging state %d\n", device_kind_name(kind),
+		       b.charging);
+	} else {
+		printk("bluetooth %s battery %u%%, charging state %d\n", device_kind_name(kind),
+		       b.level, b.charging);
+	}
+}
+
+static void on_hidpp_report(const struct ble_event *ev)
+{
+	struct connected *c = &devices[ev->kind];
+	struct device_battery before = c->battery;
+	struct hidpp_msg m;
+	uint16_t usage;
+
+	hidpp_msg_read(ev->report.data, ev->report.len, true, &m);
+	if (hidpp_rx(&runs[ev->kind].hidpp, &c->battery, &m, &usage) && usage != c->divert_usage) {
+		const struct report out = reports_consumer(usage, c->media_usage);
+
+		c->divert_usage = usage;
+		core_submit(slot_of(ev->kind), &out, &ev->report.received_us);
+	}
+	if (before.level != c->battery.level || before.charging != c->battery.charging) {
+		print_battery(ev->kind, battery_of(c));
 	}
 }
 
@@ -360,6 +442,11 @@ static void on_report(const struct ble_event *ev)
 	core_packet(slot);
 	reported[slot] = true;
 	report_ms[slot] = k_uptime_get_32();
+	if (maps[ev->kind].has_hidpp && ev->report.id == HIDPP_LONG_REPORT_ID &&
+	    ev->report.len == HIDPP_LONG_LEN) {
+		on_hidpp_report(ev);
+		return;
+	}
 	if (ev->kind == DEVICE_MOUSE) {
 		on_mouse_report(ev);
 		return;
@@ -367,6 +454,10 @@ static void on_report(const struct ble_event *ev)
 	n = hidkeys_translate(&keys, &maps[DEVICE_KEYBOARD], ev->report.id, ev->report.data,
 			      ev->report.len, out);
 	for (size_t i = 0; i < n; i++) {
+		if (out[i].kind == REPORT_CONSUMER) {
+			devices[ev->kind].media_usage = out[i].usage;
+			out[i] = reports_consumer(out[i].usage, devices[ev->kind].divert_usage);
+		}
 		core_submit(slot, &out[i], &ev->report.received_us);
 	}
 }
@@ -411,13 +502,8 @@ static void on_event(const struct ble_event *ev)
 		on_report(ev);
 		break;
 	case BLE_BATTERY:
-		if (ev->battery.level == DEVICE_NO_BATTERY) {
-			printk("bluetooth %s battery unknown\n", device_kind_name(ev->kind));
-		} else {
-			printk("bluetooth %s battery %u%%\n", device_kind_name(ev->kind),
-			       ev->battery.level);
-		}
-		battery[ev->kind] = ev->battery;
+		devices[ev->kind].level = ev->battery.level;
+		print_battery(ev->kind, battery_of(&devices[ev->kind]));
 		break;
 	}
 }
@@ -520,8 +606,32 @@ static void read_rssi(uint32_t now)
 			continue;
 		}
 		core_rssi(slot_of(k), dbm);
-		rssi[slot_of(k)] = dbm;
-		rssi_read[slot_of(k)] = true;
+		devices[k].rssi = dbm;
+		devices[k].rssi_read = true;
+	}
+}
+
+/* The run diverts only keyboard keys. */
+static void run_hidpp(enum device_kind kind, uint32_t now)
+{
+	struct hidpp *x = &runs[kind].hidpp;
+	struct hidpp_divert_end end;
+	struct hidpp_msg m;
+
+	if (!btpolicy_is_ready(&policy, kind) || !maps[kind].has_hidpp) {
+		return;
+	}
+	if (hidpp_request(x, HIDPP_DEVICE_INDEX, now, HIDPP_RETRY_MS, &m)) {
+		uint8_t data[HIDPP_LONG_LEN] = {0};
+
+		hidpp_msg_write(&m, data, sizeof(data));
+		/* A failed write counts as a try, so a report the device lacks ends the run. */
+		ble_write_report(kind, HIDPP_LONG_REPORT_ID, data, sizeof(data));
+		hidpp_taken(x, now);
+	}
+	if (hidpp_take_end(x, &end) && kind == DEVICE_KEYBOARD) {
+		core_log(HISTORY_KEYS_DIVERTED, slot_of(kind), end.outcome, end.diverted, end.refused,
+			 end.cid);
 	}
 }
 
@@ -542,7 +652,7 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 	core_start_history(&loop);
 	btpolicy_init(&policy);
 	for (int k = 0; k < DEVICE_KINDS; k++) {
-		battery[k] = DEVICE_BATTERY_UNKNOWN;
+		connection_over(k);
 	}
 	start_err = ble_start();
 	if (start_err) {
@@ -582,6 +692,9 @@ FUNC_NORETURN void bluetooth_run(int store_err)
 			ble_offer_passkey(false, 0);
 		}
 		read_rssi(now);
+		for (int k = 0; k < DEVICE_KINDS; k++) {
+			run_hidpp(k, now);
+		}
 		btpolicy_window(&policy, pairwin_is_open(&window, now), passkey_asked);
 		if (start_err == 0) {
 			int err = ble_scan(btpolicy_scan(&policy));

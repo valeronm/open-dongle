@@ -84,6 +84,9 @@ struct reports {
 void reports_init(struct reports *r);
 enum report_iface reports_iface(enum report_kind kind);
 int reports_clamp(int value, int min, int max);
+/* The consumer report of two sources that each hold one usage: the usage that changed wins, and a
+ * released one gives way to the other source's held usage. */
+struct report reports_consumer(uint16_t changed, uint16_t other);
 
 /* Returns true when next changed its kind's state or carries mouse motion. */
 bool reports_update(struct reports *r, const struct report *next, struct report_stamp stamp);

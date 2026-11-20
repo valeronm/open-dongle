@@ -26,6 +26,11 @@ int reports_clamp(int value, int min, int max)
 	return value < min ? min : value > max ? max : value;
 }
 
+struct report reports_consumer(uint16_t changed, uint16_t other)
+{
+	return (struct report){.kind = REPORT_CONSUMER, .usage = changed != 0 ? changed : other};
+}
+
 static bool has_motion(const struct report *r)
 {
 	const struct report_mouse *m = &r->mouse;

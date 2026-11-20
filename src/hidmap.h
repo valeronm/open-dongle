@@ -56,6 +56,7 @@ struct hidmap {
 	bool has_leds;
 	uint8_t led_report_id;
 	struct hidmap_pointer pointer;
+	bool has_hidpp;
 };
 
 enum hidmap_result {

@@ -108,7 +108,7 @@ static uint8_t link_up_kind(enum unifying_heard h)
 	}
 }
 
-static void log_divert(const struct unifying_divert_end *end)
+static void log_divert(const struct hidpp_divert_end *end)
 {
 	if (end->ended) {
 		core_log(HISTORY_KEYS_DIVERTED, 0, end->outcome, end->diverted, end->refused,
