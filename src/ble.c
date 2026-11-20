@@ -712,26 +712,24 @@ int ble_forget(const uint8_t addr[BTPOLICY_ADDR_LEN])
 #define SURVEY_INTERVAL_US 10000
 
 /* The host's receive thread adds to the tally while the main loop takes it. */
-static struct k_spinlock noise_lock;
 static struct noise_tally data_noise;
 
 static bool on_vendor_event(struct net_buf_simple *buf)
 {
 	const sdc_hci_subevent_vs_qos_channel_survey_report_t *r;
-	k_spinlock_key_t key;
 
 	if (net_buf_simple_pull_u8(buf) != SDC_HCI_SUBEVENT_VS_QOS_CHANNEL_SURVEY_REPORT ||
 	    buf->len < sizeof(*r)) {
 		return false;
 	}
 	r = (const void *)buf->data;
-	key = k_spin_lock(&noise_lock);
+	k_sched_lock();
 	for (int ch = 0; ch < DATA_CHANNELS; ch++) {
 		if (r->channel_energy[ch] != ENERGY_NOT_MEASURED) {
 			noise_add(&data_noise, r->channel_energy[ch]);
 		}
 	}
-	k_spin_unlock(&noise_lock, key);
+	k_sched_unlock();
 	return true;
 }
 
@@ -748,11 +746,10 @@ static int start_survey(void)
 
 bool ble_take_noise(struct noise_tally *t, int *home)
 {
-	k_spinlock_key_t key = k_spin_lock(&noise_lock);
-
+	k_sched_lock();
 	*t = data_noise;
 	data_noise = (struct noise_tally){0};
-	k_spin_unlock(&noise_lock, key);
+	k_sched_unlock();
 	*home = CHANMOVE_NO_HOME;
 	return true;
 }
