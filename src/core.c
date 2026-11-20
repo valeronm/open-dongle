@@ -162,7 +162,6 @@ static struct history_totals totals(void)
 	struct history_totals t = {
 		.invalid = counts[CORE_INVALID],
 		.dropped = core_rx_dropped(),
-		.channel_changes = counts[CORE_CHANNEL_CHANGES],
 		.usb_retries = core_usb_retries(),
 	};
 
@@ -388,7 +387,6 @@ int core_set_channel(uint8_t channel)
 	take_noise();
 	err = radio_set_channel(channel);
 	if (err == 0) {
-		core_count(CORE_CHANNEL_CHANGES);
 		loop->replies_dropped();
 	}
 	return err;
@@ -601,7 +599,6 @@ void core_fill_status(struct diag_status *st, uint8_t slot)
 		.usb_suspended = usb_suspended(),
 		.invalid = t.invalid,
 		.dropped = t.dropped,
-		.channel_changes = t.channel_changes,
 		.usb_retries = t.usb_retries,
 		.slot_count = loop->slot_count,
 		.slot = slot,

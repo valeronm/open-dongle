@@ -77,7 +77,6 @@ static void test_status_matches_fixture(void)
 		.usb_live = true,
 		.invalid = 1,
 		.dropped = 2,
-		.channel_changes = 3,
 		.usb_retries = 5,
 		.merges = 6,
 		.surveys = 7,
@@ -227,7 +226,7 @@ static void test_minutes_match_fixture(void)
 		 .link_losses = {9, 0},
 		 .rssi = {{.min = -1, .avg = -1, .max = -1}, {.min = -80, .avg = -70, .max = -60}},
 		 .noise = {.peak = -41, .busy = 102, .strong = 5}},
-		{.channel_changes = 12, .link_losses = {0, 1}},
+		{.link_losses = {0, 1}},
 	};
 	uint8_t want[DIAG_PAYLOAD_MAX];
 	uint8_t got[DIAG_PAYLOAD_MAX];

@@ -19,7 +19,6 @@ struct history_totals {
 	uint32_t link_losses[DEVICE_SLOTS];
 	uint32_t invalid;
 	uint32_t dropped;
-	uint32_t channel_changes;
 	uint32_t usb_retries;
 };
 
@@ -30,7 +29,7 @@ struct history_rssi {
 
 /* Counts saturate. */
 struct history_minute {
-	uint8_t invalid, dropped, channel_changes, usb_retries;
+	uint8_t invalid, dropped, usb_retries;
 	struct noise_record noise;
 	uint16_t packets[DEVICE_SLOTS];
 	uint8_t gaps[DEVICE_SLOTS], link_losses[DEVICE_SLOTS];

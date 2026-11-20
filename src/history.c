@@ -39,7 +39,6 @@ static struct history_minute close_minute(const struct history *h, const struct 
 	struct history_minute m = {
 		.invalid = sat8(t->invalid - s->invalid),
 		.dropped = sat8(t->dropped - s->dropped),
-		.channel_changes = sat8(t->channel_changes - s->channel_changes),
 		.usb_retries = sat8(t->usb_retries - s->usb_retries),
 	};
 

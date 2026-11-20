@@ -110,7 +110,6 @@ struct diag_status {
 	bool usb_suspended;
 	uint32_t invalid;
 	uint32_t dropped;
-	uint32_t channel_changes;
 	uint32_t usb_retries;
 	uint32_t merges;
 	uint32_t surveys;

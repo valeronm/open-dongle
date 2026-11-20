@@ -8,6 +8,8 @@
 - The tool shows a Unifying keyboard's battery level and whether it is charging, in `status` and
   in the title of the live view's device box.
 - A connected device's latency reads "no report yet" until its first report reaches the PC.
+- The dongle no longer counts channel changes, so the live view's chart, `status`, `history` and the
+  console's counters line show none; each channel move is in the events.
 - The diagnostic protocol is now 5, so the 0.4.0 tool can only `flash` new firmware.
 
 ## [0.4.0] - 2026-11-19

@@ -91,7 +91,7 @@ impl Strip {
     }
 }
 
-const STRIPS: [Strip; 5] = [
+const STRIPS: [Strip; 4] = [
     Strip {
         name: "losses",
         source: Source::Counter(Counter::LinkLosses),
@@ -103,10 +103,6 @@ const STRIPS: [Strip; 5] = [
     Strip {
         name: "dropped",
         source: Source::Counter(Counter::Dropped),
-    },
-    Strip {
-        name: "channel",
-        source: Source::Counter(Counter::ChannelChanges),
     },
     Strip {
         name: "busy",
@@ -1497,7 +1493,6 @@ mod tests {
         Minute {
             invalid: 0,
             dropped: 0,
-            channel_changes: 0,
             usb_retries: 0,
             noise: None,
             device: SlotMinute {
@@ -2085,7 +2080,7 @@ mod tests {
                         let mut p = from.to_le_bytes().to_vec();
                         p.push(n);
                         for _ in 0..n {
-                            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 7 + 2 * req[6], 0, 0, 0, 0, 0, 0]);
+                            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 7 + 2 * req[6], 0, 0, 0, 0, 0, 0]);
                         }
                         p
                     }
@@ -2577,7 +2572,7 @@ mod tests {
         let mut p = first.to_le_bytes().to_vec();
         p.push(count);
         for _ in 0..count {
-            p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, boot, 0, 0, 0, 0, 0, 0]);
+            p.extend([0, 0, 0, 0, 0, 0, 0, 0, boot, 0, 0, 0, 0, 0, 0]);
         }
         p
     }
@@ -3071,11 +3066,11 @@ mod tests {
     #[test]
     fn a_panel_leaves_out_the_strips_its_firmware_never_counts() {
         let nuphy = strip_names(Some(Protocol::Nuphy));
-        for name in ["losses", "gaps", "dropped", "channel", "busy"] {
+        for name in ["losses", "gaps", "dropped", "busy"] {
             assert!(nuphy.contains(name), "{name} missing from {nuphy}");
         }
         let unifying = strip_names(Some(Protocol::Unifying));
-        for name in ["dropped", "channel", "busy"] {
+        for name in ["dropped", "busy"] {
             assert!(unifying.contains(name), "{name} missing from {unifying}");
         }
         for name in ["losses", "gaps"] {
@@ -3083,9 +3078,17 @@ mod tests {
         }
         for shared in [strip_names(Some(Protocol::Bluetooth)), strip_names(None)] {
             assert!(shared.contains("dropped"), "dropped missing from {shared}");
-            for name in ["losses", "gaps", "channel", "busy"] {
+            for name in ["losses", "gaps", "busy"] {
                 assert!(!shared.contains(name), "{name} shown in {shared}");
             }
+        }
+    }
+
+    #[test]
+    fn no_panel_charts_channel_changes() {
+        for protocol in [None].into_iter().chain(Protocol::ALL.map(Some)) {
+            let panel = strip_names(protocol);
+            assert!(!panel.contains("channel"), "channel shown in {panel}");
         }
     }
 

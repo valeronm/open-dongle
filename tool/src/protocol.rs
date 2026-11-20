@@ -173,24 +173,9 @@ impl Protocol {
         use Counter::*;
         match self {
             Self::Nuphy => &[
-                Packets,
-                Invalid,
-                Dropped,
-                ChannelChanges,
-                LinkLosses,
-                Gaps,
-                UsbRetries,
-                Merges,
-                Surveys,
+                Packets, Invalid, Dropped, LinkLosses, Gaps, UsbRetries, Merges, Surveys,
             ],
-            Self::Unifying => &[
-                Packets,
-                Invalid,
-                Dropped,
-                ChannelChanges,
-                UsbRetries,
-                Merges,
-            ],
+            Self::Unifying => &[Packets, Invalid, Dropped, UsbRetries, Merges],
             Self::Bluetooth => &[Packets, Dropped, UsbRetries, Merges],
         }
     }
@@ -201,7 +186,6 @@ pub enum Counter {
     Packets,
     Invalid,
     Dropped,
-    ChannelChanges,
     LinkLosses,
     Gaps,
     UsbRetries,
@@ -215,7 +199,6 @@ impl Counter {
             Self::Packets => "packets",
             Self::Invalid => "invalid",
             Self::Dropped => "dropped",
-            Self::ChannelChanges => "channels",
             Self::LinkLosses => "losses",
             Self::Gaps => "gaps",
             Self::UsbRetries => "usb-retries",
@@ -347,7 +330,6 @@ impl<'a> Reader<'a> {
 pub struct Counters {
     pub invalid: u32,
     pub dropped: u32,
-    pub channel_changes: u32,
     pub usb_retries: u32,
     pub merges: u32,
     pub surveys: Option<u32>,
@@ -359,7 +341,6 @@ impl Counters {
         match counter {
             Counter::Invalid => Some(self.invalid),
             Counter::Dropped => Some(self.dropped),
-            Counter::ChannelChanges => Some(self.channel_changes),
             Counter::UsbRetries => Some(self.usb_retries),
             Counter::Merges => Some(self.merges),
             Counter::Surveys => self.surveys,
@@ -713,21 +694,14 @@ pub fn read_status(payload: &[u8]) -> Result<Result<Status, VersionMismatch>> {
     let forced = r.bytes::<3>()?;
     let keyboard_id = r.bytes::<4>()?;
     let usb = r.u8()?;
-    let [
-        invalid,
-        dropped,
-        channel_changes,
-        usb_retries,
-        merges,
-        surveys,
-    ] = [r.u32()?, r.u32()?, r.u32()?, r.u32()?, r.u32()?, r.u32()?];
+    let [invalid, dropped, usb_retries, merges, surveys] =
+        [r.u32()?, r.u32()?, r.u32()?, r.u32()?, r.u32()?];
     let [minute_next, minute_oldest, events_total, events_oldest] =
         [r.u32()?, r.u32()?, r.u32()?, r.u32()?];
     let protocol = Protocol::read(&mut r)?;
     let counters = Counters {
         invalid,
         dropped,
-        channel_changes,
         usb_retries,
         merges,
         surveys: protocol.counted(Counter::Surveys, surveys),
@@ -936,7 +910,6 @@ pub struct Noise {
 pub struct Minute {
     pub invalid: u8,
     pub dropped: u8,
-    pub channel_changes: u8,
     pub usb_retries: u8,
     pub noise: Option<Noise>,
     pub device: SlotMinute,
@@ -957,7 +930,6 @@ impl Minute {
         match counter {
             Counter::Invalid => Some(self.invalid.into()),
             Counter::Dropped => Some(self.dropped.into()),
-            Counter::ChannelChanges => Some(self.channel_changes.into()),
             Counter::UsbRetries => Some(self.usb_retries.into()),
             _ => None,
         }
@@ -991,7 +963,7 @@ fn read_noise(r: &mut Reader) -> Result<Option<Noise>> {
 
 pub fn decode_minutes(payload: &[u8], protocol: Protocol) -> Result<(u32, Vec<Minute>)> {
     decode_page(payload, |r| {
-        let (invalid, dropped, channel_changes, usb_retries) = (r.u8()?, r.u8()?, r.u8()?, r.u8()?);
+        let (invalid, dropped, usb_retries) = (r.u8()?, r.u8()?, r.u8()?);
         let noise = read_noise(r)?;
         let packets = r.u16()?;
         let (gaps, link_losses) = (r.u8()?, r.u8()?);
@@ -1003,7 +975,6 @@ pub fn decode_minutes(payload: &[u8], protocol: Protocol) -> Result<(u32, Vec<Mi
         Ok(Minute {
             invalid,
             dropped,
-            channel_changes,
             usb_retries,
             noise,
             device: SlotMinute {
@@ -1252,7 +1223,7 @@ pub(crate) mod tests {
     const CHANNEL_AT: usize = LINK_STATE_AT + 1;
     const OWN_AT: usize = CHANNEL_AT + 1;
     const KEYBOARD_ID_AT: usize = OWN_AT + 6;
-    pub(crate) const PROTOCOL_AT: usize = KEYBOARD_ID_AT + 4 + 1 + 10 * 4;
+    pub(crate) const PROTOCOL_AT: usize = KEYBOARD_ID_AT + 4 + 1 + 9 * 4;
     const PAIRING_AT: usize = PROTOCOL_AT + 1;
     const KEYBOARD_AT: usize = PAIRING_AT + 1;
     const SLOTS_AT: usize = KEYBOARD_AT + 5;
@@ -1495,7 +1466,6 @@ pub(crate) mod tests {
                 counters: Counters {
                     invalid: 1,
                     dropped: 2,
-                    channel_changes: 3,
                     usb_retries: 5,
                     merges: 6,
                     surveys: Some(7),
@@ -1589,7 +1559,6 @@ pub(crate) mod tests {
                 counters: Counters {
                     invalid: 0,
                     dropped: 2,
-                    channel_changes: 0,
                     usb_retries: 5,
                     merges: 6,
                     surveys: None,
@@ -1970,7 +1939,6 @@ pub(crate) mod tests {
                     Minute {
                         invalid: 0,
                         dropped: 0,
-                        channel_changes: 0,
                         usb_retries: 1,
                         noise: Some(Noise {
                             peak: -41,
@@ -1991,7 +1959,6 @@ pub(crate) mod tests {
                     Minute {
                         invalid: 0,
                         dropped: 0,
-                        channel_changes: 12,
                         usb_retries: 0,
                         noise: None,
                         device: SlotMinute {
@@ -2152,7 +2119,7 @@ pub(crate) mod tests {
     fn a_minute_of_other_devices_packets_has_no_signal() {
         let mut payload = 0u32.to_le_bytes().to_vec();
         payload.push(1);
-        payload.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0]);
+        payload.extend([0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0]);
         let (_, m) = decode_minutes(&payload, Protocol::Nuphy).unwrap();
         assert_eq!(
             m.first()

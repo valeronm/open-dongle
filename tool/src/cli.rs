@@ -1006,7 +1006,7 @@ mod tests {
                 "pairing   open, offers channels 62 52 44, set by hand",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
-                "counters  invalid 1 dropped 2 channels 3 usb-retries 5 merges 6 surveys 7",
+                "counters  invalid 1 dropped 2 usb-retries 5 merges 6 surveys 7",
                 "history   1440 minutes, 512 events held",
                 "",
                 "keyboard  MX Keys, ID 7015a329, connected",
@@ -1040,7 +1040,7 @@ mod tests {
                 "pairing   open",
                 "usb       live",
                 "uptime    50d 02:25:19, reset by pin",
-                "counters  invalid 1 dropped 2 channels 3 usb-retries 5 merges 6",
+                "counters  invalid 1 dropped 2 usb-retries 5 merges 6",
                 "history   1440 minutes, 512 events held",
                 "",
                 "keyboard  MX Keys, serial b8bcd5b3, WPID 7015, connected",
@@ -1123,7 +1123,6 @@ mod tests {
         Minute {
             invalid: 1,
             dropped: 0,
-            channel_changes: 2,
             usb_retries: 5,
             noise: None,
             device: SlotMinute {
@@ -1140,11 +1139,11 @@ mod tests {
         let keyboard = (DeviceKind::Keyboard, minute().device);
         assert_eq!(
             minute_line(Protocol::Nuphy, &minute(), &[keyboard]),
-            "invalid   1  dropped   0  channels   2  usb-retries   5  keyboard: packets   120  losses   3  gaps   4  signal -  noise -"
+            "invalid   1  dropped   0  usb-retries   5  keyboard: packets   120  losses   3  gaps   4  signal -  noise -"
         );
         assert_eq!(
             minute_line(Protocol::Unifying, &minute(), &[keyboard]),
-            "invalid   1  dropped   0  channels   2  usb-retries   5  keyboard: packets   120  signal -  noise -"
+            "invalid   1  dropped   0  usb-retries   5  keyboard: packets   120  signal -  noise -"
         );
         let mouse = SlotMinute {
             packets: 30,
@@ -1181,7 +1180,7 @@ mod tests {
                 let n = 1442 - from;
                 p.push(n as u8);
                 for _ in 0..n {
-                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, 0, packets, 0, 0, 0, 0, 0, 0]);
+                    p.extend([0, 0, 0, 0, 0, 0, 0, 0, packets, 0, 0, 0, 0, 0, 0]);
                 }
                 parts(req[0], req[1], &p)
             }),

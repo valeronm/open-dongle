@@ -212,10 +212,10 @@ static void print_counters(void)
 
 	core_fill_status(&s, 0);
 	fill_status(&s, 0);
-	printk("counters: packets %u invalid %u dropped %u channels %u losses %u gaps %u "
+	printk("counters: packets %u invalid %u dropped %u losses %u gaps %u "
 	       "usb-retries %u merges %u surveys %u, ch%u state %d\n",
-	       s.packets, s.invalid, s.dropped, s.channel_changes, s.link_losses, s.gaps,
-	       s.usb_retries, s.merges, s.surveys, link.channel, link.state);
+	       s.packets, s.invalid, s.dropped, s.link_losses, s.gaps, s.usb_retries, s.merges,
+	       s.surveys, link.channel, link.state);
 }
 
 static void force_channels(const struct diag_request *req)

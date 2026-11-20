@@ -120,7 +120,6 @@ size_t diag_encode_status(uint8_t *out, const struct diag_status *s)
 	*p++ = (s->usb_live ? 1 : 0) | (s->usb_suspended ? 2 : 0);
 	p = put_le(p, s->invalid, 4);
 	p = put_le(p, s->dropped, 4);
-	p = put_le(p, s->channel_changes, 4);
 	p = put_le(p, s->usb_retries, 4);
 	p = put_le(p, s->merges, 4);
 	p = put_le(p, s->surveys, 4);
@@ -173,7 +172,6 @@ size_t diag_encode_minutes(uint8_t *out, uint32_t first, const struct history_mi
 
 		*p++ = m[i].invalid;
 		*p++ = m[i].dropped;
-		*p++ = m[i].channel_changes;
 		*p++ = m[i].usb_retries;
 		p = put_noise(p, &m[i].noise);
 		p = put_le(p, m[i].packets[slot], 2);

@@ -17,7 +17,6 @@
 
 enum core_counter {
 	CORE_INVALID,
-	CORE_CHANNEL_CHANGES,
 	CORE_SURVEYS,
 	CORE_COUNTERS,
 };
