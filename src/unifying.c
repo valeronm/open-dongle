@@ -260,10 +260,22 @@ bool unifying_is_connect_frame(const uint8_t *frame, size_t len, uint8_t device_
 	       unifying_checksum_ok(frame, len);
 }
 
+static bool any_held(const struct unifying_link *l)
+{
+	return l->keyboard_down || l->media_usage != 0 || l->divert_usage != 0;
+}
+
+static void forget_held(struct unifying_link *l)
+{
+	l->keyboard_down = false;
+	l->media_usage = 0;
+	l->divert_usage = 0;
+}
+
 bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, const uint8_t *frame,
 			     size_t len)
 {
-	bool held = l->keyboard_down || l->media_usage != 0 || l->divert_usage != 0;
+	bool held = any_held(l);
 
 	if (!unifying_is_connect_frame(frame, len, device_octet)) {
 		return false;
@@ -271,9 +283,7 @@ bool unifying_link_reconnect(struct unifying_link *l, uint8_t device_octet, cons
 	l->synced = false;
 	l->next_counter = 0;
 	l->has_candidate = false;
-	l->keyboard_down = false;
-	l->media_usage = 0;
-	l->divert_usage = 0;
+	forget_held(l);
 	return held;
 }
 
@@ -508,13 +518,10 @@ void unifying_link_heard(struct unifying_link *l, const uint8_t *frame, size_t l
 
 bool unifying_link_silent(struct unifying_link *l, uint64_t now_ms)
 {
-	bool silent = (l->keyboard_down || l->media_usage != 0 || l->divert_usage != 0) &&
-		      now_ms - l->last_ms > 2 * (uint64_t)l->keepalive_ms;
+	bool silent = any_held(l) && now_ms - l->last_ms > 2 * (uint64_t)l->keepalive_ms;
 
 	if (silent) {
-		l->keyboard_down = false;
-		l->media_usage = 0;
-		l->divert_usage = 0;
+		forget_held(l);
 	}
 	return silent;
 }
@@ -737,6 +744,9 @@ enum unifying_status unifying_session_status(const struct unifying_session *s, u
 
 void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
 {
+	/* The noise survey released the host's keys, and a release the keyboard sent meanwhile is
+	 * lost. */
+	forget_held(&s->link);
 	if (!s->silent) {
 		s->deaf_until_ms = now_ms;
 	}

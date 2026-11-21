@@ -2310,6 +2310,23 @@ static void test_releasing_a_brightness_key_leaves_a_held_media_key_down(void)
 	CHECK_EQ(out.report[0].usage, 0);
 }
 
+static void test_a_media_key_held_through_a_noise_survey_is_not_revived(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+	uint8_t f[UNIFYING_FRAME_MAX];
+
+	session_diverted(&s);
+	session_feed(&s, media_volume_up, sizeof(media_volume_up), 100, &out);
+	unifying_session_radio_resumed(&s, 1600);
+	hidpp(f, 0x08, 0x00, 0x00, 0xc7, 0x00);
+	session_feed(&s, f, sizeof(f), 1700, &out);
+	hidpp(f, 0x08, 0x00, 0x00, 0x00, 0x00);
+	session_feed(&s, f, sizeof(f), 1710, &out);
+	CHECK_EQ(out.reports, 1);
+	CHECK_EQ(out.report[0].usage, 0);
+}
+
 static void test_a_held_brightness_key_is_released_by_the_silence(void)
 {
 	struct unifying_session s;
@@ -3129,6 +3146,7 @@ int main(void)
 	RUN(test_a_brightness_event_before_the_feature_is_found_types_nothing);
 	RUN(test_a_connect_frame_diverts_again_without_a_second_lookup);
 	RUN(test_no_divert_request_goes_out_during_a_pairing_attempt);
+	RUN(test_a_media_key_held_through_a_noise_survey_is_not_revived);
 	RUN(test_a_held_brightness_key_is_released_by_the_silence);
 	RUN(test_the_battery_is_read_once_after_the_divert);
 	RUN(test_battery_events_update_the_level_and_charging);
