@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.5.0] - 2026-11-21
 
 - In Bluetooth mode the `noise` command no longer lets go of held keys.
 - In Unifying mode a media key let go during a noise survey no longer comes back as held after a
