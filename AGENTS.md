@@ -32,6 +32,19 @@
 - `ffi`'s library exports only `diag_*` symbols; the firmware build localizes everything else, so
   an export under another name fails to link.
 
+## Protocol docs
+
+- Every supported protocol's page in `docs/` has the sections Features, Reliability, Security and
+  On air, in that order and listed under its intro, so a reader finds the same thing in the same
+  place on each page.
+- Features, Reliability and Security compare SpareDongle with the protocol's original receiver, or
+  the PC's own Bluetooth, as a user sees it; how the dongle gets there belongs in On air.
+- On air opens with a short overview of the link, then holds only what the code does not show and
+  names the files that hold the rest.
+- The Features table has the same rows in the same order on every page, so the pages compare row
+  for row. A feature a protocol lacks keeps its row and says so in the cells, and a feature that
+  exists in only one protocol goes in that page's own group at the end of the table.
+
 ## CHANGELOG.md
 
 - An entry is a change a user can observe: in what the dongle does, in what the tool shows or

@@ -5,6 +5,13 @@ types, and flashes its firmware. `spare-dongle --help` lists the commands and ea
 `--serial` picks a board when more than one is plugged in. `noise`, `reboot`, `bootloader`, `flash`,
 `clear` and `forget` ask first, and `--yes` skips the question.
 
+- [Live view](#live-view)
+- [Reading the dongle](#reading-the-dongle)
+- [Pairing and channels](#pairing-and-channels)
+- [Devices](#devices)
+- [Bluetooth mode](#bluetooth-mode)
+- [Firmware and reset](#firmware-and-reset)
+
 ## Live view
 
 `spare-dongle` with no arguments shows the link state, signal and counter totals, a chart of the
@@ -83,14 +90,14 @@ that lost its pairing, which has to be forgotten and paired again.
 - `pair` waits for the keyboard to connect, prints the passkey to type on it, and once pairing
   closes says whether the keyboard paired; `pair --no-passkey` opens pairing without one. In the
   live view `a` asks which of the two, and the footer shows the passkey once the keyboard waits for
-  it. A passkey serves one attempt, and a failed one closes pairing.
+  it.
 - `devices` lists the stored keyboards and mice, the most recently connected first. The dongle
   stores up to eight, and a full list refuses a new pairing until one is forgotten. The MX Keys and
   the MX Master 3S pair under a new address each time, so pairing one again leaves its old entry to
   forget.
 - `devices` and the live view's list give each stored device's pairing, and `status` and the live
   view's device box the connected one's: secure for LE Secure Connections or legacy, and whether a
-  passkey was typed. [Bluetooth security](protocols.md#bluetooth-security) says what each way protects
+  passkey was typed. [Bluetooth security](bluetooth.md#security) says what each way protects
   against and how the live view colors it.
 
 Event lines name a stored device and give a forgotten one's address.

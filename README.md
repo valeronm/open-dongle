@@ -1,10 +1,10 @@
 # SpareDongle
 
 An open USB receiver for wireless keyboards and mice, for when the original receiver is lost or not
-good enough, running on a [Pro Micro nRF52840](#hardware). It supports the NuPhy V2 keyboards'
-2.4G link, Logitech Unifying keyboards and Bluetooth LE keyboards and mice, one at a time;
-[Protocols](#protocols) lists what each supports, what was tested and how it compares. The keyboard
-keeps its own firmware.
+good enough, running on a [Pro Micro nRF52840](#hardware). It supports NuPhy 2.4G on NuPhy's QMK
+keyboards, Logitech Unifying keyboards and Bluetooth LE keyboards and mice, one at a time;
+[Protocols](#protocols) lists what each supports and how it compares. The keyboard keeps its own
+firmware.
 
 Compared with NuPhy's own dongle it drops no valid keyboard report, and in NuPhy and Unifying
 mode it moves the link away from Wi-Fi noise. In Bluetooth mode it holds a keyboard and a mouse
@@ -22,24 +22,22 @@ each device's signal over time, its latency through the dongle, and the dongle's
 
 ## Protocols
 
-| Protocol | Support | Security | Tested with |
-|---|---|---|---|
-| NuPhy 2.4G, V2 (QMK) keyboards | [🟢 full](docs/protocols.md#nuphy-24g) | [❌ none](docs/protocols.md#nuphy-security) | Air75 V2 |
-| NuPhy 2.4G, V3 (NuPhyIO) keyboards | 🔴 none yet: the link is known only from NuPhy's firmware | ❌ none, in NuPhy's firmware | no hardware to test with |
-| Logitech Unifying | [🟡 partial](docs/protocols.md#logitech-unifying): one keyboard | [🔴 weak at any time](docs/protocols.md#unifying-security) | original MX Keys |
-| Bluetooth LE | [🟡 partial](docs/protocols.md#bluetooth-le): one keyboard and one mouse at a time | [🟡 to 🟢, by how the device paired](docs/protocols.md#bluetooth-security) | Air75 V2, MX Keys, MX Master 3S |
-| Bluetooth Classic | 🔴 none: the nRF52840 has no Classic radio | | |
-| Logitech Bolt | 🔴 none yet | | |
+| Protocol | Security | Support |
+|---|---|---|
+| NuPhy 2.4G, QMK keyboards | [❌ no protection](docs/nuphy.md#security) | [🟢 full](docs/nuphy.md) |
+| Logitech Unifying | [🔴 weak at any time](docs/unifying.md#security) | [🟡 partial](docs/unifying.md): one keyboard |
+| Bluetooth LE | [🔴 to 🟢, by how the device paired](docs/bluetooth.md#security) | [🟡 partial](docs/bluetooth.md): one keyboard and one mouse at a time |
+| NuPhy 2.4G, NuPhyIO keyboards | ❌ no protection | 🔴 none yet |
+| Logitech Bolt | 🟡 to 🟢, by how the device paired | 🔴 none yet |
+| Bluetooth Classic | 🔴 to 🟢, by how the device paired | ❌ not supported: the nRF52840 has no Classic radio |
 
-- **Support:** 🟢 full, 🟡 partial, 🔴 none, compared with the original receiver, or for Bluetooth
-  the PC's own.
-- **Security:** 🟢 safe even during pairing, 🟡 weak only during pairing, 🔴 weak at any time, ❌ no
-  protection.
+Support is compared with the original receiver, or for Bluetooth the PC's own. In Security, 🟢 is
+safe even during pairing, 🟡 weak only during pairing and 🔴 weak at any time.
 
-One firmware speaks all three protocols, but only one runs at a time, chosen by a setting the
-dongle keeps in flash. A new dongle runs NuPhy. `spare-dongle protocol nuphy`, `unifying` or
-`bluetooth` switches it, and the dongle reboots into the new protocol. Each protocol keeps its own
-pairing, so switching back needs no new pairing.
+One firmware speaks NuPhy, Unifying and Bluetooth LE, but only one runs at a time, chosen by a
+setting the dongle keeps in flash. A new dongle runs NuPhy. `spare-dongle protocol nuphy`,
+`unifying` or `bluetooth` switches it, and the dongle reboots into the new protocol. Each protocol
+keeps its own pairing, so switching back needs no new pairing.
 
 ## Hardware
 
@@ -100,6 +98,13 @@ spare-dongle flash spare-dongle-<version>-promicro_nrf52840.uf2
 board still running its factory program, restarting it into the bootloader as needed. A board
 `spare-dongle flash` does not find enters its bootloader when RST is shorted to GND twice quickly.
 Changes between releases are in [CHANGELOG.md](CHANGELOG.md).
+
+### Firmware updates
+
+The board's UF2 bootloader accepts any image, and a diagnostic command restarts the dongle into it
+over USB. Any program that can open the dongle's diagnostic interface, or anyone who plugs the
+dongle into their own computer, can replace its firmware, including with one that reads the stored
+Unifying link key or Bluetooth bond keys.
 
 ## Pairing
 
@@ -179,9 +184,9 @@ cargo install --locked --path tool
 the SDKs. `mise run lint` runs rustfmt, clippy and shellcheck. CI runs both on `main` and on pull
 requests.
 
-The keyboards' radio protocols, beyond what the code shows, are in
-[docs/nuphy-v2-2.4ghz.md](docs/nuphy-v2-2.4ghz.md) for the NuPhy and
-[docs/unifying.md](docs/unifying.md) for Logitech Unifying.
+Each protocol page's On air section describes the link beyond what the code shows:
+[NuPhy](docs/nuphy.md#on-air), [Unifying](docs/unifying.md#on-air) and
+[Bluetooth](docs/bluetooth.md#on-air).
 
 A release is built when a `v<version>` tag is pushed. Set the version in `tool/Cargo.toml`, which
 the firmware reads too, add its section to `CHANGELOG.md`, commit, and push the tag. The release
