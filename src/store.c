@@ -27,6 +27,11 @@ int store_save_nuphy(const void *in, size_t len)
 	return settings_save_one(NUPHY_KEY, in, len);
 }
 
+int store_delete_nuphy(void)
+{
+	return settings_delete(NUPHY_KEY);
+}
+
 bool store_load_forced(uint8_t out[3])
 {
 	return load_exact(FORCED_KEY, out, 3);
@@ -46,6 +51,11 @@ bool store_load_unifying(void *out, size_t len)
 int store_save_unifying(const void *in, size_t len)
 {
 	return settings_save_one(UNIFYING_KEY, in, len);
+}
+
+int store_delete_unifying(void)
+{
+	return settings_delete(UNIFYING_KEY);
 }
 
 bool store_load_protocol(uint8_t *out)

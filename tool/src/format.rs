@@ -105,12 +105,11 @@ pub fn device_lines(list: &[StoredDevice], protocol: Protocol) -> Vec<DeviceLine
         .collect()
 }
 
-/// Only Bluetooth forgets a device, so the address is a Bluetooth one.
-pub fn forget_question(d: &StoredDevice) -> String {
+pub fn forget_question(d: &StoredDevice, protocol: Protocol) -> String {
     format!(
         "Forget {} ({})? It has to be paired again to be used.",
         device_name(d),
-        bluetooth_address(d)
+        device_address(d, protocol)
     )
 }
 
@@ -731,6 +730,7 @@ pub fn describe_event(e: &Event, s: &Status, stored: &[StoredDevice]) -> String 
         }
         Ok(Detail::Reconnect { release_all: false }) => "keyboard reconnected".into(),
         Ok(Detail::Attack) => "forged keystroke, attack mode for 5 s".into(),
+        Ok(Detail::KeyboardForgotten) => "keyboard forgotten".into(),
         Ok(Detail::BtConnected { addr }) => format!("{kind} {} connected", device(&addr)),
         Ok(Detail::BtDisconnected {
             reason,
@@ -1237,8 +1237,25 @@ mod tests {
             pairing: None,
         };
         assert_eq!(
-            forget_question(&k),
+            forget_question(&k, Protocol::Bluetooth),
             "Forget MX Keys (EB:BB:49:A6:9A:D9)? It has to be paired again to be used."
+        );
+        let k = StoredDevice {
+            addr: [0x40, 0x8a, 0xb8, 0xbc, 0xd5, 0xb3, 0],
+            ..k
+        };
+        assert_eq!(
+            forget_question(&k, Protocol::Unifying),
+            "Forget MX Keys (serial b8bcd5b3, WPID 408a)? It has to be paired again to be used."
+        );
+        let k = StoredDevice {
+            addr: [0x70, 0x15, 0xa3, 0x29, 0, 0, 0],
+            name: Some("NuPhy Air75 V2".into()),
+            ..k
+        };
+        assert_eq!(
+            forget_question(&k, Protocol::Nuphy),
+            "Forget NuPhy Air75 V2 (ID 7015a329)? It has to be paired again to be used."
         );
     }
 
@@ -1434,6 +1451,10 @@ mod tests {
         assert_eq!(
             d(event(EventType::Attack, 0, 0, 0, 0)),
             "forged keystroke, attack mode for 5 s"
+        );
+        assert_eq!(
+            d(event(EventType::KeyboardForgotten, 0, 0, 0, 0)),
+            "keyboard forgotten"
         );
         assert_eq!(
             d(event(EventType::KeysDiverted, 0, 2, 0, 0)),

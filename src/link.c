@@ -100,6 +100,19 @@ void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN],
 	go_idle(l, now_ms, out);
 }
 
+void link_forget(struct link *l, uint32_t now_ms, struct link_out *out)
+{
+	struct link kept = *l;
+
+	link_init(l, kept.dongle_id, NULL, now_ms, out);
+	if (kept.next_offer_kind == OFFER_FORCED) {
+		link_force_channels(l, kept.next_offer);
+	}
+	l->host_leds = kept.host_leds;
+	l->host_suspended = kept.host_suspended;
+	link_open_pairing(l, PAIRWIN_REQUEST, now_ms);
+}
+
 void link_record_of(const struct link *l, struct link_record *out)
 {
 	memcpy(out->own, l->own, LINK_OWN_CHANNELS);

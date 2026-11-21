@@ -315,6 +315,47 @@ static void test_an_unconfirmed_pairing_keeps_the_paired_keyboard(void)
 	CHECK_MEM(l.keyboard_id, stored_id, 4);
 }
 
+static void forget(uint32_t now)
+{
+	out = (struct link_out){0};
+	last_ms = now;
+	link_forget(&l, now, &out);
+}
+
+static void test_a_forgotten_keyboard_is_dropped_until_it_pairs_again(void)
+{
+	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
+
+	init(home);
+	message(NUPHY_KEEPALIVE, 1, 10);
+	CHECK(link_connected(&l));
+	forget(20);
+	CHECK(!l.own_known);
+	CHECK(!link_connected(&l));
+	CHECK_EQ(link_home(&l), CHANMOVE_NO_HOME);
+	CHECK(link_pairing_open(&l, 100000));
+	message(NUPHY_KEEPALIVE, 1, 30);
+	CHECK(!accepted);
+	deliver(&request, 0, 100000);
+	CHECK(out.start_survey);
+}
+
+static void test_forgetting_keeps_the_forced_channels_and_the_host_state(void)
+{
+	static const uint8_t forced[3] = {30, 40, 60};
+
+	init(home);
+	CHECK(link_force_channels(&l, forced));
+	link_set_host_leds(&l, 0x02);
+	link_set_host_suspended(&l, true);
+	forget(20);
+	CHECK(link_forced_channels(&l) != NULL);
+	CHECK_MEM(link_forced_channels(&l), forced, 3);
+	CHECK_EQ(l.host_leds, 0x02);
+	CHECK(l.host_suspended);
+	CHECK_MEM(l.dongle_id, dongle_id, 4);
+}
+
 static void test_confirm_for_another_dongle_is_ignored(void)
 {
 	struct nuphy_msg request = pairing(NUPHY_PAIR_REQUEST, previous_id);
@@ -1085,6 +1126,8 @@ int main(void)
 	RUN(test_paired_idle_alternates_home_with_channel_2);
 	RUN(test_pairing_offers_surveyed_channels_and_moves_home_once_confirmed);
 	RUN(test_confirm_for_another_dongle_is_ignored);
+	RUN(test_a_forgotten_keyboard_is_dropped_until_it_pairs_again);
+	RUN(test_forgetting_keeps_the_forced_channels_and_the_host_state);
 	RUN(test_a_rebooted_dongle_keeps_the_keyboard_pairing_confirmed);
 	RUN(test_the_record_is_the_paired_channels_then_the_keyboard);
 	RUN(test_a_confirmed_pairing_replaces_the_keyboard);

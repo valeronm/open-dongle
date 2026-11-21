@@ -127,7 +127,6 @@ fn a_protocol_answers_only_its_commands() {
         let want = match c {
             Command::ForceChannels => [true, false, false],
             Command::Noise | Command::Move | Command::Watch => [true, true, false],
-            Command::Forget => [false, false, true],
             _ => [true, true, true],
         };
         assert_eq!(answered, want, "{c:?}");
@@ -411,6 +410,7 @@ fn every_detail() -> Vec<Detail> {
             steps: 15,
         },
         Detail::BtPasskeyAwaited { addr },
+        Detail::KeyboardForgotten,
     ]
 }
 

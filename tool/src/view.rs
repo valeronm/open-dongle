@@ -416,7 +416,6 @@ impl History {
             .extend(dev.events_between(from, s.events_total)?);
         let excess = self.events.len().saturating_sub(EVENTS_KEPT);
         self.events.drain(..excess);
-        self.devices = crate::cli::stored_devices(dev, self.status.protocol())?;
         Ok(())
     }
 }
@@ -471,12 +470,12 @@ enum Prompt {
 }
 
 impl Prompt {
-    fn question(&self) -> String {
+    fn question(&self, running: Protocol) -> String {
         let question = match self {
             Prompt::Noise => NOISE_QUESTION.to_string(),
             Prompt::Action(action) => action_question(*action).to_string(),
             Prompt::Switch(to) => switch_question(*to),
-            Prompt::Forget(device) => forget_question(device),
+            Prompt::Forget(device) => forget_question(device, running),
         };
         format!("{question} y/n")
     }
@@ -565,7 +564,7 @@ fn action_keys(protocol: Protocol) -> Vec<(char, &'static str, Key)> {
         channels.then_some(NOISE),
         channels.then_some(MOVES),
         Some(pair),
-        (protocol == Protocol::Bluetooth).then_some(DEVICES),
+        Some(DEVICES),
         Some(switch),
         Some(REBOOT),
         Some(BOOTLOADER),
@@ -788,7 +787,7 @@ impl<T: Transport> Session<T> {
                 Some(Key::Choose(choice)) => self.choosing = Some(choice),
                 Some(Key::Pair) => self.pair(false),
                 Some(Key::Moves) => self.show_moves(),
-                Some(Key::Devices) => self.pane = Pane::Devices,
+                Some(Key::Devices) => self.show_devices(),
                 None => {}
             },
             KeyCode::Esc => self.pane = Pane::History,
@@ -810,6 +809,13 @@ impl<T: Transport> Session<T> {
             .into_iter()
             .find(|(k, _, _)| *k == c)
             .map(|(_, _, key)| key)
+    }
+
+    fn show_devices(&mut self) {
+        self.pane = Pane::Devices;
+        if let Err(e) = self.reread_pane() {
+            self.message = format!("failed: {}", error_text(&e));
+        }
     }
 
     fn show_moves(&mut self) {
@@ -862,6 +868,12 @@ impl<T: Transport> Session<T> {
     }
 
     fn reread_pane(&mut self) -> Result<()> {
+        let protocol = self.protocol();
+        self.history.devices = if matches!(self.pane, Pane::Devices) {
+            self.device.devices()?
+        } else {
+            crate::cli::stored_devices(&mut self.device, protocol)?
+        };
         if let Pane::Moves(w) = &mut self.pane {
             *w = self.device.watch()?;
         }
@@ -905,7 +917,7 @@ impl<T: Transport> Session<T> {
             return flow(words(&choice.question(self.protocol())), " ", width);
         }
         if let Some(p) = &self.prompt {
-            return flow(words(&p.question()), " ", width);
+            return flow(words(&p.question(self.protocol())), " ", width);
         }
         if let PairingWindow::PasskeyAwaited(a) = &self.history.status.pairing_window {
             let [before, digits, after] = passkey_prompt(a);
@@ -1724,7 +1736,7 @@ mod tests {
         let rows = screen(&drawn(&mut app));
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear"
+            "n noise  m moves  a pair  d devices  p protocol  r reboot  b bootloader  c clear"
         );
         assert_eq!(
             rows[23].trim_end(),
@@ -1777,9 +1789,12 @@ mod tests {
         );
         assert_eq!(
             rows[22].trim_end(),
-            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear  [/] channel  ←/→ history"
+            "n noise  m moves  a pair  d devices  p protocol  r reboot  b bootloader  c clear  [/] channel"
         );
-        assert_eq!(rows[23].trim_end(), "↑/↓ events  esc back  q quit");
+        assert_eq!(
+            rows[23].trim_end(),
+            "←/→ history  ↑/↓ events  esc back  q quit"
+        );
     }
 
     #[test]
@@ -1798,6 +1813,7 @@ mod tests {
             "n noise",
             "m moves",
             "a pair",
+            "d devices",
             "p protocol",
             "r reboot",
             "b bootloader",
@@ -1808,7 +1824,7 @@ mod tests {
             "esc back",
             "q quit",
         ];
-        assert_eq!(texts(&app.connection.view(130).1), [hints.join("  ")]);
+        assert_eq!(texts(&app.connection.view(141).1), [hints.join("  ")]);
     }
 
     #[test]
@@ -1834,16 +1850,15 @@ mod tests {
         }
     }
 
-    fn bluetooth_dongle_forgetting_into(
-        sent: std::rc::Rc<std::cell::Cell<Option<[u8; 7]>>>,
+    fn dongle_listing_devices(
+        protocol: Protocol,
+        on_request: impl Fn(&[u8]) + 'static,
     ) -> App<Fake> {
         let list = crate::protocol::tests::fixture("devices.hex");
         let mut app = app_on(
             Device::new(
                 Fake::new(move |req| {
-                    if req[0] == Command::Forget as u8 {
-                        sent.set(Some(req[6..13].try_into().unwrap()));
-                    }
+                    on_request(req);
                     let payload: &[u8] = if req[0] == Command::Devices as u8 {
                         &list
                     } else {
@@ -1853,10 +1868,20 @@ mod tests {
                 }),
                 0,
             ),
-            status_of(Protocol::Bluetooth),
+            status_of(protocol),
         );
-        refreshed_with_pairing(&mut app, Protocol::Bluetooth, false);
+        refreshed_with_pairing(&mut app, protocol, false);
         app
+    }
+
+    fn bluetooth_dongle_forgetting_into(
+        sent: std::rc::Rc<std::cell::Cell<Option<[u8; 7]>>>,
+    ) -> App<Fake> {
+        dongle_listing_devices(Protocol::Bluetooth, move |req| {
+            if req[0] == Command::Forget as u8 {
+                sent.set(Some(req[6..13].try_into().unwrap()));
+            }
+        })
     }
 
     #[test]
@@ -1891,6 +1916,37 @@ mod tests {
         session(&mut app).answer(prompt);
         assert_eq!(sent.get(), Some([1, 0x5a, 0x3c, 0x11, 0xe0, 0xf2, 0xc8]));
         assert_eq!(footer(&mut app), "forgotten");
+    }
+
+    #[test]
+    fn an_esb_dongle_reads_its_devices_only_while_the_pane_is_open() {
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counted = reads.clone();
+        let mut app = dongle_listing_devices(Protocol::Nuphy, move |req| {
+            if req[0] == Command::Devices as u8 {
+                counted.set(counted.get() + 1);
+            }
+        });
+        assert_eq!(reads.get(), 0);
+        press(&mut app, 'd');
+        assert_eq!(reads.get(), 1);
+        let text = screen(&drawn(&mut app)).join("\n");
+        assert!(
+            text.contains("1  keyboard  MX Keys       ID 01d99aa6"),
+            "{text}"
+        );
+        refreshed_with_pairing(&mut app, Protocol::Nuphy, false);
+        assert_eq!(reads.get(), 2);
+        press(&mut app, '1');
+        assert!(
+            footer(&mut app).starts_with("Forget MX Keys (ID 01d99aa6)?"),
+            "{}",
+            footer(&mut app)
+        );
+        app.handle(KeyCode::Esc);
+        app.handle(KeyCode::Esc);
+        refreshed_with_pairing(&mut app, Protocol::Nuphy, false);
+        assert_eq!(reads.get(), 2);
     }
 
     fn drawn_at<T: Transport>(app: &mut App<T>, width: u16, height: u16) -> Vec<String> {
@@ -2457,7 +2513,7 @@ mod tests {
         assert_eq!(session(&mut app).message, "");
         assert_eq!(
             footer(&mut app),
-            "n noise  m moves  a pair  p protocol  r reboot  b bootloader  c clear\n[/] channel  ←/→ history  ↑/↓ events  esc back  q quit"
+            "n noise  m moves  a pair  d devices  p protocol  r reboot  b bootloader  c clear\n[/] channel  ←/→ history  ↑/↓ events  esc back  q quit"
         );
     }
 

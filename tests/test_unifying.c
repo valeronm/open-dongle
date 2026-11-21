@@ -1568,6 +1568,18 @@ static void test_a_session_without_a_record_is_not_paired(void)
 	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_STATUS_NOT_PAIRED);
 }
 
+static void test_a_forgotten_keyboard_leaves_the_session_unpaired_and_pairing_open(void)
+{
+	struct unifying_session s;
+
+	session_paired(&s);
+	CHECK_EQ(unifying_session_status(&s, 0), UNIFYING_STATUS_SILENT);
+	unifying_session_forget(&s, 100);
+	CHECK_EQ(unifying_session_status(&s, 100), UNIFYING_STATUS_NOT_PAIRED);
+	CHECK(unifying_pairing_window_open(&s.pairing, 100000));
+	CHECK_MEM(s.receiver.base, receiver.base, sizeof(receiver.base));
+}
+
 static void test_a_session_answers_pairing_on_the_frames_pipe(void)
 {
 	struct unifying_session s;
@@ -1633,6 +1645,24 @@ static void test_a_connect_frame_on_the_receiver_pipe_resends_the_leds(void)
 	unifying_session_tick(&s, 30, false, 0x02, 1, &out);
 	CHECK(out.send_led);
 	CHECK_EQ(out.leds, 0x02);
+}
+
+static void test_a_forgotten_keyboard_still_sending_is_ignored(void)
+{
+	struct unifying_session s;
+	struct unifying_out out;
+
+	session_paired(&s);
+	unifying_session_forget(&s, 0);
+	CHECK(!unifying_session_frame(&s, UNIFYING_PIPE_DEVICE, keep_alive_1100,
+				      sizeof(keep_alive_1100), -60, 1000, nonce, fake_aes, &out));
+	CHECK_EQ(out.heard, UNIFYING_HEARD_NONE);
+	CHECK(!unifying_session_frame(&s, UNIFYING_PIPE_RECEIVER, connect_10, sizeof(connect_10), 0,
+				      1010, nonce, fake_aes, &out));
+	CHECK(!out.reconnected);
+	CHECK(!s.heard);
+	CHECK_EQ(unifying_session_status(&s, 1010), UNIFYING_STATUS_NOT_PAIRED);
+	CHECK(unifying_pairing_window_open(&s.pairing, 1010));
 }
 
 static void test_a_heard_paired_keyboard_is_connected_then_silent(void)
@@ -3118,10 +3148,12 @@ int main(void)
 	RUN(test_an_led_frame_not_queued_stays_due);
 	RUN(test_no_led_frame_is_due_without_a_paired_device);
 	RUN(test_a_session_without_a_record_is_not_paired);
+	RUN(test_a_forgotten_keyboard_leaves_the_session_unpaired_and_pairing_open);
 	RUN(test_a_session_answers_pairing_on_the_frames_pipe);
 	RUN(test_a_refused_request_gets_no_reply_from_the_session);
 	RUN(test_completing_pairing_through_the_session_closes_the_window);
 	RUN(test_a_connect_frame_on_the_receiver_pipe_resends_the_leds);
+	RUN(test_a_forgotten_keyboard_still_sending_is_ignored);
 	RUN(test_a_heard_paired_keyboard_is_connected_then_silent);
 	RUN(test_the_tick_moves_the_channel_while_pairing_is_open);
 	RUN(test_a_move_sets_the_channel_and_holds_while_pairing_is_closed);

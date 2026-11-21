@@ -141,7 +141,6 @@ impl Command {
         match self {
             Self::ForceChannels => protocol == Protocol::Nuphy,
             Self::Noise | Self::Move | Self::Watch => protocol.has_esb(),
-            Self::Forget => protocol == Protocol::Bluetooth,
             _ => true,
         }
     }
@@ -330,6 +329,7 @@ pub enum EventType {
     /// Byte a is a `Wheel`; b holds the steps per notch in high resolution.
     WheelSet,
     BtPasskeyAwaited,
+    KeyboardForgotten,
 }
 
 codes!(EventType {
@@ -359,6 +359,7 @@ codes!(EventType {
     KeysDiverted,
     WheelSet,
     BtPasskeyAwaited,
+    KeyboardForgotten,
 });
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -713,6 +714,8 @@ pub enum Detail {
     BtPasskeyAwaited {
         addr: [u8; EVENT_ADDR_LEN],
     },
+    /// A NuPhy or Unifying keyboard was forgotten on request.
+    KeyboardForgotten,
 }
 
 /// Seconds since the last input as an event records them; a negative `elapsed_ms` means none
@@ -768,6 +771,7 @@ impl Detail {
             D::KeysDiverted { .. } => T::KeysDiverted,
             D::WheelSet { .. } => T::WheelSet,
             D::BtPasskeyAwaited { .. } => T::BtPasskeyAwaited,
+            D::KeyboardForgotten => T::KeyboardForgotten,
         }
     }
 
@@ -786,9 +790,13 @@ impl Detail {
                 (rssi as u8, low, high, gap_ms)
             }
             D::Survey { picked } => (picked[0], picked[1], picked[2], 0),
-            D::Noise | D::UsbSuspend | D::UsbResume | D::Clear | D::PairingClosed | D::Attack => {
-                (0, 0, 0, 0)
-            }
+            D::Noise
+            | D::UsbSuspend
+            | D::UsbResume
+            | D::Clear
+            | D::PairingClosed
+            | D::Attack
+            | D::KeyboardForgotten => (0, 0, 0, 0),
             D::LinkUp {
                 channel,
                 rssi,
@@ -954,6 +962,7 @@ impl Detail {
             T::BtPasskeyAwaited => D::BtPasskeyAwaited {
                 addr: unpack_addr(e),
             },
+            T::KeyboardForgotten => D::KeyboardForgotten,
         })
     }
 }

@@ -298,22 +298,47 @@ static void fill_status(struct diag_status *st, uint8_t slot)
 	}
 }
 
+/* False with nothing paired. */
+static bool listed_keyboard(struct diag_device *out, uint64_t now)
+{
+	const struct unifying_device *d = &session.pairing.device;
+
+	*out = (struct diag_device){.kind = DEVICE_KIND_KEYBOARD, .slot = DEVICE_NO_SLOT};
+	if (!unifying_has_device(&session.pairing)) {
+		return false;
+	}
+	memcpy(out->addr, d->wpid, sizeof(d->wpid));
+	memcpy(&out->addr[sizeof(d->wpid)], d->serial, sizeof(d->serial));
+	memcpy(out->name, d->name, sizeof(d->name));
+	if (unifying_session_status(&session, now) == UNIFYING_STATUS_CONNECTED) {
+		out->slot = 0;
+	}
+	return true;
+}
+
 static void send_devices(const struct diag_request *req, uint64_t now)
 {
-	struct diag_device keyboard = {.kind = DEVICE_KIND_KEYBOARD, .slot = DEVICE_NO_SLOT};
-	bool paired = unifying_has_device(&session.pairing);
+	struct diag_device keyboard;
+	bool paired = listed_keyboard(&keyboard, now);
 
-	if (paired) {
-		const struct unifying_device *d = &session.pairing.device;
-
-		memcpy(keyboard.addr, d->wpid, sizeof(d->wpid));
-		memcpy(&keyboard.addr[sizeof(d->wpid)], d->serial, sizeof(d->serial));
-		memcpy(keyboard.name, d->name, sizeof(d->name));
-		if (unifying_session_status(&session, now) == UNIFYING_STATUS_CONNECTED) {
-			keyboard.slot = 0;
-		}
-	}
 	core_reply_devices(req, &keyboard, paired ? 1 : 0);
+}
+
+static void forget_keyboard(const struct diag_request *req, uint64_t now)
+{
+	struct diag_device keyboard;
+
+	if (!core_forget_matches(req, &keyboard, listed_keyboard(&keyboard, now))) {
+		return;
+	}
+	if (store_delete_unifying() != 0) {
+		diag_reply_error(req, DIAG_ERROR_STORE, 0);
+		return;
+	}
+	unifying_session_forget(&session, now);
+	core_set_channel(session.channel);
+	core_release_keys();
+	core_keyboard_forgotten(req, &session.pairing.window);
 }
 
 static void serve_diag(const struct diag_request *req, uint64_t now)
@@ -321,6 +346,9 @@ static void serve_diag(const struct diag_request *req, uint64_t now)
 	switch (req->command) {
 	case DIAG_COMMAND_DEVICES:
 		send_devices(req, now);
+		break;
+	case DIAG_COMMAND_FORGET:
+		forget_keyboard(req, now);
 		break;
 	case DIAG_COMMAND_PAIR:
 		unifying_session_open_pairing(&session, PAIRWIN_REQUEST, now);
@@ -386,9 +414,8 @@ FUNC_NORETURN void unifying_run(int store_err)
 
 		got = core_take_rx(&item, K_MSEC(TICK_MS));
 		now = (uint64_t)k_uptime_get();
-		if (got) {
-			unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi, now,
-					       next_nonce, aes_ecb, &out);
+		if (got && unifying_session_frame(&session, item.pipe, item.data, item.len, item.rssi,
+						  now, next_nonce, aes_ecb, &out)) {
 			apply_frame(&out, &item);
 		}
 		changed = core_take_leds(&leds);

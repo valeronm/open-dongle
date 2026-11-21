@@ -91,6 +91,12 @@ bool core_take_radio_noise(struct noise_tally *t, int *home);
 /* Takes the pending noise readings first, which a gap or loss event records. */
 void core_log(uint8_t slot, struct diag_detail d);
 void core_log_pairing_opened(const struct pairwin *w);
+/* Replies that there is no such device, and returns false, unless paired and the request names
+ * listed. */
+bool core_forget_matches(const struct diag_request *req, const struct diag_device *listed,
+			 bool paired);
+/* Logs the forget and the pairing window it opens, then replies; the caller releases held keys. */
+void core_keyboard_forgotten(const struct diag_request *req, const struct pairwin *w);
 void core_log_pairing_closed(void);
 /* Takes the pending noise readings first. */
 void core_rssi(uint8_t slot, int8_t dbm);

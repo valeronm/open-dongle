@@ -88,7 +88,7 @@ enum Cmd {
     },
     /// List the devices the dongle stores; under Bluetooth the most recently connected first
     Devices,
-    /// Remove a stored Bluetooth device, by its number in `devices`
+    /// Remove a stored device, by its number in `devices`
     Forget {
         /// The device's number in the list `devices` prints
         place: usize,
@@ -174,7 +174,8 @@ fn main() -> Result<()> {
             cli::devices(&mut dev, s.protocol())
         }
         Cmd::Forget { place, confirm } => {
-            cli::forget(&mut device::open(serial)?.0, place, confirm.yes)
+            let (mut dev, s) = device::open(serial)?;
+            cli::forget(&mut dev, s.protocol(), place, confirm.yes)
         }
         Cmd::Move { channel } => {
             let (mut dev, s) = device::open(serial)?;

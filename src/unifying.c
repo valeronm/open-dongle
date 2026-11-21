@@ -574,7 +574,15 @@ void unifying_session_init(struct unifying_session *s, const struct unifying_rec
 	s->channel = unifying_sweep_channel(&s->sweep, &s->pairing, now_ms);
 }
 
-void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
+void unifying_session_forget(struct unifying_session *s, uint64_t now_ms)
+{
+	struct unifying_receiver r = s->receiver;
+
+	unifying_session_init(s, &r, NULL, now_ms);
+	unifying_session_open_pairing(s, PAIRWIN_REQUEST, now_ms);
+}
+
+bool unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
 			    size_t len, int8_t rssi, uint64_t now_ms,
 			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
 			    struct unifying_out *out)
@@ -588,6 +596,11 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		hidpp_init(&s->hidpp, DEVICE_KIND_KEYBOARD);
 		hidpp_start(&s->hidpp);
 		s->battery = DEVICE_BATTERY_UNKNOWN;
+	}
+	/* A forgotten keyboard still transmits to this receiver's address. */
+	if (pipe != UNIFYING_PIPE_PAIRING && !unifying_has_device(&s->pairing) &&
+	    !attempting(&s->pairing)) {
+		return false;
 	}
 	if (pipe == UNIFYING_PIPE_DEVICE) {
 		bool checksum_ok = unifying_checksum_ok(frame, len);
@@ -644,6 +657,7 @@ void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint
 		s->deaf_until_ms = now_ms;
 	}
 	take_hidpp_event(s, out);
+	return true;
 }
 
 void unifying_session_tick(struct unifying_session *s, uint64_t now_ms, bool leds_changed,

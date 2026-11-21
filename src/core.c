@@ -247,6 +247,23 @@ void core_log_pairing_opened(const struct pairwin *w)
 								 .until_paired = w->until_paired}});
 }
 
+bool core_forget_matches(const struct diag_request *req, const struct diag_device *listed,
+			 bool paired)
+{
+	if (!paired || memcmp(req->data, listed->addr, sizeof(listed->addr)) != 0) {
+		diag_reply_error(req, DIAG_ERROR_NO_SUCH_DEVICE, 0);
+		return false;
+	}
+	return true;
+}
+
+void core_keyboard_forgotten(const struct diag_request *req, const struct pairwin *w)
+{
+	core_log(0, (struct diag_detail){.tag = DIAG_DETAIL_KEYBOARD_FORGOTTEN});
+	core_log_pairing_opened(w);
+	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
+}
+
 void core_log_pairing_closed(void)
 {
 	printk("pairing closed\n");

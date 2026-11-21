@@ -30,6 +30,8 @@
   `status` and `devices`.
 - In NuPhy mode a dongle with no keyboard paired ignores keyboards until one pairs, so a keyboard
   paired before this update has to pair again once with Fn+4.
+- `spare-dongle forget` and the live view's `d` also list and remove the NuPhy or Unifying
+  keyboard, and the events record it.
 - The tool shows a legacy Bluetooth pairing in red even when a passkey was typed.
 - The tool shows a device's battery level and whether it is charging, as far as the device
   reports them, in `status` and in the title of the live view's device box.

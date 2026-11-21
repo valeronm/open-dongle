@@ -271,7 +271,12 @@ pub fn stored_devices<T: Transport>(
 }
 
 /// `place` is the device's number in the list `devices` prints, from 1.
-pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Result<()> {
+pub fn forget<T: Transport>(
+    dev: &mut Device<T>,
+    protocol: Protocol,
+    place: usize,
+    yes: bool,
+) -> Result<()> {
     let list = dev.devices()?;
     let Some(device) = format::device_at(&list, place) else {
         bail!(
@@ -280,7 +285,7 @@ pub fn forget<T: Transport>(dev: &mut Device<T>, place: usize, yes: bool) -> Res
             list.len()
         );
     };
-    if confirm(&format::forget_question(device), yes)? {
+    if confirm(&format::forget_question(device, protocol), yes)? {
         dev.forget(device)?;
         println!("forgotten");
     }
@@ -893,7 +898,9 @@ mod tests {
             0,
         );
         for place in [0, 3] {
-            let err = forget(&mut dev, place, true).unwrap_err().to_string();
+            let err = forget(&mut dev, Protocol::Bluetooth, place, true)
+                .unwrap_err()
+                .to_string();
             assert_eq!(
                 err,
                 format!("there is no device {place}; `spare-dongle devices` lists the 2 stored")
@@ -916,7 +923,7 @@ mod tests {
             }),
             0,
         );
-        forget(&mut dev, 2, true).unwrap();
+        forget(&mut dev, Protocol::Bluetooth, 2, true).unwrap();
         assert_eq!(
             sent.get(),
             Some((

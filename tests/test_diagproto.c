@@ -240,7 +240,7 @@ static void test_a_command_or_protocol_it_does_not_know_is_answered(void)
 	CHECK(diag_command_answered(0, PROTOCOL_NUPHY));
 	CHECK(diag_command_answered(200, PROTOCOL_BLUETOOTH));
 	CHECK(diag_command_answered(DIAG_COMMAND_FORGET, 0));
-	CHECK(!diag_command_answered(DIAG_COMMAND_FORGET, PROTOCOL_NUPHY));
+	CHECK(!diag_command_answered(DIAG_COMMAND_FORCE_CHANNELS, PROTOCOL_BLUETOOTH));
 }
 
 int main(void)

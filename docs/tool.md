@@ -65,7 +65,10 @@ the first one. It leaves out the time on air and in the Bluetooth controller, wh
 cannot see. Reports the dongle makes up itself, such as the release when a device drops out, are
 not counted.
 
-`devices` lists the paired devices with their kind and the slot each is connected in.
+`devices` lists the paired devices with their kind and the slot each is connected in, and
+`forget <n>` removes the one at that place in the list. In the live view `d` shows the list in place
+of the chart, and a device's number asks to forget it. A NuPhy or Unifying dongle that forgets its
+keyboard stops taking its keys and opens pairing until a keyboard pairs.
 
 ## Bluetooth mode
 
@@ -81,11 +84,10 @@ that lost its pairing, which has to be forgotten and paired again.
   closes says whether the keyboard paired; `pair --no-passkey` opens pairing without one. In the
   live view `a` asks which of the two, and the footer shows the passkey once the keyboard waits for
   it. A passkey serves one attempt, and a failed one closes pairing.
-- `devices` lists the stored keyboards and mice, the most recently connected first, and
-  `forget <n>` removes the one at that place in the list. In the live view `d` shows the list in
-  place of the chart, and a device's number asks to forget it. The dongle stores up to eight, and a
-  full list refuses a new pairing until one is forgotten. The MX Keys and the MX Master 3S pair
-  under a new address each time, so pairing one again leaves its old entry to forget.
+- `devices` lists the stored keyboards and mice, the most recently connected first. The dongle
+  stores up to eight, and a full list refuses a new pairing until one is forgotten. The MX Keys and
+  the MX Master 3S pair under a new address each time, so pairing one again leaves its old entry to
+  forget.
 - `devices` and the live view's list give each stored device's pairing, and `status` and the live
   view's device box the connected one's: secure for LE Secure Connections or legacy, and whether a
   passkey was typed. [Bluetooth security](protocols.md#bluetooth-security) says what each way protects

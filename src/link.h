@@ -97,6 +97,11 @@ struct link {
 void link_init(struct link *l, const uint8_t dongle_id[NUPHY_ID_LEN],
 	       const struct link_record *record, uint32_t now_ms, struct link_out *out);
 void link_record_of(const struct link *l, struct link_record *out);
+/*
+ * Drops the paired keyboard and opens pairing until another pairs, keeping the dongle ID, the
+ * forced channels and the host state.
+ */
+void link_forget(struct link *l, uint32_t now_ms, struct link_out *out);
 /* False for a packet the dongle drops: no report in it reaches the host. */
 bool link_on_message(struct link *l, const struct nuphy_msg *m, uint8_t pipe, uint32_t now_ms,
 		     struct link_out *out);

@@ -322,8 +322,11 @@ struct unifying_out {
 /* record is NULL when no keyboard is stored. */
 void unifying_session_init(struct unifying_session *s, const struct unifying_receiver *r,
 			   const uint8_t *record, uint64_t now_ms);
+/* Drops the paired keyboard and opens pairing until another pairs, keeping the receiver. */
+void unifying_session_forget(struct unifying_session *s, uint64_t now_ms);
 
-void unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
+/* False for a frame the session ignores. */
+bool unifying_session_frame(struct unifying_session *s, uint8_t pipe, const uint8_t *frame,
 			    size_t len, int8_t rssi, uint64_t now_ms,
 			    const uint8_t nonce[UNIFYING_NONCE_LEN], unifying_aes_fn aes,
 			    struct unifying_out *out);

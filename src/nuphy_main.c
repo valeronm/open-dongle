@@ -69,6 +69,12 @@ static void replies_dropped(void)
 	link_replies_dropped(&link, k_uptime_get_32());
 }
 
+static void drop_keys(void)
+{
+	core_release_keys();
+	keys = (struct nuphy_keys){0};
+}
+
 static void apply(const struct link_out *out)
 {
 	/* A channel change flushes queued replies. */
@@ -103,8 +109,7 @@ static void apply(const struct link_out *out)
 							       .gap_ms = gap}});
 		link_down_ms = k_uptime_get_32();
 		link_was_lost = true;
-		core_release_keys();
-		keys = (struct nuphy_keys){0};
+		drop_keys();
 	}
 	if (out->up) {
 		uint8_t kind = link_was_lost ? HISTORY_UP_AGAIN : HISTORY_UP_FIRST;
@@ -274,18 +279,45 @@ static void force_channels(const struct diag_request *req)
 	diag_reply(req, NULL, 0, DIAG_AFTER_NONE);
 }
 
+/* False with nothing paired. */
+static bool listed_keyboard(struct diag_device *out)
+{
+	*out = (struct diag_device){.kind = DEVICE_KIND_KEYBOARD, .slot = DEVICE_NO_SLOT};
+	if (!link.own_known) {
+		return false;
+	}
+	memcpy(out->addr, link.keyboard_id, sizeof(link.keyboard_id));
+	memcpy(out->name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
+	if (link_connected(&link)) {
+		out->slot = 0;
+	}
+	return true;
+}
+
 static void send_devices(const struct diag_request *req)
 {
-	struct diag_device keyboard = {.kind = DEVICE_KIND_KEYBOARD, .slot = DEVICE_NO_SLOT};
+	struct diag_device keyboard;
+	bool paired = listed_keyboard(&keyboard);
 
-	if (link.own_known) {
-		memcpy(keyboard.addr, link.keyboard_id, sizeof(link.keyboard_id));
-		memcpy(keyboard.name, link.keyboard_name.name, sizeof(link.keyboard_name.name));
-		if (link_connected(&link)) {
-			keyboard.slot = 0;
-		}
+	core_reply_devices(req, &keyboard, paired ? 1 : 0);
+}
+
+static void forget_keyboard(const struct diag_request *req)
+{
+	struct diag_device keyboard;
+	struct link_out out = {0};
+
+	if (!core_forget_matches(req, &keyboard, listed_keyboard(&keyboard))) {
+		return;
 	}
-	core_reply_devices(req, &keyboard, link.own_known ? 1 : 0);
+	if (store_delete_nuphy() != 0) {
+		diag_reply_error(req, DIAG_ERROR_STORE, 0);
+		return;
+	}
+	link_forget(&link, k_uptime_get_32(), &out);
+	apply(&out);
+	drop_keys();
+	core_keyboard_forgotten(req, &link.window);
 }
 
 static void serve_diag(const struct diag_request *req)
@@ -296,6 +328,9 @@ static void serve_diag(const struct diag_request *req)
 		break;
 	case DIAG_COMMAND_FORCE_CHANNELS:
 		force_channels(req);
+		break;
+	case DIAG_COMMAND_FORGET:
+		forget_keyboard(req);
 		break;
 	case DIAG_COMMAND_PAIR:
 		link_open_pairing(&link, PAIRWIN_REQUEST, k_uptime_get_32());
