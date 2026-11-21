@@ -28,7 +28,7 @@ struct core_loop {
 	/* Takes the noise read since the last call and returns whether it counts toward the
 	 * minute; *home is the home channel it was read on, or CHANMOVE_NO_HOME. */
 	bool (*take_noise)(struct noise_tally *t, int *home);
-	/* Runs after each survey that answers a noise request, which keeps the receiver off. */
+	/* Runs after each survey, which keeps the receiver off and releases the host's keys. */
 	void (*radio_resumed)(void);
 	/* At most DEVICE_SLOTS. */
 	uint8_t slot_count;
@@ -102,8 +102,8 @@ void core_poll(void);
 /* Takes the pending noise readings, which a channel change drops, and counts a change that
  * succeeds. */
 int core_set_channel(uint8_t channel);
-/* Takes the pending noise readings, which a survey drops. Blocks for about 1.5 s with the receiver
- * off; returns NULL when the radio failed. */
+/* Takes the pending noise readings, which a survey drops, and releases the host's keys. Blocks for
+ * about 1.5 s with the receiver off; returns NULL when the radio failed or there is no ESB radio. */
 const struct chan_survey *core_survey(void);
 /* Sets the fields every protocol reports and the slot table, marks the slot's signal and last
  * packet as absent and zeroes the rest; loop.fill_status adds the protocol's own. slot must be

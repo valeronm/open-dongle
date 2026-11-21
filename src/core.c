@@ -415,17 +415,21 @@ int core_set_channel(uint8_t channel)
 const struct chan_survey *core_survey(void)
 {
 	static struct chan_survey survey;
+	int err;
 
 	if (!diag_protocol_has_esb(active)) {
 		return NULL;
 	}
+	/* The receiver goes deaf during the survey, so a key held now stays down on the host. */
+	core_release_keys();
 	take_noise();
 	core_watchdog_feed();
-	if (radio_survey(&survey) != 0) {
-		return NULL;
+	err = radio_survey(&survey);
+	if (err == 0) {
+		loop->replies_dropped();
 	}
-	loop->replies_dropped();
-	return &survey;
+	loop->radio_resumed();
+	return err == 0 ? &survey : NULL;
 }
 
 static void clear(const struct diag_request *req)
@@ -490,14 +494,11 @@ static void serve_noise(const struct diag_request *req, uint8_t *payload)
 {
 	const struct chan_survey *survey;
 
-	/* The receiver goes deaf during the survey, so a key held now stays down on the host. */
-	core_release_keys();
 	survey = core_survey();
 	if (survey == NULL) {
 		diag_reply_error(req, DIAG_ERROR_RADIO, 0);
 		return;
 	}
-	loop->radio_resumed();
 	log_event(DEVICE_NO_SLOT, (struct diag_detail){.tag = DIAG_DETAIL_NOISE});
 	diag_reply(req, payload,
 		   diag_encode_noise(payload, DIAG_PAYLOAD_MAX, CHAN_FIRST, CHAN_SAMPLES,

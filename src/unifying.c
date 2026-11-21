@@ -744,8 +744,7 @@ enum unifying_status unifying_session_status(const struct unifying_session *s, u
 
 void unifying_session_radio_resumed(struct unifying_session *s, uint64_t now_ms)
 {
-	/* The noise survey released the host's keys, and a release the keyboard sent meanwhile is
-	 * lost. */
+	/* The survey released the host's keys, and a release the keyboard sent meanwhile is lost. */
 	forget_held(&s->link);
 	if (!s->silent) {
 		s->deaf_until_ms = now_ms;

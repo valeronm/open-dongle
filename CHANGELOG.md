@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- In Bluetooth mode the `noise` command no longer lets go of held keys.
 - In Unifying mode a media key let go during a noise survey no longer comes back as held after a
   brightness key.
 - In NuPhy mode the PC receives every held key in the keyboard's Windows mode, not only six.
